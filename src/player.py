@@ -5,11 +5,13 @@ import math
 import sys
 sys.path.append('./tracklist') # clean this up
 
+# local
 from track import Track
 from album import Album
 from album_view import AlbumView
 from progress_bar import ClickableProgressBar
 
+# media playback - find one that uses crossplat mediakeys out of the box
 from just_playback import Playback
 
 # pyqt5

@@ -5,8 +5,7 @@ from pathlib import Path
 
 # pyqt5
 from PyQt5.QtWidgets import (
-    QApplication, QWidget, QVBoxLayout,
-    QPushButton, QListWidget, QFileDialog
+    QApplication, QWidget, QVBoxLayout, QListWidget
 )
 from PyQt5.QtCore import pyqtSignal
 

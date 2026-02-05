@@ -1,4 +1,4 @@
-# Purpose: subclass QProgressBar and override methods for custom progress bar implementation
+# subclass QProgressBar and override methods for custom progress bar implementation
 
 from PyQt5.QtWidgets import QProgressBar
 from PyQt5.QtCore import Qt, pyqtSignal
