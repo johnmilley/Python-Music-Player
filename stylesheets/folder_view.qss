@@ -1,0 +1,41 @@
+QTreeView {
+    font-size: 13pt;
+    font-family: 'Consolas', 'Courier New', 'Monaco', monospace;
+    border: 1pt solid black;
+}
+QTreeView::item {
+    height: 25;
+}
+QTreeView::item:selected {
+    background-color: orange;
+    color: black;
+}
+QTreeView::branch {
+    image: none;
+}
+QTreeView::branch:selected {
+    background-color: white;
+}
+
+QScrollBar:vertical {
+    border: none;
+    background: white;
+    width: 0;
+}
+QScrollBar::handle:vertical {
+    background: orange; /* Match progress bar color */
+    min-height: 0px;
+}
+QScrollBar::up-arrow:vertical, QScrollBar::down-arrow:vertical {
+    border: none;
+    background: none;
+    color: none;
+}
+QScrollBar::up-arrow:vertical, QScrollBar::up-arrow:vertical {
+    border: none;
+    background: none;
+    color: none;
+}
+QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
+    background: none;
+}

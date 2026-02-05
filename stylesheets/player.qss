@@ -1,0 +1,97 @@
+#player {
+    background-color: white;
+}
+
+#album-art {
+    padding: 0;
+    margin-top: 10px;
+}
+
+#track-info {
+    font-family: 'Consolas', 'Courier New', 'Monaco', monospace;
+    font-size: 15pt;
+}
+
+ #track-progress-widget {
+    margin-left: 20;
+}
+
+#track-progress {
+    font-family: 'Consolas', 'Courier New', 'Monaco', monospace;
+    font-size: 15pt;
+}
+
+#track-length {
+    font-family: 'Consolas', 'Courier New', 'Monaco', monospace;
+    font-size: 15pt;
+}
+
+QProgressBar {
+    border: 1px solid black;
+    background: white;
+}
+QProgressBar::chunk {
+    background-color: orange;
+}
+
+#toggle-library-btn {
+    background-color: white;
+    border: 1px solid black;
+    width: 12;
+    height: 35;
+    margin-bottom: 10;
+    margin-left: 10;
+}
+
+#toggle-folder-btn {
+    background-color: white;
+    border: 1px solid black;
+    width: 12;
+    height: 35;
+    margin-bottom: 10;
+    padding: 0;
+    font-family: 'Consolas', 'Courier New', 'Monaco', monospace;
+    font-size: 15pt;
+}
+
+#prev-button {
+    background-color: white;
+    border: 1px solid black;
+    width: 200px;
+    height: 50px;
+    margin-bottom: 10;
+    margin-left: 10;
+    padding: 0;
+    font-family: 'Consolas', 'Courier New', 'Monaco', monospace;
+    font-size: 15pt;
+}
+
+#prev-button::focus {
+
+}
+
+#next-button {
+    background-color: white;
+    border: 1px solid black;
+    width: 200px;
+    height: 50px;
+    margin-bottom: 10;
+    padding: 0;
+    font-family: 'Consolas', 'Courier New', 'Monaco', monospace;
+    font-size: 15pt;
+}
+#next-button::focus {
+}
+
+#play-button {
+    background-color: orange;
+    border: 1px solid black;
+    width: 200px;
+    height: 50px;
+    margin-bottom: 10;
+    margin-left: 10;
+    padding: 0;
+    font-family: 'Consolas', 'Courier New', 'Monaco', monospace;
+    font-size: 15pt;
+}
+

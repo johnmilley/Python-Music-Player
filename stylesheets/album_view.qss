@@ -1,0 +1,13 @@
+#track-list {
+    background-color: white;
+    font-size: 13pt;
+    font-family: 'Consolas', 'Courier New', 'Monaco', monospace;
+    border: none;
+}
+#track-list::item {
+    height: 25;
+}
+#track-list::item:selected {
+    background-color: orange;
+    color: black;
+}
