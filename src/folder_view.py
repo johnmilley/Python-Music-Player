@@ -31,7 +31,8 @@ class FolderView(QWidget):
 
         self.model.setIconProvider(MusicIconProvider())
 
-        root = '/Users/jlm/Downloads/music'
+        # root = '/Users/jlm/Downloads/music'
+        root = '/mnt/media/02_PLEX_MEDIA/music'
         self.model.setRootPath(root)
         self.model.setFilter(QDir.Dirs | QDir.NoDotAndDotDot )
 

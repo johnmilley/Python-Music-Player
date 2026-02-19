@@ -7,7 +7,6 @@ from folder_view import FolderView
 from player import Player
 from album_view import AlbumView
 
-# pyqt
 from PyQt5.QtWidgets import (QMainWindow, QApplication, QWidget, QHBoxLayout,
 QStyle)
 

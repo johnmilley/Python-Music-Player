@@ -319,6 +319,7 @@ class Player(QWidget):
             else:
                 self.album_view.setVisible(True)
     
+    # mix of UI and logic
     def toggle_play_pause_button_text(self):
         if self.playback.active:
             if self.playback.playing:
