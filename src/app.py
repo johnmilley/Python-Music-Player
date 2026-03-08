@@ -328,7 +328,10 @@ class App(QMainWindow):
         dialog.exec_()
 
     def toggle_lyrics(self):
-        self.lyrics_widget.setVisible(not self.lyrics_widget.isVisible())
+        if self.is_miniplayer:
+            self._toggle_mini_lyrics()
+        else:
+            self.lyrics_widget.setVisible(not self.lyrics_widget.isVisible())
 
     def _on_track_changed(self, track):
         """Fetch lyrics when the track changes."""
@@ -380,8 +383,8 @@ class App(QMainWindow):
         self._mini_lyrics_btn.setChecked(vis)
         # Resize window to accommodate lyrics
         if vis:
-            self.lyrics_widget.setMinimumHeight(250)
-            self.resize(self.width(), self.height() + 350)
+            self.lyrics_widget.setMinimumHeight(350)
+            self.resize(self.width(), self.height() + 450)
         else:
             self.lyrics_widget.setMinimumHeight(0)
             self.resize(self.width(), 400)
