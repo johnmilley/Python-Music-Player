@@ -117,14 +117,14 @@ class Player(QWidget):
         # Toggle Library/Tracklist buttons
         self.toggle_library_btn = QPushButton('\u2630')  # hamburger menu icon
         self.toggle_library_btn.setToolTip('Toggle Library')
-        self.toggle_library_btn.clicked.connect(self.toggle_library)
+        self.toggle_library_btn.pressed.connect(self.toggle_library)
         self.toggle_library_btn.setObjectName('toggle-library-btn')
         self.toggle_library_btn.setCheckable(True)
         self.toggle_library_btn.setChecked(True)
 
         self.toggle_folder_btn = QPushButton('\u2261')  # list icon
         self.toggle_folder_btn.setToolTip('Toggle Tracklist')
-        self.toggle_folder_btn.clicked.connect(self.toggle_tracklist)
+        self.toggle_folder_btn.pressed.connect(self.toggle_tracklist)
         self.toggle_folder_btn.setObjectName('toggle-folder-btn')
         self.toggle_folder_btn.setCheckable(True)
         self.toggle_folder_btn.setChecked(True)
@@ -333,18 +333,18 @@ class Player(QWidget):
             return
         app_window = self.window()
         handle_width = app_window.splitter.handleWidth()
-        # button.isChecked() already reflects the new state from clicked signal
-        show = button.isChecked()
 
-        if show:
+        if panel.isVisible():
+            panel_width = panel.width() + handle_width
+            panel.setVisible(False)
+            button.setChecked(False)
+            app_window.resize(app_window.width() - panel_width, app_window.height())
+        else:
             panel.setVisible(True)
+            button.setChecked(True)
             panel.adjustSize()
             panel_width = panel.sizeHint().width() + handle_width
             app_window.resize(app_window.width() + panel_width, app_window.height())
-        else:
-            panel_width = panel.width() + handle_width
-            panel.setVisible(False)
-            app_window.resize(app_window.width() - panel_width, app_window.height())
 
     def toggle_library(self):
         self._toggle_panel(self.folder_view, self.toggle_library_btn)

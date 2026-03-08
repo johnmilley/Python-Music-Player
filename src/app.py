@@ -9,9 +9,10 @@ from album_view import AlbumView
 import theme
 
 from PyQt5.QtWidgets import (QMainWindow, QApplication, QWidget, QHBoxLayout,
-    QAction, QActionGroup, QSplitter, QColorDialog)
+    QAction, QActionGroup, QSplitter, QColorDialog, QShortcut, QDialog,
+    QVBoxLayout, QLabel)
 from PyQt5.QtCore import Qt, QSettings
-from PyQt5.QtGui import QColor, QPixmap, QIcon
+from PyQt5.QtGui import QColor, QPixmap, QIcon, QKeySequence
 
 
 class App(QMainWindow):
@@ -100,6 +101,9 @@ class App(QMainWindow):
         self.settings = QSettings('lp', 'music-player')
         self._restore_state()
 
+        # Keyboard shortcuts
+        self._setup_shortcuts()
+
     def apply_theme(self, t):
         self.current_theme = t
         # Update menu text to show available action
@@ -175,6 +179,58 @@ class App(QMainWindow):
             seek_pos = self.settings.value('last_seek_pos', 0.0, type=float)
             if self.album_view.album and track_pos < len(self.album_view.album.tracklist):
                 self.player.load_track(self.album_view.album, track_pos, seek_pos)
+
+    def _setup_shortcuts(self):
+        self.keybindings = [
+            ('p',       'Play / Pause',       self.player.toggle_play_pause_button_text),
+            ('>',       'Next track',          self.player.next_track),
+            ('<',       'Previous track',      self.player.prev_track),
+            ('f',       'Seek forward 5s',     lambda: self._seek_relative(5)),
+            ('b',       'Seek back 5s',        lambda: self._seek_relative(-5)),
+            ('.',       'Volume up',           lambda: self._adjust_volume(0.05)),
+            (',',       'Volume down',         lambda: self._adjust_volume(-0.05)),
+            ('1',       'Toggle library',      self.player.toggle_library),
+            ('2',       'Toggle tracklist',    self.player.toggle_tracklist),
+            ('q',       'Quit',                self.close),
+            ('?',       'Show shortcuts',      self.show_help),
+        ]
+        for key, _, callback in self.keybindings:
+            QShortcut(QKeySequence(key), self, callback)
+
+    def _seek_relative(self, seconds):
+        if self.player.current_track and self.player.playback.active:
+            pos = self.player.playback.curr_pos + seconds
+            pos = max(0, min(pos, self.player.current_track.length))
+            self.player.playback.seek(pos)
+            self.player.progress_bar.setValue(
+                int((pos / self.player.current_track.length) * 1000))
+            self.player.track_progress_label.setText(
+                self.player.current_track.length_to_string(pos))
+
+    def _adjust_volume(self, delta):
+        if self.player.playback.active:
+            vol = self.player.playback.volume + delta
+            self.player.playback.set_volume(max(0, min(1, vol)))
+
+    def show_help(self):
+        t = self.current_theme
+        dialog = QDialog(self)
+        dialog.setWindowTitle('Keyboard Shortcuts')
+        dialog.setStyleSheet(f"""
+            QDialog {{ background-color: {t['bg']}; }}
+            QLabel {{ color: {t['fg']}; font-family: {theme.FONT}; font-size: 12pt; }}
+        """)
+        layout = QVBoxLayout()
+        rows = ''.join(
+            f'<tr><td style="padding: 4px 20px 4px 0;"><b>{key}</b></td>'
+            f'<td style="padding: 4px 0;">{desc}</td></tr>'
+            for key, desc, _ in self.keybindings
+        )
+        label = QLabel(f'<table>{rows}</table>')
+        label.setTextFormat(Qt.RichText)
+        layout.addWidget(label)
+        dialog.setLayout(layout)
+        dialog.exec_()
 
     def closeEvent(self, event):
         self.settings.setValue('geometry', self.saveGeometry())
