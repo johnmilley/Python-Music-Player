@@ -25,14 +25,19 @@ DARK = {
 
 FONT = "'Consolas', 'Courier New', 'Monaco', monospace"
 
+DEFAULT_FONT_SIZE = 13
+FONT_SIZES = [10, 11, 12, 13, 14, 16, 18, 20]
+
 def app_qss(t):
     return f"""
         #main-window {{
             background-color: {t['bg']};
         }}
         QSplitter::handle {{
-            background-color: {t['border']};
-            width: 3px;
+            background-color: {t['bg_alt']};
+            border-left: 1px dotted {t['border']};
+            border-right: 1px dotted {t['border']};
+            width: 7px;
         }}
         QMenuBar {{
             background-color: {t['bg']};
@@ -73,7 +78,7 @@ def app_qss(t):
         }}
     """
 
-def player_qss(t):
+def player_qss(t, fs=DEFAULT_FONT_SIZE):
     return f"""
         #player {{
             background-color: {t['bg']};
@@ -84,7 +89,7 @@ def player_qss(t):
         }}
         #track-info {{
             font-family: {FONT};
-            font-size: 15pt;
+            font-size: {fs + 2}pt;
             color: {t['fg']};
         }}
         #track-progress-widget {{
@@ -92,12 +97,12 @@ def player_qss(t):
         }}
         #track-progress {{
             font-family: {FONT};
-            font-size: 15pt;
+            font-size: {fs + 2}pt;
             color: {t['fg']};
         }}
         #track-length {{
             font-family: {FONT};
-            font-size: 15pt;
+            font-size: {fs + 2}pt;
             color: {t['fg']};
         }}
         QProgressBar {{
@@ -115,7 +120,7 @@ def player_qss(t):
             height: 50px;
             padding: 0;
             font-family: {FONT};
-            font-size: 18pt;
+            font-size: {fs + 5}pt;
         }}
         #play-button {{
             background-color: {t['accent']};
@@ -125,7 +130,7 @@ def player_qss(t):
             min-width: 40px;
             max-width: 40px;
             height: 50px;
-            font-size: 22pt;
+            font-size: {fs + 9}pt;
         }}
         #toggle-library-btn:checked, #toggle-folder-btn:checked {{
             background-color: {t['accent']};
@@ -133,10 +138,10 @@ def player_qss(t):
         }}
     """
 
-def folder_view_qss(t):
+def folder_view_qss(t, fs=DEFAULT_FONT_SIZE):
     return f"""
         QTreeView {{
-            font-size: 13pt;
+            font-size: {fs}pt;
             font-family: {FONT};
             border: 1pt solid {t['border']};
             background-color: {t['bg']};
@@ -173,11 +178,11 @@ def folder_view_qss(t):
         }}
     """
 
-def album_view_qss(t):
+def album_view_qss(t, fs=DEFAULT_FONT_SIZE):
     return f"""
         #track-list {{
             background-color: {t['bg']};
-            font-size: 13pt;
+            font-size: {fs}pt;
             font-family: {FONT};
             border: none;
             color: {t['fg']};
