@@ -158,6 +158,9 @@ class App(QMainWindow):
         self.album_view.setStyleSheet(theme.album_view_qss(t, fs))
         self.lyrics_widget.setStyleSheet(theme.lyrics_qss(t, fs))
         self.lyrics_widget.set_theme(t)
+        self.right_splitter.setStyleSheet(
+            f"QSplitter::handle {{ background-color: {t['accent']}; height: 3px; }}"
+        )
 
     def toggle_theme(self):
         if self.current_theme is theme.LIGHT:
