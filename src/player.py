@@ -25,6 +25,7 @@ class Player(QWidget):
     APP_UPDATE_TIME = 20 # ms
 
     track_finished = pyqtSignal()
+    track_changed = pyqtSignal(object)
 
     def __init__(self, album=None, folder_view=None, album_view=None):
         super().__init__()
@@ -232,6 +233,7 @@ class Player(QWidget):
         self.album = album
         self.track_pos = track_pos
         self.current_track = self.album.tracklist[self.track_pos]
+        self.track_changed.emit(self.current_track)
 
         # update UI
         self.update_gui_after_tracklist_load(self.album)
@@ -253,6 +255,7 @@ class Player(QWidget):
         self.album = album
         self.track_pos = track_pos
         self.current_track = self.album.tracklist[self.track_pos]
+        self.track_changed.emit(self.current_track)
 
         self.update_gui_after_tracklist_load(self.album)
         self.play_button.setText('PLAY')

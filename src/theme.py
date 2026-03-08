@@ -228,3 +228,34 @@ def album_view_qss(t, fs=DEFAULT_FONT_SIZE):
             padding: 4px;
         }}
     """
+
+def lyrics_qss(t, fs=DEFAULT_FONT_SIZE):
+    return f"""
+        #lyrics-widget {{
+            background-color: {t['bg']};
+        }}
+        #lyrics-scroll {{
+            background-color: {t['bg']};
+            border: none;
+        }}
+        #lyrics-text {{
+            background-color: {t['bg']};
+            color: {t['fg']};
+            font-family: {FONT};
+            font-size: {fs}pt;
+        }}
+        #lyrics-toggle-btn {{
+            background-color: {t['bg']};
+            border: 1px solid {t['border']};
+            color: {t['fg']};
+            font-family: {FONT};
+            font-size: {fs + 2}pt;
+            min-width: 40px;
+            max-width: 40px;
+            height: 50px;
+        }}
+        #lyrics-toggle-btn:checked {{
+            background-color: {t['accent']};
+            color: {t['selection_text']};
+        }}
+    """
