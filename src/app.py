@@ -317,7 +317,7 @@ class App(QMainWindow):
         if self.is_maxplayer:
             self._update_max_info()
             if self._max_art and self.player.album and self.player.album.art:
-                self._max_art.setPixmap(QPixmap(str(self.player.album.art)))
+                self._set_max_art(QPixmap(str(self.player.album.art)))
 
         if not self.player.album:
             return
@@ -534,11 +534,10 @@ class App(QMainWindow):
         # Album art — large, scaled
         self._max_art = QLabel()
         self._max_art.setAlignment(Qt.AlignCenter)
-        self._max_art.setScaledContents(True)
         self._max_art.setMinimumSize(300, 300)
         self._max_art.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         if self.player.album and self.player.album.art:
-            self._max_art.setPixmap(QPixmap(str(self.player.album.art)))
+            self._set_max_art(QPixmap(str(self.player.album.art)))
         content.addWidget(self._max_art)
 
         # Lyrics — large font
@@ -610,6 +609,15 @@ class App(QMainWindow):
         """)
         self._max_lyrics.set_theme(t)
 
+    def _set_max_art(self, pixmap):
+        """Set max mode art scaled to fit without stretching."""
+        if pixmap.isNull():
+            return
+        size = self._max_art.size()
+        scaled = pixmap.scaled(size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        self._max_art.setPixmap(scaled)
+        self._max_art_pixmap = pixmap  # keep original for resize
+
     def _update_max_info(self):
         if not hasattr(self, '_max_info'):
             return
@@ -622,6 +630,14 @@ class App(QMainWindow):
                 f'{self.player.album.artist}  \u2014  {self.player.album.title}')
         else:
             self._max_info.setText('lp')
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if self.is_maxplayer and self._max_art and hasattr(self, '_max_art_pixmap'):
+            size = self._max_art.size()
+            scaled = self._max_art_pixmap.scaled(
+                size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            self._max_art.setPixmap(scaled)
 
     def _update_max_mode(self):
         """Update max mode lyrics and info on timer tick."""
