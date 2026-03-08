@@ -6,7 +6,7 @@ from pathlib import Path
 # local
 from track import Track
 
-# mutagen - replace with audio player that will be recognized by system audio
+# mutagen
 import mutagen
 from mutagen.mp3 import MP3
 from mutagen.flac import FLAC

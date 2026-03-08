@@ -5,9 +5,10 @@ from pathlib import Path
 
 # pyqt5
 from PyQt5.QtWidgets import (
-    QApplication, QWidget, QVBoxLayout, QListWidget
+    QApplication, QWidget, QVBoxLayout, QListWidget, QListWidgetItem, QShortcut
 )
-from PyQt5.QtCore import pyqtSignal
+from PyQt5.QtCore import Qt, pyqtSignal
+from PyQt5.QtGui import QKeySequence
 
 # local
 from album import Album
@@ -19,6 +20,7 @@ class AlbumView(QWidget):
     def __init__(self, player=None):
         super().__init__()
         self.setWindowTitle("Tracklist")
+        self.setMinimumWidth(150)
         self.current_track = None
         self.album = None
         self.init_gui()
@@ -35,17 +37,23 @@ class AlbumView(QWidget):
         self.track_list_widget.setWordWrap(True)
         self.track_list_widget.setObjectName('track-list')
         self.track_list_widget.itemDoubleClicked.connect(self.set_current_track)
-        
+
         layout_main.addWidget(self.track_list_widget)
 
-        # load stylesheet
-        try:
-            with open("stylesheets/album_view.qss", 'r') as f:
-                self.setStyleSheet(f.read())
-        except FileNotFoundError:
-            print("stylesheet not found")
+        # Vim navigation: j = down, k = up
+        QShortcut(QKeySequence('j'), self.track_list_widget,
+                  lambda: self._move_selection(1))
+        QShortcut(QKeySequence('k'), self.track_list_widget,
+                  lambda: self._move_selection(-1))
 
         self.setLayout(layout_main)
+
+    def _move_selection(self, direction):
+        """Move the track list selection up or down by direction (+1 or -1)."""
+        current = self.track_list_widget.currentRow()
+        new_row = current + direction
+        if 0 <= new_row < self.track_list_widget.count():
+            self.track_list_widget.setCurrentRow(new_row)
 
     def load_album_listing(self, directory_path):
         """
@@ -56,8 +64,10 @@ class AlbumView(QWidget):
         self.album = Album(Path(directory_path))
         
         if self.album.tracklist:
-            for track in self.album.tracklist:
-                self.track_list_widget.addItem(str(track))
+            for i, track in enumerate(self.album.tracklist):
+                item = QListWidgetItem(self._format_track(track))
+                item.setData(Qt.UserRole, i)
+                self.track_list_widget.addItem(item)
             # self.track_list_widget.setFixedHeight(self.track_list_widget.sizeHint().height())
             if self.album.title and self.album.artist:
                 # updates App with new ALBUM TITLE - ARTIST
@@ -73,21 +83,25 @@ class AlbumView(QWidget):
             self.setWindowTitle(f"Tracklist")
 
     def set_current_track(self, selected):
-        selected_track_text = selected.text()
-        # what the next line does: 
-        # compare ui text to __repr__ of the song_title...
-        self.current_track = next(
-            track 
-            for track in self.album.tracklist 
-            if selected_track_text == str(track)
-        )
+        track_pos = selected.data(Qt.UserRole)
+        self.current_track = self.album.tracklist[track_pos]
         print(f"Current track: {self.current_track}")
 
         # Send Album to Player
         if self.player:
-            track_pos = self.album.tracklist.index(self.current_track)
             self.player.play(self.album, track_pos)
             
+    def _format_track(self, track):
+        """Format a track for display. Uses two lines for readability:
+           line 1: track number and title (or filename)
+           line 2: indented duration
+        """
+        duration = track.length_to_string(track.length)
+        if track.tracknumber and track.title:
+            return f"{track.tracknumber}. {track.title}\n     {duration}"
+        else:
+            return f"{track.filename}\n     {duration}"
+
     def get_current_track(self):
         if self.current_track:
             return self.current_track

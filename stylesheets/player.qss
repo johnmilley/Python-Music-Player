@@ -37,7 +37,7 @@ QProgressBar::chunk {
 #toggle-library-btn {
     background-color: white;
     border: 1px solid black;
-    width: 12;
+    min-width: 12;
     height: 35;
     margin-bottom: 10;
     margin-left: 10;
@@ -46,7 +46,7 @@ QProgressBar::chunk {
 #toggle-folder-btn {
     background-color: white;
     border: 1px solid black;
-    width: 12;
+    min-width: 12;
     height: 35;
     margin-bottom: 10;
     padding: 0;
@@ -57,7 +57,7 @@ QProgressBar::chunk {
 #prev-button {
     background-color: white;
     border: 1px solid black;
-    width: 200px;
+    min-width: 80px;
     height: 50px;
     margin-bottom: 10;
     margin-left: 10;
@@ -73,7 +73,7 @@ QProgressBar::chunk {
 #next-button {
     background-color: white;
     border: 1px solid black;
-    width: 200px;
+    min-width: 80px;
     height: 50px;
     margin-bottom: 10;
     padding: 0;
@@ -86,7 +86,7 @@ QProgressBar::chunk {
 #play-button {
     background-color: orange;
     border: 1px solid black;
-    width: 200px;
+    min-width: 80px;
     height: 50px;
     margin-bottom: 10;
     margin-left: 10;
@@ -94,4 +94,3 @@ QProgressBar::chunk {
     font-family: 'Consolas', 'Courier New', 'Monaco', monospace;
     font-size: 15pt;
 }
-

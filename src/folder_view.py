@@ -8,9 +8,10 @@ from pathlib import Path
 
 # pyqt5 libraries
 from PyQt5.QtWidgets import (
-    QApplication, QWidget, QVBoxLayout, QFileSystemModel, QTreeView, QMenu
+    QApplication, QWidget, QVBoxLayout, QFileSystemModel, QTreeView, QMenu, QShortcut
 )
 from PyQt5.QtCore import Qt, QDir, pyqtSignal
+from PyQt5.QtGui import QKeySequence
 
 # project files
 from album_view import AlbumView
@@ -26,6 +27,7 @@ class FolderView(QWidget):
     def __init__(self, album_view=None):
         super().__init__()
         self.album_view = album_view
+        self.setMinimumWidth(150)
 
         self.model = QFileSystemModel()
 
@@ -52,19 +54,30 @@ class FolderView(QWidget):
         
         self.view.setIndentation(20)
 
+        self.view.setWordWrap(True)
+
         self.view.clicked.connect(self.toggle_expand)
         self.view.doubleClicked.connect(self.on_item_double_clicked)
 
         self.layout.addWidget(self.view)
 
-        # load stylesheet
-        try:
-            with open("stylesheets/folder_view.qss", 'r') as f:
-                self.setStyleSheet(f.read())
-        except FileNotFoundError:
-            print("stylesheet not found")
+        # Vim navigation: j = down, k = up
+        QShortcut(QKeySequence('j'), self.view,
+                  lambda: self._move_selection(1))
+        QShortcut(QKeySequence('k'), self.view,
+                  lambda: self._move_selection(-1))
 
         self.setLayout(self.layout)
+
+    def _move_selection(self, direction):
+        """Move the tree view selection up or down by direction (+1 or -1)."""
+        current = self.view.currentIndex()
+        if direction > 0:
+            next_index = self.view.indexBelow(current)
+        else:
+            next_index = self.view.indexAbove(current)
+        if next_index.isValid():
+            self.view.setCurrentIndex(next_index)
 
     def toggle_expand(self, index):
         if self.view.isExpanded(index):
