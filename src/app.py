@@ -259,21 +259,14 @@ class App(QMainWindow):
             ('q',       'Quit',                self.close),
             ('?',       'Show shortcuts',      self.show_help),
         ]
-        # Keys that conflict with vim view navigation
-        _vim_keys = {'h', 'j', 'k', 'l', 'g', '/'}
         for key, _, callback in self.keybindings:
+            if key == 'l':
+                continue  # handled in keyPressEvent to avoid conflict with vim views
             shortcut = QShortcut(QKeySequence(key), self)
-            if key.lower() in _vim_keys:
-                # Suppress when vim views or search bar have focus
-                shortcut.activated.connect(
-                    lambda cb=callback: cb() if not isinstance(
-                        self.focusWidget(), (QLineEdit, VimTreeView, VimListWidget)
-                    ) else None)
-            else:
-                # Only suppress in search bar
-                shortcut.activated.connect(
-                    lambda cb=callback: cb() if not isinstance(
-                        self.focusWidget(), QLineEdit) else None)
+            # Only suppress in search bar
+            shortcut.activated.connect(
+                lambda cb=callback: cb() if not isinstance(
+                    self.focusWidget(), QLineEdit) else None)
 
     def _seek_relative(self, seconds):
         if self.player.current_track and self.player.playback.active:
@@ -488,6 +481,14 @@ class App(QMainWindow):
             self.restoreGeometry(self._pre_mini_geometry)
             self.splitter.restoreState(self._pre_mini_splitter)
             self.right_splitter.restoreState(self._pre_mini_right_splitter)
+
+    def keyPressEvent(self, event):
+        """Handle 'l' for lyrics toggle only when vim views don't have focus."""
+        if event.key() == Qt.Key_L and not isinstance(
+                self.focusWidget(), (QLineEdit, VimTreeView, VimListWidget)):
+            self.toggle_lyrics()
+            return
+        super().keyPressEvent(event)
 
     def closeEvent(self, event):
         self.settings.setValue('geometry', self.saveGeometry())
