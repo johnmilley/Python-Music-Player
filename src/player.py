@@ -293,10 +293,16 @@ class Player(QWidget):
         self.album = album
 
         # Update TRACK TITLE - ARTIST
-        if self.current_track.title:
-            self.track_info.setText(f"{self.current_track.title} - {self.current_track.artist}")
-        else:
+        title = str(self.current_track.title or '')
+        artist = str(self.current_track.artist or '')
+        if title and artist:
+            self.track_info.setText(f"{title} - {artist}")
+        elif title:
+            self.track_info.setText(title)
+        elif self.album.artist and self.album.title:
             self.track_info.setText(f"{self.album.artist} - {self.album.title}")
+        else:
+            self.track_info.setText(self.current_track.filename)
 
         self.play_button.setText('PAUSE')
 

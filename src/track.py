@@ -5,11 +5,11 @@ import math
 class Track:
     def __init__(self, tracknumber=0, title='', length=0, album='', artist='', year=0, filename='', path=''):
         self.tracknumber = tracknumber
-        self.title = title
+        self.title = str(title) if title else ''
         self.length = length
-        self.album = album
-        self.artist = artist
-        self.year = year
+        self.album = str(album) if album else ''
+        self.artist = str(artist) if artist else ''
+        self.year = str(year) if year else ''
         self.filename = filename # fallback display
         self.path = path         # for playback
 
