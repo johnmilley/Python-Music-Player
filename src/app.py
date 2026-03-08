@@ -9,7 +9,6 @@ from player import Player
 from album_view import AlbumView
 from lyrics_widget import LyricsWidget
 from lyrics_fetcher import LyricsFetchThread, lyrics_path_for_track
-from vim_views import VimTreeView, VimListWidget
 import theme
 
 from PyQt5.QtWidgets import (QMainWindow, QApplication, QWidget, QHBoxLayout,
@@ -260,8 +259,6 @@ class App(QMainWindow):
             ('?',       'Show shortcuts',      self.show_help),
         ]
         for key, _, callback in self.keybindings:
-            if key == 'l':
-                continue  # handled in keyPressEvent to avoid conflict with vim views
             shortcut = QShortcut(QKeySequence(key), self)
             # Only suppress in search bar
             shortcut.activated.connect(
@@ -292,29 +289,12 @@ class App(QMainWindow):
             QLabel {{ color: {t['fg']}; font-family: {theme.FONT}; font-size: 12pt; }}
         """)
         layout = QVBoxLayout()
-        nav_keys = [
-            ('j / k',   'Navigate down / up'),
-            ('h / l',   'Collapse / expand folder'),
-            ('/',       'Search in list'),
-            ('Esc',     'Close search'),
-            ('Enter',   'Open selected'),
-            ('G',       'Jump to bottom'),
-        ]
         rows = ''.join(
             f'<tr><td style="padding: 4px 20px 4px 0;"><b>{key}</b></td>'
             f'<td style="padding: 4px 0;">{desc}</td></tr>'
             for key, desc, _ in self.keybindings
         )
-        nav_rows = ''.join(
-            f'<tr><td style="padding: 4px 20px 4px 0;"><b>{key}</b></td>'
-            f'<td style="padding: 4px 0;">{desc}</td></tr>'
-            for key, desc in nav_keys
-        )
-        label = QLabel(
-            f'<table>{rows}</table>'
-            f'<br><b>List Navigation</b>'
-            f'<table>{nav_rows}</table>'
-        )
+        label = QLabel(f'<table>{rows}</table>')
         label.setTextFormat(Qt.RichText)
         layout.addWidget(label)
         dialog.setLayout(layout)
@@ -481,14 +461,6 @@ class App(QMainWindow):
             self.restoreGeometry(self._pre_mini_geometry)
             self.splitter.restoreState(self._pre_mini_splitter)
             self.right_splitter.restoreState(self._pre_mini_right_splitter)
-
-    def keyPressEvent(self, event):
-        """Handle 'l' for lyrics toggle only when vim views don't have focus."""
-        if event.key() == Qt.Key_L and not isinstance(
-                self.focusWidget(), (QLineEdit, VimTreeView, VimListWidget)):
-            self.toggle_lyrics()
-            return
-        super().keyPressEvent(event)
 
     def closeEvent(self, event):
         self.settings.setValue('geometry', self.saveGeometry())
