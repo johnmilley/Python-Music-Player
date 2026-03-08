@@ -261,13 +261,14 @@ class Player(QWidget):
 
         try:
             self.playback.load_file(self.current_track.path)
+            self.playback.play()
+            self.playback.pause()
             if seek_to > 0:
                 self.playback.seek(seek_to)
                 progress = int((seek_to / self.current_track.length) * 1000)
                 self.progress_bar.setValue(progress)
                 self.track_progress_label.setText(
                     self.current_track.length_to_string(seek_to))
-            self.playback.pause()
         except:
             print(f"LOG: Unable to load track.")
 
