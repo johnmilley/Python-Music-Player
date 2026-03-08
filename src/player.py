@@ -10,6 +10,7 @@ from track import Track
 from album import Album
 from album_view import AlbumView
 from progress_bar import ClickableProgressBar
+from artwork_finder import ArtworkFinderDialog
 
 # media playback - find one that uses crossplat mediakeys out of the box
 from just_playback import Playback
@@ -304,28 +305,39 @@ class Player(QWidget):
             self.track_length_label.setText(track_length)
 
     def load_album_art(self, album):
-        """
-            MOVE
-
-            on album load, look for cover.jpg
-            in the current folder.
-        """
-
-        # if file exists albumdir/cover.jpg':
+        """Load cover.jpg from album folder, or offer to search iTunes."""
         if self.album.art:
             pixmap = QPixmap(str(self.album.art))
             self.album_widget.setPixmap(pixmap)
+        else:
+            self.album_widget.clear()
+            self._offer_artwork_search()
 
-        # Going to handle art download later in a proper way. This was fun though!
-        # else:
-        #     art_url = art_func.get_art_url(self.album.artist, self.album.title)
-        #     if art_url:
-        #         print('there IS an art url', art_url)
-        #         art_path = art_func.download(self.album.path, art_url)
-        #         if art_path:
-        #             self.album.art = art_path
-        #             pixmap = QPixmap(str(self.album.art))
-        #             self.album_widget.setPixmap(pixmap)
+    def _offer_artwork_search(self):
+        """Open the artwork finder dialog to search iTunes for cover art."""
+        if not self.album or not self.album.path:
+            return
+        import theme as theme_mod
+        app = self.window()
+        t = getattr(app, 'current_theme', theme_mod.LIGHT)
+        # Override accent like apply_theme does
+        t = dict(t)
+        t['accent'] = getattr(app, 'accent_color', theme_mod.DEFAULT_ACCENT)
+        t['selection'] = t['accent']
+
+        dialog = ArtworkFinderDialog(
+            self.album.artist, self.album.title,
+            self.album.path, t, parent=self
+        )
+        dialog.artwork_saved.connect(self._on_artwork_saved)
+        dialog.exec_()
+
+    def _on_artwork_saved(self, path):
+        """Called when artwork is downloaded and saved."""
+        from pathlib import Path as P
+        self.album.art = P(path)
+        pixmap = QPixmap(path)
+        self.album_widget.setPixmap(pixmap)
 
     def _toggle_panel(self, panel, button):
         """Hides or shows a side panel and shrinks/grows the window to match."""

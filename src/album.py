@@ -21,7 +21,8 @@ class Album:
             self.year = self.tracklist[0].year
             path_split = self.tracklist[0].path.split('/')[:-1]
             self.path = '/'.join(path_split)
-            self.art = Path(self.path, 'cover.jpg')
+            art_path = Path(self.path, 'cover.jpg')
+            self.art = art_path if art_path.exists() else None
 
     def tracklist_from_folder(self, directory_path):
         """
