@@ -30,6 +30,10 @@ def app_qss(t):
         #main-window {{
             background-color: {t['bg']};
         }}
+        QSplitter::handle {{
+            background-color: {t['border']};
+            width: 3px;
+        }}
         QMenuBar {{
             background-color: {t['bg']};
             color: {t['fg']};
@@ -139,8 +143,7 @@ def folder_view_qss(t):
             color: {t['fg']};
         }}
         QTreeView::item {{
-            height: 40;
-            padding: 2px 0;
+            height: 25;
         }}
         QTreeView::item:selected {{
             background-color: {t['selection']};

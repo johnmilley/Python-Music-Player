@@ -306,19 +306,18 @@ class Player(QWidget):
         if not panel:
             return
         app_window = self.window()
-        spacing = app_window.layout_app.spacing()
+        handle_width = app_window.splitter.handleWidth()
 
         if panel.isVisible():
-            panel_width = panel.width() + spacing
+            panel_width = panel.width() + handle_width
             panel.setVisible(False)
             button.setChecked(False)
             app_window.resize(app_window.width() - panel_width, app_window.height())
         else:
             panel.setVisible(True)
             button.setChecked(True)
-            # let layout calculate the panel's size, then grow the window
             panel.adjustSize()
-            panel_width = panel.sizeHint().width() + spacing
+            panel_width = panel.sizeHint().width() + handle_width
             app_window.resize(app_window.width() + panel_width, app_window.height())
 
     def toggle_library(self):

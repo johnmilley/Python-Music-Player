@@ -8,7 +8,8 @@ from player import Player
 from album_view import AlbumView
 import theme
 
-from PyQt5.QtWidgets import (QMainWindow, QApplication, QWidget, QHBoxLayout, QAction)
+from PyQt5.QtWidgets import (QMainWindow, QApplication, QWidget, QHBoxLayout, QAction, QSplitter)
+from PyQt5.QtCore import Qt
 
 
 class App(QMainWindow):
@@ -29,11 +30,19 @@ class App(QMainWindow):
 
         self.setWindowTitle("lp")
         self.setMinimumSize(800, 600)
-        self.layout_app = QHBoxLayout()
 
-        self.layout_app.addWidget(self.folder_view, stretch=2)
-        self.layout_app.addWidget(self.player, stretch=3)
-        self.layout_app.addWidget(self.album_view, stretch=2)
+        self.splitter = QSplitter(Qt.Horizontal)
+        self.splitter.setObjectName('main-splitter')
+        self.splitter.addWidget(self.folder_view)
+        self.splitter.addWidget(self.player)
+        self.splitter.addWidget(self.album_view)
+        self.splitter.setStretchFactor(0, 2)
+        self.splitter.setStretchFactor(1, 3)
+        self.splitter.setStretchFactor(2, 2)
+
+        self.layout_app = QHBoxLayout()
+        self.layout_app.setContentsMargins(0, 0, 0, 0)
+        self.layout_app.addWidget(self.splitter)
         self.app_widget.setLayout(self.layout_app)
 
         self.setCentralWidget(self.app_widget)
