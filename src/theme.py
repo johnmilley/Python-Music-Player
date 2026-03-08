@@ -32,7 +32,7 @@ FONT_SIZES = [10, 11, 12, 13, 14, 16, 18, 20]
 
 DEFAULT_ACCENT = 'orange'
 ACCENT_PRESETS = {
-    'Orange':     '#ffa500',
+    'Orange':     'orange',
     'Coral':      '#ff6f61',
     'Rose':       '#e8557a',
     'Lavender':   '#9b7ed8',

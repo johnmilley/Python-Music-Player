@@ -53,7 +53,6 @@ class App(QMainWindow):
         self.prefs_menu = self.menuBar().addMenu('Preferences')
 
         self.dark_mode_action = QAction('Dark Mode', self)
-        self.dark_mode_action.setCheckable(True)
         self.dark_mode_action.triggered.connect(self.toggle_theme)
         self.prefs_menu.addAction(self.dark_mode_action)
 
@@ -102,6 +101,11 @@ class App(QMainWindow):
 
     def apply_theme(self, t):
         self.current_theme = t
+        # Update menu text to show available action
+        if t is theme.DARK:
+            self.dark_mode_action.setText('Light Mode')
+        else:
+            self.dark_mode_action.setText('Dark Mode')
         # Override accent/selection with user's chosen color
         t = dict(t)
         t['accent'] = self.accent_color
@@ -112,8 +116,8 @@ class App(QMainWindow):
         self.folder_view.setStyleSheet(theme.folder_view_qss(t, fs))
         self.album_view.setStyleSheet(theme.album_view_qss(t, fs))
 
-    def toggle_theme(self, checked):
-        if checked:
+    def toggle_theme(self):
+        if self.current_theme is theme.LIGHT:
             self.apply_theme(theme.DARK)
         else:
             self.apply_theme(theme.LIGHT)
@@ -160,7 +164,6 @@ class App(QMainWindow):
             for action in self.accent_group.actions():
                 action.setChecked(action.data() == saved_accent)
         if self.settings.value('dark_mode') == 'true':
-            self.dark_mode_action.setChecked(True)
             self.apply_theme(theme.DARK)
         else:
             self.apply_theme(self.current_theme)
