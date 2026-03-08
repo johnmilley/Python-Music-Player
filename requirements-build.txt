@@ -5,6 +5,7 @@ PyQt5_sip==12.17.2
 just_playback==0.1.8
 mutagen==1.47.0
 cffi>=1.0
+Pillow>=10.0.0
 
 # Build tool
 pyinstaller>=6.0

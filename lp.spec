@@ -69,7 +69,7 @@ if sys.platform == 'darwin':
     app = BUNDLE(
         coll,
         name='lp.app',
-        icon='icon.png',
+        icon=None,
         bundle_identifier='com.lp.musicplayer',
         info_plist={
             'CFBundleShortVersionString': '1.0.0',
