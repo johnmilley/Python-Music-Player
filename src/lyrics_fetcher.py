@@ -21,8 +21,10 @@ def lyrics_path_for_track(track, album):
     """Return the expected .txt path for a track's lyrics."""
     title = sanitize_filename(track.title or 'unknown')
     num = getattr(track, 'tracknumber', 0) or 0
+    lyrics_dir = Path(album.path) / 'lyrics'
+    lyrics_dir.mkdir(exist_ok=True)
     filename = f'{num:02d}_{title}.txt'
-    return Path(album.path) / filename
+    return lyrics_dir / filename
 
 
 class LyricsFetchThread(QThread):
