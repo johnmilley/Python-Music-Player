@@ -139,7 +139,8 @@ def folder_view_qss(t):
             color: {t['fg']};
         }}
         QTreeView::item {{
-            height: 25;
+            height: 40;
+            padding: 2px 0;
         }}
         QTreeView::item:selected {{
             background-color: {t['selection']};
@@ -179,8 +180,7 @@ def album_view_qss(t):
             color: {t['fg']};
         }}
         #track-list::item {{
-            height: 45;
-            padding: 4px 0;
+            height: 25;
         }}
         #track-list::item:selected {{
             background-color: {t['selection']};

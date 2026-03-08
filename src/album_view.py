@@ -65,7 +65,7 @@ class AlbumView(QWidget):
         
         if self.album.tracklist:
             for i, track in enumerate(self.album.tracklist):
-                item = QListWidgetItem(self._format_track(track))
+                item = QListWidgetItem(str(track))
                 item.setData(Qt.UserRole, i)
                 self.track_list_widget.addItem(item)
             # self.track_list_widget.setFixedHeight(self.track_list_widget.sizeHint().height())
@@ -91,17 +91,6 @@ class AlbumView(QWidget):
         if self.player:
             self.player.play(self.album, track_pos)
             
-    def _format_track(self, track):
-        """Format a track for display. Uses two lines for readability:
-           line 1: track number and title (or filename)
-           line 2: indented duration
-        """
-        duration = track.length_to_string(track.length)
-        if track.tracknumber and track.title:
-            return f"{track.tracknumber}. {track.title}\n     {duration}"
-        else:
-            return f"{track.filename}\n     {duration}"
-
     def get_current_track(self):
         if self.current_track:
             return self.current_track
