@@ -50,8 +50,10 @@ def app_qss(t):
         }}
         QSplitter::handle {{
             background-color: {t['bg']};
-            border-left: 1px dotted {t['grip']};
-            border-right: 1px dotted {t['grip']};
+            border-left: 1px solid {t['grip']};
+            border-right: 1px solid {t['grip']};
+            border-top: 2px solid {t['accent']};
+            border-bottom: 2px solid {t['accent']};
             width: 7px;
         }}
         QMenuBar {{
@@ -59,7 +61,7 @@ def app_qss(t):
             color: {t['fg']};
             font-family: {FONT};
             font-size: 11pt;
-            border-bottom: 1px solid {t['border']};
+            border-bottom: 2px solid {t['accent']};
         }}
         QMenuBar::item:selected {{
             background-color: {t['accent']};
@@ -121,7 +123,7 @@ def player_qss(t, fs=DEFAULT_FONT_SIZE):
             color: {t['fg']};
         }}
         QProgressBar {{
-            border: 1px solid {t['border']};
+            border: 1px solid {t['accent']};
             background: {t['bg']};
         }}
         QProgressBar::chunk {{
