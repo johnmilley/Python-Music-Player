@@ -8,14 +8,14 @@ from pathlib import Path
 
 # pyqt5 libraries
 from PyQt5.QtWidgets import (
-    QApplication, QWidget, QVBoxLayout, QFileSystemModel, QTreeView, QMenu, QShortcut
+    QApplication, QWidget, QVBoxLayout, QFileSystemModel, QMenu
 )
 from PyQt5.QtCore import Qt, QDir, pyqtSignal
-from PyQt5.QtGui import QKeySequence
 
 # project files
 from album_view import AlbumView
 from music_icon_provider import MusicIconProvider
+from vim_views import VimTreeView, SearchBar
 
 class FolderView(QWidget):
     """
@@ -39,7 +39,7 @@ class FolderView(QWidget):
         self.model.setFilter(QDir.Dirs | QDir.NoDotAndDotDot )
 
         self.layout = QVBoxLayout()
-        self.view = QTreeView()
+        self.view = VimTreeView()
         self.view.setContextMenuPolicy(Qt.CustomContextMenu) # for right click open
         self.view.customContextMenuRequested.connect(self.open_context_menu)
         self.view.header().hide()
@@ -51,7 +51,7 @@ class FolderView(QWidget):
 
         for i in range(1, self.model.columnCount()):
             self.view.hideColumn(i)
-        
+
         self.view.setIndentation(20)
 
         self.view.setWordWrap(True)
@@ -59,32 +59,35 @@ class FolderView(QWidget):
         self.view.clicked.connect(self.toggle_expand)
         self.view.doubleClicked.connect(self.on_item_double_clicked)
 
-        self.layout.addWidget(self.view)
+        # Search bar
+        self.search_bar = SearchBar(self.view)
+        self.view.set_search_bar(self.search_bar)
+        self.search_bar.textChanged.connect(self._on_search)
 
-        # Vim navigation: j = down, k = up
-        QShortcut(QKeySequence('j'), self.view,
-                  lambda: self._move_selection(1))
-        QShortcut(QKeySequence('k'), self.view,
-                  lambda: self._move_selection(-1))
+        self.layout.addWidget(self.search_bar)
+        self.layout.addWidget(self.view)
 
         self.setLayout(self.layout)
 
-    def _move_selection(self, direction):
-        """Move the tree view selection up or down by direction (+1 or -1)."""
-        current = self.view.currentIndex()
-        if direction > 0:
-            next_index = self.view.indexBelow(current)
-        else:
-            next_index = self.view.indexAbove(current)
-        if next_index.isValid():
-            self.view.setCurrentIndex(next_index)
+    def _on_search(self, text):
+        """Jump to first folder matching the search text."""
+        if not text:
+            return
+        root = self.view.rootIndex()
+        for row in range(self.model.rowCount(root)):
+            idx = self.model.index(row, 0, root)
+            name = self.model.fileName(idx)
+            if text.lower() in name.lower():
+                self.view.setCurrentIndex(idx)
+                self.view.scrollTo(idx)
+                break
 
     def toggle_expand(self, index):
         if self.view.isExpanded(index):
             self.view.collapse(index)
         else:
             self.view.expand(index)
-    
+
     def on_item_double_clicked(self, index):
         # Load Album in AlbumViewer if the item is
         # a directory and contains music

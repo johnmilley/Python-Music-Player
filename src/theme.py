@@ -193,6 +193,14 @@ def folder_view_qss(t, fs=DEFAULT_FONT_SIZE):
         QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
             background: none;
         }}
+        #search-bar {{
+            background-color: {t['bg']};
+            color: {t['fg']};
+            border: 1px solid {t['accent']};
+            font-family: {FONT};
+            font-size: {fs}pt;
+            padding: 4px;
+        }}
     """
 
 def album_view_qss(t, fs=DEFAULT_FONT_SIZE):
@@ -210,5 +218,13 @@ def album_view_qss(t, fs=DEFAULT_FONT_SIZE):
         #track-list::item:selected {{
             background-color: {t['selection']};
             color: {t['selection_text']};
+        }}
+        #search-bar {{
+            background-color: {t['bg']};
+            color: {t['fg']};
+            border: 1px solid {t['accent']};
+            font-family: {FONT};
+            font-size: {fs}pt;
+            padding: 4px;
         }}
     """

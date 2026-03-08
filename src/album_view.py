@@ -5,13 +5,13 @@ from pathlib import Path
 
 # pyqt5
 from PyQt5.QtWidgets import (
-    QApplication, QWidget, QVBoxLayout, QListWidget, QListWidgetItem, QShortcut
+    QApplication, QWidget, QVBoxLayout, QListWidgetItem
 )
 from PyQt5.QtCore import Qt, pyqtSignal
-from PyQt5.QtGui import QKeySequence
 
 # local
 from album import Album
+from vim_views import VimListWidget, SearchBar
 
 
 class AlbumView(QWidget):
@@ -24,36 +24,40 @@ class AlbumView(QWidget):
         self.current_track = None
         self.album = None
         self.init_gui()
-        self.player = player 
-        
+        self.player = player
+
     def init_gui(self):
         """
             builds the GUI and connects events
         """
         layout_main = QVBoxLayout()
 
-        self.track_list_widget = QListWidget()
+        self.track_list_widget = VimListWidget()
         self.track_list_widget.addItem("No album loaded")
         self.track_list_widget.setWordWrap(True)
         self.track_list_widget.setObjectName('track-list')
         self.track_list_widget.itemDoubleClicked.connect(self.set_current_track)
 
-        layout_main.addWidget(self.track_list_widget)
+        # Search bar
+        self.search_bar = SearchBar(self.track_list_widget)
+        self.track_list_widget.set_search_bar(self.search_bar)
+        self.search_bar.textChanged.connect(self._on_search)
 
-        # Vim navigation: j = down, k = up
-        QShortcut(QKeySequence('j'), self.track_list_widget,
-                  lambda: self._move_selection(1))
-        QShortcut(QKeySequence('k'), self.track_list_widget,
-                  lambda: self._move_selection(-1))
+        layout_main.addWidget(self.search_bar)
+        layout_main.addWidget(self.track_list_widget)
 
         self.setLayout(layout_main)
 
-    def _move_selection(self, direction):
-        """Move the track list selection up or down by direction (+1 or -1)."""
-        current = self.track_list_widget.currentRow()
-        new_row = current + direction
-        if 0 <= new_row < self.track_list_widget.count():
-            self.track_list_widget.setCurrentRow(new_row)
+    def _on_search(self, text):
+        """Jump to first track matching the search text."""
+        if not text:
+            return
+        for row in range(self.track_list_widget.count()):
+            item = self.track_list_widget.item(row)
+            if text.lower() in item.text().lower():
+                self.track_list_widget.setCurrentRow(row)
+                self.track_list_widget.scrollToItem(item)
+                break
 
     def load_album_listing(self, directory_path):
         """
@@ -62,7 +66,7 @@ class AlbumView(QWidget):
         self.track_list_widget.clear()
 
         self.album = Album(Path(directory_path))
-        
+
         if self.album.tracklist:
             for i, track in enumerate(self.album.tracklist):
                 item = QListWidgetItem(str(track))
@@ -90,7 +94,7 @@ class AlbumView(QWidget):
         # Send Album to Player
         if self.player:
             self.player.play(self.album, track_pos)
-            
+
     def get_current_track(self):
         if self.current_track:
             return self.current_track
@@ -105,5 +109,5 @@ def main():
     album_view.show()
     sys.exit(app.exec_())
 
-if __name__ == '__main__': 
+if __name__ == '__main__':
     main()
