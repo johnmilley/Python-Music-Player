@@ -1,6 +1,7 @@
 # App contains Player, Album View, and FolderView widgets
 
 import sys
+from pathlib import Path
 
 # local
 from folder_view import FolderView
@@ -32,6 +33,8 @@ class App(QMainWindow):
         self.album_view.player = self.player
 
         self.setWindowTitle("lp")
+        icon_path = Path(__file__).parent.parent / 'icon.png'
+        self.setWindowIcon(QIcon(str(icon_path)))
         self.setMinimumSize(800, 600)
 
         self.splitter = QSplitter(Qt.Horizontal)
