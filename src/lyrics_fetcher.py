@@ -1,5 +1,5 @@
 # Lyrics fetcher using LRCLIB API
-# Downloads plain lyrics and saves as .txt files in the album folder
+# Downloads synced (.lrc) or plain (.txt) lyrics to album folder
 
 import json
 import re
@@ -17,32 +17,44 @@ def sanitize_filename(name):
     return re.sub(r'[\\/:*?"<>|]', '_', name)
 
 
-def lyrics_path_for_track(track, album):
-    """Return the expected .txt path for a track's lyrics."""
+def _lyrics_base(track, album):
+    """Return (lyrics_dir, base_name) for a track."""
     title = sanitize_filename(track.title or 'unknown')
     num = getattr(track, 'tracknumber', 0) or 0
     lyrics_dir = Path(album.path) / 'lyrics'
     lyrics_dir.mkdir(exist_ok=True)
-    filename = f'{num:02d}_{title}.txt'
-    return lyrics_dir / filename
+    base = f'{num:02d}_{title}'
+    return lyrics_dir, base
+
+
+def lyrics_path_for_track(track, album):
+    """Return the cached lyrics path (.lrc preferred, then .txt)."""
+    lyrics_dir, base = _lyrics_base(track, album)
+    lrc = lyrics_dir / f'{base}.lrc'
+    if lrc.exists():
+        return lrc
+    txt = lyrics_dir / f'{base}.txt'
+    return txt
 
 
 class LyricsFetchThread(QThread):
     """Fetch lyrics from LRCLIB in background, save to disk."""
     finished = pyqtSignal(str, str)  # (file_path, lyrics_text)
 
-    def __init__(self, artist, track_title, album_title, save_path):
+    def __init__(self, artist, track_title, album_title, track, album):
         super().__init__()
         self.artist = artist or ''
         self.track_title = track_title or ''
         self.album_title = album_title or ''
-        self.save_path = Path(save_path)
+        self.track = track
+        self.album = album
 
     def run(self):
         # Check cache first
-        if self.save_path.exists():
-            text = self.save_path.read_text(encoding='utf-8')
-            self.finished.emit(str(self.save_path), text)
+        cached = lyrics_path_for_track(self.track, self.album)
+        if cached.exists():
+            text = cached.read_text(encoding='utf-8')
+            self.finished.emit(str(cached), text)
             return
 
         # Query LRCLIB
@@ -59,11 +71,21 @@ class LyricsFetchThread(QThread):
             })
             data = urllib.request.urlopen(req, timeout=10).read()
             result = json.loads(data)
-            lyrics = result.get('plainLyrics') or ''
 
-            if lyrics:
-                self.save_path.write_text(lyrics, encoding='utf-8')
-                self.finished.emit(str(self.save_path), lyrics)
+            # Prefer synced lyrics
+            synced = result.get('syncedLyrics') or ''
+            plain = result.get('plainLyrics') or ''
+
+            lyrics_dir, base = _lyrics_base(self.track, self.album)
+
+            if synced:
+                path = lyrics_dir / f'{base}.lrc'
+                path.write_text(synced, encoding='utf-8')
+                self.finished.emit(str(path), synced)
+            elif plain:
+                path = lyrics_dir / f'{base}.txt'
+                path.write_text(plain, encoding='utf-8')
+                self.finished.emit(str(path), plain)
             else:
                 self.finished.emit('', '')
         except Exception as e:

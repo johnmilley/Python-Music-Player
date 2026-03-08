@@ -36,10 +36,11 @@ class App(QMainWindow):
         self.player.folder_view = self.folder_view
         self.album_view.player = self.player
 
-        # Lyrics fetching
+        # Lyrics fetching and sync
         self._lyrics_thread = None
         self._failed_lyrics = set()  # track paths with no results
         self.player.track_changed.connect(self._on_track_changed)
+        self.player.timer.timeout.connect(self._update_lyrics_position)
 
         self.setWindowTitle("lp")
         icon_path = Path(__file__).parent.parent / 'icon.png'
@@ -156,6 +157,7 @@ class App(QMainWindow):
         self.folder_view.setStyleSheet(theme.folder_view_qss(t, fs))
         self.album_view.setStyleSheet(theme.album_view_qss(t, fs))
         self.lyrics_widget.setStyleSheet(theme.lyrics_qss(t, fs))
+        self.lyrics_widget.set_theme(t)
 
     def toggle_theme(self):
         if self.current_theme is theme.LIGHT:
@@ -337,13 +339,14 @@ class App(QMainWindow):
             return
 
         # Already tried and failed for this track
-        if str(path) in self._failed_lyrics:
+        track_key = f'{track.artist}:{track.title}:{track.album}'
+        if track_key in self._failed_lyrics:
             self.lyrics_widget.set_lyrics('')
             return
 
         self.lyrics_widget.set_lyrics('Fetching lyrics...')
         self._lyrics_thread = LyricsFetchThread(
-            track.artist, track.title, track.album, str(path)
+            track.artist, track.title, track.album, track, self.player.album
         )
         self._lyrics_thread.finished.connect(self._on_lyrics_fetched)
         self._lyrics_thread.start()
@@ -352,8 +355,15 @@ class App(QMainWindow):
         if text:
             self.lyrics_widget.set_lyrics(text)
         else:
-            self._failed_lyrics.add(file_path or '')
+            track = self.player.current_track
+            if track:
+                self._failed_lyrics.add(f'{track.artist}:{track.title}:{track.album}')
             self.lyrics_widget.set_lyrics('')
+
+    def _update_lyrics_position(self):
+        """Feed current playback position to lyrics widget for sync."""
+        if self.player.playback.playing and self.lyrics_widget.isVisible():
+            self.lyrics_widget.update_position(self.player.playback.curr_pos)
 
     def toggle_miniplayer(self):
         if self.is_miniplayer:
