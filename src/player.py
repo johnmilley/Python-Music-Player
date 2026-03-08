@@ -277,6 +277,7 @@ class Player(QWidget):
 
     def resume(self):
         self.playback.resume()
+        self.timer.start(self.APP_UPDATE_TIME)
         self.play_button.setText('PAUSE')
 
     def update_gui_after_tracklist_load(self, album):
