@@ -42,7 +42,9 @@ class App(QMainWindow):
         self.splitter.setStretchFactor(0, 2)
         self.splitter.setStretchFactor(1, 3)
         self.splitter.setStretchFactor(2, 2)
-        self.splitter.setCollapsible(1, False)  # player can't be squeezed out
+        self.splitter.setCollapsible(0, False)  # folder view
+        self.splitter.setCollapsible(1, False)  # player
+        self.splitter.setCollapsible(2, False)  # album view
 
         self.layout_app = QHBoxLayout()
         self.layout_app.setContentsMargins(0, 0, 0, 0)
