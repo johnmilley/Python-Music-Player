@@ -55,6 +55,17 @@ def app_qss(t):
             border-top: 2px solid {t['accent']};
             border-bottom: 2px solid {t['accent']};
             width: 7px;
+            height: 7px;
+        }}
+        QSplitter::handle:horizontal {{
+            width: 7px;
+        }}
+        QSplitter::handle:vertical {{
+            height: 7px;
+            border-left: 2px solid {t['accent']};
+            border-right: 2px solid {t['accent']};
+            border-top: 1px solid {t['grip']};
+            border-bottom: 1px solid {t['grip']};
         }}
         QMenuBar {{
             background-color: {t['bg']};
