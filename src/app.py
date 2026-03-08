@@ -376,8 +376,12 @@ class App(QMainWindow):
         self.lyrics_widget.setVisible(vis)
         self._mini_lyrics_btn.setChecked(vis)
         # Resize window to accommodate lyrics
-        h = self.height()
-        self.resize(self.width(), h + (200 if vis else -200))
+        if vis:
+            self.lyrics_widget.setMinimumHeight(250)
+            self.resize(self.width(), self.height() + 350)
+        else:
+            self.lyrics_widget.setMinimumHeight(0)
+            self.resize(self.width(), 400)
 
     def enter_miniplayer(self):
         if self.is_miniplayer:
