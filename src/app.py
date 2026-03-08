@@ -119,6 +119,10 @@ class App(QMainWindow):
         last_album = self.settings.value('last_album')
         if last_album:
             self.album_view.load_album_listing(last_album)
+            track_pos = self.settings.value('last_track_pos', 0, type=int)
+            seek_pos = self.settings.value('last_seek_pos', 0.0, type=float)
+            if self.album_view.album and track_pos < len(self.album_view.album.tracklist):
+                self.player.load_track(self.album_view.album, track_pos, seek_pos)
 
     def closeEvent(self, event):
         self.settings.setValue('geometry', self.saveGeometry())
@@ -127,6 +131,9 @@ class App(QMainWindow):
         self.settings.setValue('font_size', self.font_size)
         if self.album_view.album and self.album_view.album.path:
             self.settings.setValue('last_album', self.album_view.album.path)
+        if self.player.current_track:
+            self.settings.setValue('last_track_pos', self.player.track_pos)
+            self.settings.setValue('last_seek_pos', self.player.playback.curr_pos)
         super().closeEvent(event)
 
 def main():

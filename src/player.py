@@ -247,6 +247,30 @@ class Player(QWidget):
         if self.album_view:
             self.album_view.track_list_widget.setCurrentRow(self.track_pos)
             
+    def load_track(self, album, track_pos, seek_to=0):
+        """Load a track and update UI without playing. Optionally seek to position."""
+        self.album = album
+        self.track_pos = track_pos
+        self.current_track = self.album.tracklist[self.track_pos]
+
+        self.update_gui_after_tracklist_load(self.album)
+        self.play_button.setText('PLAY')
+
+        if self.album_view:
+            self.album_view.track_list_widget.setCurrentRow(self.track_pos)
+
+        try:
+            self.playback.load_file(self.current_track.path)
+            if seek_to > 0:
+                self.playback.seek(seek_to)
+                progress = int((seek_to / self.current_track.length) * 1000)
+                self.progress_bar.setValue(progress)
+                self.track_progress_label.setText(
+                    self.current_track.length_to_string(seek_to))
+            self.playback.pause()
+        except:
+            print(f"LOG: Unable to load track.")
+
     def pause(self):
         self.playback.pause()
 
