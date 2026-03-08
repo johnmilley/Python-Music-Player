@@ -49,23 +49,13 @@ def app_qss(t):
             background-color: {t['bg']};
         }}
         QSplitter::handle {{
-            background-color: {t['bg']};
-            border-left: 1px solid {t['grip']};
-            border-right: 1px solid {t['grip']};
-            border-top: 2px solid {t['accent']};
-            border-bottom: 2px solid {t['accent']};
-            width: 7px;
-            height: 7px;
+            background-color: {t['accent']};
         }}
         QSplitter::handle:horizontal {{
-            width: 7px;
+            width: 3px;
         }}
         QSplitter::handle:vertical {{
-            height: 7px;
-            border-left: 2px solid {t['accent']};
-            border-right: 2px solid {t['accent']};
-            border-top: 1px solid {t['grip']};
-            border-bottom: 1px solid {t['grip']};
+            height: 3px;
         }}
         QMenuBar {{
             background-color: {t['bg']};

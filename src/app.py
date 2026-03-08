@@ -254,9 +254,21 @@ class App(QMainWindow):
             ('q',       'Quit',                self.close),
             ('?',       'Show shortcuts',      self.show_help),
         ]
+        # Keys that conflict with vim view navigation
+        _vim_keys = {'h', 'j', 'k', 'l', 'g', '/'}
         for key, _, callback in self.keybindings:
             shortcut = QShortcut(QKeySequence(key), self)
-            shortcut.activated.connect(lambda cb=callback: cb() if not isinstance(self.focusWidget(), (QLineEdit, VimTreeView, VimListWidget)) else None)
+            if key.lower() in _vim_keys:
+                # Suppress when vim views or search bar have focus
+                shortcut.activated.connect(
+                    lambda cb=callback: cb() if not isinstance(
+                        self.focusWidget(), (QLineEdit, VimTreeView, VimListWidget)
+                    ) else None)
+            else:
+                # Only suppress in search bar
+                shortcut.activated.connect(
+                    lambda cb=callback: cb() if not isinstance(
+                        self.focusWidget(), QLineEdit) else None)
 
     def _seek_relative(self, seconds):
         if self.player.current_track and self.player.playback.active:
