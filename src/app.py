@@ -114,6 +114,12 @@ class App(QMainWindow):
         custom_action.triggered.connect(self.pick_custom_accent)
         self.accent_menu.addAction(custom_action)
 
+        # Change album art action
+        self.prefs_menu.addSeparator()
+        self.change_art_action = QAction('Change Album Art...', self)
+        self.change_art_action.triggered.connect(self._change_album_art)
+        self.prefs_menu.addAction(self.change_art_action)
+
         # Miniplayer state
         self.is_miniplayer = False
         self._pre_mini_geometry = None
@@ -173,6 +179,21 @@ class App(QMainWindow):
             if checked:
                 checked.setChecked(False)
             self.set_accent(color.name())
+
+    def _change_album_art(self):
+        """Open artwork finder to search for new album cover."""
+        if not self.player.album or not self.player.album.path:
+            return
+        from artwork_finder import ArtworkFinderDialog
+        t = dict(self.current_theme)
+        t['accent'] = self.accent_color
+        t['selection'] = self.accent_color
+        dialog = ArtworkFinderDialog(
+            self.player.album.artist, self.player.album.title,
+            self.player.album.path, t, parent=self
+        )
+        dialog.artwork_saved.connect(self.player._on_artwork_saved)
+        dialog.exec_()
 
     def _color_icon(self, color, width=64, height=16):
         pixmap = QPixmap(width, height)

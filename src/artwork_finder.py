@@ -245,6 +245,12 @@ class DownloadThread(QThread):
     def run(self):
         try:
             dest = Path(self.album_path) / 'cover.jpg'
+            # Back up existing cover if present
+            if dest.exists():
+                n = 1
+                while (Path(self.album_path) / f'cover_{n}.jpg').exists():
+                    n += 1
+                dest.rename(Path(self.album_path) / f'cover_{n}.jpg')
             req = urllib.request.Request(self.url, headers={
                 'User-Agent': 'lp-music-player/1.0'
             })
