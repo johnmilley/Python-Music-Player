@@ -137,10 +137,6 @@ def player_qss(t, fs=DEFAULT_FONT_SIZE):
             font-family: {FONT};
             font-size: {fs + 5}pt;
         }}
-        #play-button {{
-            background-color: {t['accent']};
-            color: {t['selection_text']};
-        }}
         #toggle-library-btn, #toggle-folder-btn {{
             min-width: 40px;
             max-width: 40px;

@@ -135,7 +135,7 @@ class Player(QWidget):
         self.layout_player_buttons.setContentsMargins(10, 0, 10, 10)
 
         # PREV
-        self.prev_track_button = QPushButton('prev')
+        self.prev_track_button = QPushButton('<<')
         self.prev_track_button.pressed.connect(self.prev_track)
         self.prev_track_button.setObjectName('prev-button')
 
@@ -145,7 +145,7 @@ class Player(QWidget):
         self.play_button.setObjectName('play-button')
 
         # NEXT
-        self.next_track_button = QPushButton('next')
+        self.next_track_button = QPushButton('>>')
         self.next_track_button.pressed.connect(self.next_track)
         self.next_track_button.setObjectName('next-button')
 
