@@ -126,7 +126,7 @@ class LyricsWidget(QWidget):
             self._scroll_to_line(active_idx)
 
     def _scroll_to_line(self, idx):
-        """Scroll so the active line is roughly centered."""
+        """Scroll so the active line sits in the top 30% of the viewport."""
         if not self._synced_lines:
             return
         total = len(self._synced_lines)
@@ -134,9 +134,16 @@ class LyricsWidget(QWidget):
             return
         scrollbar = self.scroll.verticalScrollBar()
         max_val = scrollbar.maximum()
-        # Estimate position as fraction of total lines
-        frac = max(0, (idx - 3)) / max(1, total - 1)
-        scrollbar.setValue(int(frac * max_val))
+        label_h = self.label.sizeHint().height()
+        viewport_h = self.scroll.viewport().height()
+        if label_h <= viewport_h:
+            return
+        # Estimate the y position of the active line
+        line_y = (idx / max(1, total)) * label_h
+        # Place it at 30% from the top of the viewport
+        target = int(line_y - viewport_h * 0.3)
+        target = max(0, min(target, max_val))
+        scrollbar.setValue(target)
 
     def clear(self):
         self._synced_lines = None
