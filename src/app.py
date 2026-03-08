@@ -96,6 +96,11 @@ class App(QMainWindow):
         custom_action.triggered.connect(self.pick_custom_accent)
         self.accent_menu.addAction(custom_action)
 
+        # Miniplayer state
+        self.is_miniplayer = False
+        self._pre_mini_geometry = None
+        self._pre_mini_splitter = None
+
         # Theme setup
         self.current_theme = theme.LIGHT
         self.apply_theme(self.current_theme)
@@ -121,8 +126,9 @@ class App(QMainWindow):
         t['accent'] = self.accent_color
         t['selection'] = self.accent_color
         fs = self.font_size
+        compact = self.is_miniplayer
         self.setStyleSheet(theme.app_qss(t))
-        self.player.setStyleSheet(theme.player_qss(t, fs))
+        self.player.setStyleSheet(theme.player_qss(t, fs, compact))
         self.folder_view.setStyleSheet(theme.folder_view_qss(t, fs))
         self.album_view.setStyleSheet(theme.album_view_qss(t, fs))
 
@@ -177,6 +183,8 @@ class App(QMainWindow):
             self.apply_theme(theme.DARK)
         else:
             self.apply_theme(self.current_theme)
+        if self.settings.value('miniplayer') == 'true':
+            self.enter_miniplayer()
         last_album = self.settings.value('last_album')
         if last_album:
             self.album_view.load_album_listing(last_album)
@@ -194,8 +202,9 @@ class App(QMainWindow):
             ('b',       'Seek back 5s',        lambda: self._seek_relative(-5)),
             ('.',       'Volume up',           lambda: self._adjust_volume(0.05)),
             (',',       'Volume down',         lambda: self._adjust_volume(-0.05)),
-            ('1',       'Toggle library',      self.player.toggle_library),
-            ('2',       'Toggle tracklist',    self.player.toggle_tracklist),
+            ('1',       'Toggle library',      lambda: self.exit_miniplayer() if self.is_miniplayer else self.player.toggle_library()),
+            ('2',       'Toggle tracklist',    lambda: self.exit_miniplayer() if self.is_miniplayer else self.player.toggle_tracklist()),
+            ('m',       'Toggle miniplayer',   self.toggle_miniplayer),
             ('q',       'Quit',                self.close),
             ('?',       'Show shortcuts',      self.show_help),
         ]
@@ -237,12 +246,91 @@ class App(QMainWindow):
         dialog.setLayout(layout)
         dialog.exec_()
 
+    def toggle_miniplayer(self):
+        if self.is_miniplayer:
+            self.exit_miniplayer()
+        else:
+            self.enter_miniplayer()
+
+    def enter_miniplayer(self):
+        if self.is_miniplayer:
+            return
+        self.is_miniplayer = True
+
+        # Save current state for restoration
+        self._pre_mini_geometry = self.saveGeometry()
+        self._pre_mini_splitter = self.splitter.saveState()
+        self._pre_mini_library = self.folder_view.isVisible()
+        self._pre_mini_tracklist = self.album_view.isVisible()
+
+        # Hide side panels and menu bar
+        self.folder_view.setVisible(False)
+        self.album_view.setVisible(False)
+        self.menuBar().setVisible(False)
+
+        # Hide non-essential player widgets
+        self.player.toggle_library_btn.setVisible(False)
+        self.player.toggle_folder_btn.setVisible(False)
+        self.player.track_progress_label.setVisible(False)
+        self.player.track_length_label.setVisible(False)
+        self.player.progress_widget.setVisible(False)
+
+        # Reduce minimum sizes
+        self.player.setMinimumSize(200, 250)
+        self.setMinimumSize(280, 320)
+
+        # Restyle for compact mode
+        self.apply_theme(self.current_theme)
+
+        # Resize to compact
+        self.resize(320, 400)
+
+        # Stay on top
+        self.setWindowFlags(self.windowFlags() | Qt.WindowStaysOnTopHint)
+        self.show()
+
+    def exit_miniplayer(self):
+        if not self.is_miniplayer:
+            return
+        self.is_miniplayer = False
+
+        # Remove stay on top
+        self.setWindowFlags(self.windowFlags() & ~Qt.WindowStaysOnTopHint)
+        self.show()
+
+        # Restore minimum sizes
+        self.setMinimumSize(800, 600)
+        self.player.setMinimumSize(350, 500)
+
+        # Show everything
+        self.menuBar().setVisible(True)
+        self.player.toggle_library_btn.setVisible(True)
+        self.player.toggle_folder_btn.setVisible(True)
+        self.player.track_progress_label.setVisible(True)
+        self.player.track_length_label.setVisible(True)
+        self.player.progress_widget.setVisible(True)
+
+        # Restore side panels
+        self.folder_view.setVisible(self._pre_mini_library)
+        self.album_view.setVisible(self._pre_mini_tracklist)
+        self.player.toggle_library_btn.setChecked(self._pre_mini_library)
+        self.player.toggle_folder_btn.setChecked(self._pre_mini_tracklist)
+
+        # Restyle for normal mode
+        self.apply_theme(self.current_theme)
+
+        # Restore geometry
+        if self._pre_mini_geometry:
+            self.restoreGeometry(self._pre_mini_geometry)
+            self.splitter.restoreState(self._pre_mini_splitter)
+
     def closeEvent(self, event):
         self.settings.setValue('geometry', self.saveGeometry())
         self.settings.setValue('splitter', self.splitter.saveState())
         self.settings.setValue('dark_mode', 'true' if self.current_theme is theme.DARK else 'false')
         self.settings.setValue('font_size', self.font_size)
         self.settings.setValue('accent_color', self.accent_color)
+        self.settings.setValue('miniplayer', 'true' if self.is_miniplayer else 'false')
         if self.album_view.album and self.album_view.album.path:
             self.settings.setValue('last_album', self.album_view.album.path)
         if self.player.current_track:

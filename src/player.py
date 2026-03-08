@@ -366,8 +366,9 @@ class Player(QWidget):
         super().resizeEvent(event)
         # Keep album art square, fitting within available width
         available = self.width() - 20  # account for margins
-        size = min(available, self.height() - 250)  # leave room for controls
-        size = max(size, 200)  # minimum size
+        controls_height = 120 if self.height() < 450 else 250
+        size = min(available, self.height() - controls_height)
+        size = max(size, 100)
         self.album_widget.setFixedSize(size, size)
         
 def main():

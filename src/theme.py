@@ -95,18 +95,22 @@ def app_qss(t):
         }}
     """
 
-def player_qss(t, fs=DEFAULT_FONT_SIZE):
+def player_qss(t, fs=DEFAULT_FONT_SIZE, compact=False):
+    btn_h = 35 if compact else 50
+    art_margin = '2px' if compact else '10px'
+    info_fs = fs if compact else fs + 2
+    btn_fs = fs + 2 if compact else fs + 5
     return f"""
         #player {{
             background-color: {t['bg']};
         }}
         #album-art {{
             padding: 0;
-            margin-top: 10px;
+            margin-top: {art_margin};
         }}
         #track-info {{
             font-family: {FONT};
-            font-size: {fs + 2}pt;
+            font-size: {info_fs}pt;
             color: {t['fg']};
         }}
         #track-progress-widget {{
@@ -114,12 +118,12 @@ def player_qss(t, fs=DEFAULT_FONT_SIZE):
         }}
         #track-progress {{
             font-family: {FONT};
-            font-size: {fs + 2}pt;
+            font-size: {info_fs}pt;
             color: {t['fg']};
         }}
         #track-length {{
             font-family: {FONT};
-            font-size: {fs + 2}pt;
+            font-size: {info_fs}pt;
             color: {t['fg']};
         }}
         QProgressBar {{
@@ -133,11 +137,11 @@ def player_qss(t, fs=DEFAULT_FONT_SIZE):
             background-color: {t['bg']};
             border: 1px solid {t['border']};
             color: {t['fg']};
-            min-width: 50px;
-            height: 50px;
+            min-width: {'35px' if compact else '50px'};
+            height: {btn_h}px;
             padding: 0;
             font-family: {FONT};
-            font-size: {fs + 5}pt;
+            font-size: {btn_fs}pt;
         }}
         #toggle-library-btn, #toggle-folder-btn {{
             min-width: 40px;
