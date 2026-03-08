@@ -139,8 +139,8 @@ class App(QMainWindow):
                 checked.setChecked(False)
             self.set_accent(color.name())
 
-    def _color_icon(self, color, size=12):
-        pixmap = QPixmap(size, size)
+    def _color_icon(self, color, width=64, height=16):
+        pixmap = QPixmap(width, height)
         pixmap.fill(QColor(color))
         return QIcon(pixmap)
 
