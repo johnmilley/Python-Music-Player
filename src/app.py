@@ -9,8 +9,9 @@ from album_view import AlbumView
 import theme
 
 from PyQt5.QtWidgets import (QMainWindow, QApplication, QWidget, QHBoxLayout,
-    QAction, QActionGroup, QSplitter)
+    QAction, QActionGroup, QSplitter, QColorDialog)
 from PyQt5.QtCore import Qt, QSettings
+from PyQt5.QtGui import QColor, QPixmap, QIcon
 
 
 class App(QMainWindow):
@@ -70,6 +71,25 @@ class App(QMainWindow):
             self.font_size_group.addAction(action)
             self.font_size_menu.addAction(action)
 
+        # Accent color submenu
+        self.accent_menu = self.prefs_menu.addMenu('Accent Color')
+        self.accent_group = QActionGroup(self)
+        self.accent_color = theme.DEFAULT_ACCENT
+        for name, color in theme.ACCENT_PRESETS.items():
+            action = QAction(name, self)
+            action.setCheckable(True)
+            action.setData(color)
+            action.setIcon(self._color_icon(color))
+            if name == 'Orange':
+                action.setChecked(True)
+            action.triggered.connect(lambda checked, c=color: self.set_accent(c))
+            self.accent_group.addAction(action)
+            self.accent_menu.addAction(action)
+        self.accent_menu.addSeparator()
+        custom_action = QAction('Custom...', self)
+        custom_action.triggered.connect(self.pick_custom_accent)
+        self.accent_menu.addAction(custom_action)
+
         # Theme setup
         self.current_theme = theme.LIGHT
         self.apply_theme(self.current_theme)
@@ -82,6 +102,10 @@ class App(QMainWindow):
 
     def apply_theme(self, t):
         self.current_theme = t
+        # Override accent/selection with user's chosen color
+        t = dict(t)
+        t['accent'] = self.accent_color
+        t['selection'] = self.accent_color
         fs = self.font_size
         self.setStyleSheet(theme.app_qss(t))
         self.player.setStyleSheet(theme.player_qss(t, fs))
@@ -98,6 +122,24 @@ class App(QMainWindow):
         self.font_size = size
         self.apply_theme(self.current_theme)
 
+    def set_accent(self, color):
+        self.accent_color = color
+        self.apply_theme(self.current_theme)
+
+    def pick_custom_accent(self):
+        color = QColorDialog.getColor(QColor(self.accent_color), self, 'Pick Accent Color')
+        if color.isValid():
+            # Uncheck any preset
+            checked = self.accent_group.checkedAction()
+            if checked:
+                checked.setChecked(False)
+            self.set_accent(color.name())
+
+    def _color_icon(self, color, size=12):
+        pixmap = QPixmap(size, size)
+        pixmap.fill(QColor(color))
+        return QIcon(pixmap)
+
     def _restore_state(self):
         geometry = self.settings.value('geometry')
         if geometry:
@@ -111,6 +153,12 @@ class App(QMainWindow):
             for action in self.font_size_group.actions():
                 if action.data() == saved_fs:
                     action.setChecked(True)
+        saved_accent = self.settings.value('accent_color')
+        if saved_accent:
+            self.accent_color = saved_accent
+            # Check matching preset, if any
+            for action in self.accent_group.actions():
+                action.setChecked(action.data() == saved_accent)
         if self.settings.value('dark_mode') == 'true':
             self.dark_mode_action.setChecked(True)
             self.apply_theme(theme.DARK)
@@ -129,6 +177,7 @@ class App(QMainWindow):
         self.settings.setValue('splitter', self.splitter.saveState())
         self.settings.setValue('dark_mode', 'true' if self.current_theme is theme.DARK else 'false')
         self.settings.setValue('font_size', self.font_size)
+        self.settings.setValue('accent_color', self.accent_color)
         if self.album_view.album and self.album_view.album.path:
             self.settings.setValue('last_album', self.album_view.album.path)
         if self.player.current_track:

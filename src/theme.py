@@ -30,6 +30,19 @@ FONT = "'Consolas', 'Courier New', 'Monaco', monospace"
 DEFAULT_FONT_SIZE = 13
 FONT_SIZES = [10, 11, 12, 13, 14, 16, 18, 20]
 
+DEFAULT_ACCENT = 'orange'
+ACCENT_PRESETS = {
+    'Orange':     '#ffa500',
+    'Coral':      '#ff6f61',
+    'Rose':       '#e8557a',
+    'Lavender':   '#9b7ed8',
+    'Sky Blue':   '#5ba4cf',
+    'Teal':       '#2bbbad',
+    'Mint':       '#66cdaa',
+    'Gold':       '#f0c040',
+    'Slate':      '#708090',
+}
+
 def app_qss(t):
     return f"""
         #main-window {{
