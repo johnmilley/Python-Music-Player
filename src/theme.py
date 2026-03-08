@@ -6,6 +6,7 @@ LIGHT = {
     'bg_alt':         '#f5f5f5',
     'fg':             'black',
     'border':         'black',
+    'grip':           '#d0d0d0',
     'accent':         'orange',
     'selection':      'orange',
     'selection_text':  'black',
@@ -17,6 +18,7 @@ DARK = {
     'bg_alt':         '#2a2a2a',
     'fg':             '#e0e0e0',
     'border':         '#555555',
+    'grip':           '#3a3a3a',
     'accent':         '#e8871e',
     'selection':      '#e8871e',
     'selection_text':  'black',
@@ -34,9 +36,9 @@ def app_qss(t):
             background-color: {t['bg']};
         }}
         QSplitter::handle {{
-            background-color: {t['bg_alt']};
-            border-left: 1px dotted {t['border']};
-            border-right: 1px dotted {t['border']};
+            background-color: {t['bg']};
+            border-left: 1px dotted {t['grip']};
+            border-right: 1px dotted {t['grip']};
             width: 7px;
         }}
         QMenuBar {{
