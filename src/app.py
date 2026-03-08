@@ -13,7 +13,7 @@ import theme
 
 from PyQt5.QtWidgets import (QMainWindow, QApplication, QWidget, QHBoxLayout,
     QAction, QActionGroup, QSplitter, QColorDialog, QShortcut, QDialog,
-    QVBoxLayout, QLabel, QLineEdit)
+    QVBoxLayout, QLabel, QLineEdit, QSizePolicy)
 from PyQt5.QtCore import Qt, QSettings
 from PyQt5.QtGui import QColor, QPixmap, QIcon, QKeySequence
 
@@ -124,6 +124,10 @@ class App(QMainWindow):
         self.is_miniplayer = False
         self._pre_mini_geometry = None
         self._pre_mini_splitter = None
+
+        # Max mode state
+        self.is_maxplayer = False
+        self._max_widget = None
 
         # Theme setup
         self.current_theme = theme.LIGHT
@@ -255,6 +259,7 @@ class App(QMainWindow):
             ('2',       'Toggle tracklist',    lambda: self.exit_miniplayer() if self.is_miniplayer else self.player.toggle_tracklist()),
             ('l',       'Toggle lyrics',       self.toggle_lyrics),
             ('m',       'Toggle miniplayer',   self.toggle_miniplayer),
+            ('Shift+M', 'Toggle max mode',    self.toggle_maxplayer),
             ('q',       'Quit',                self.close),
             ('?',       'Show shortcuts',      self.show_help),
         ]
@@ -308,22 +313,35 @@ class App(QMainWindow):
 
     def _on_track_changed(self, track):
         """Fetch lyrics when the track changes."""
+        # Update max mode if active
+        if self.is_maxplayer:
+            self._update_max_info()
+            if self._max_art and self.player.album and self.player.album.art:
+                self._max_art.setPixmap(QPixmap(str(self.player.album.art)))
+
         if not self.player.album:
             return
         path = lyrics_path_for_track(track, self.player.album)
 
         # Already cached on disk
         if path.exists():
-            self.lyrics_widget.set_lyrics(path.read_text(encoding='utf-8'))
+            text = path.read_text(encoding='utf-8')
+            self.lyrics_widget.set_lyrics(text)
+            if self.is_maxplayer and self._max_lyrics:
+                self._max_lyrics.set_lyrics(text)
             return
 
         # Already tried and failed for this track
         track_key = f'{track.artist}:{track.title}:{track.album}'
         if track_key in self._failed_lyrics:
             self.lyrics_widget.set_lyrics('')
+            if self.is_maxplayer and self._max_lyrics:
+                self._max_lyrics.set_lyrics('')
             return
 
         self.lyrics_widget.set_lyrics('Fetching lyrics...')
+        if self.is_maxplayer and self._max_lyrics:
+            self._max_lyrics.set_lyrics('Fetching lyrics...')
         self._lyrics_thread = LyricsFetchThread(
             track.artist, track.title, track.album, track, self.player.album
         )
@@ -333,16 +351,22 @@ class App(QMainWindow):
     def _on_lyrics_fetched(self, file_path, text):
         if text:
             self.lyrics_widget.set_lyrics(text)
+            if self.is_maxplayer and self._max_lyrics:
+                self._max_lyrics.set_lyrics(text)
         else:
             track = self.player.current_track
             if track:
                 self._failed_lyrics.add(f'{track.artist}:{track.title}:{track.album}')
             self.lyrics_widget.set_lyrics('')
+            if self.is_maxplayer and self._max_lyrics:
+                self._max_lyrics.set_lyrics('')
 
     def _update_lyrics_position(self):
         """Feed current playback position to lyrics widget for sync."""
-        if self.player.playback.playing and self.lyrics_widget.isVisible():
-            self.lyrics_widget.update_position(self.player.playback.curr_pos)
+        if self.player.playback.playing:
+            if self.lyrics_widget.isVisible():
+                self.lyrics_widget.update_position(self.player.playback.curr_pos)
+            self._update_max_mode()
 
     def toggle_miniplayer(self):
         if self.is_miniplayer:
@@ -461,6 +485,185 @@ class App(QMainWindow):
             self.restoreGeometry(self._pre_mini_geometry)
             self.splitter.restoreState(self._pre_mini_splitter)
             self.right_splitter.restoreState(self._pre_mini_right_splitter)
+
+    def toggle_maxplayer(self):
+        if self.is_maxplayer:
+            self.exit_maxplayer()
+        else:
+            self.enter_maxplayer()
+
+    def enter_maxplayer(self):
+        if self.is_maxplayer:
+            return
+        # Exit miniplayer first if active
+        if self.is_miniplayer:
+            self.exit_miniplayer()
+        self.is_maxplayer = True
+
+        # Save state
+        self._pre_max_geometry = self.saveGeometry()
+        self._pre_max_splitter = self.splitter.saveState()
+        self._pre_max_right_splitter = self.right_splitter.saveState()
+        self._pre_max_library = self.folder_view.isVisible()
+        self._pre_max_tracklist = self.album_view.isVisible()
+        self._pre_max_lyrics = self.lyrics_widget.isVisible()
+
+        # Hide normal UI
+        self.splitter.setVisible(False)
+        self.menuBar().setVisible(False)
+
+        # Build max mode widget
+        self._max_widget = QWidget()
+        self._max_widget.setObjectName('max-mode')
+        max_layout = QVBoxLayout()
+        max_layout.setContentsMargins(0, 0, 0, 0)
+        max_layout.setSpacing(0)
+
+        # Top bar: Artist - Album - Track
+        self._max_info = QLabel()
+        self._max_info.setObjectName('max-info')
+        self._max_info.setAlignment(Qt.AlignCenter)
+        self._max_info.setWordWrap(True)
+        self._update_max_info()
+        max_layout.addWidget(self._max_info)
+
+        # Content: large art (left) + large lyrics (right)
+        content = QSplitter(Qt.Horizontal)
+        content.setObjectName('max-splitter')
+
+        # Album art — large, scaled
+        self._max_art = QLabel()
+        self._max_art.setAlignment(Qt.AlignCenter)
+        self._max_art.setScaledContents(True)
+        self._max_art.setMinimumSize(300, 300)
+        self._max_art.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        if self.player.album and self.player.album.art:
+            self._max_art.setPixmap(QPixmap(str(self.player.album.art)))
+        content.addWidget(self._max_art)
+
+        # Lyrics — large font
+        self._max_lyrics = LyricsWidget()
+        self._max_lyrics.setObjectName('max-lyrics')
+        # Copy current lyrics content
+        if self.lyrics_widget._synced_lines:
+            # Re-render synced lyrics
+            lrc_text = '\n'.join(
+                f'[{int(ts//60):02d}:{ts%60:05.2f}] {line}'
+                for ts, line in self.lyrics_widget._synced_lines
+            )
+            self._max_lyrics.set_lyrics(lrc_text)
+        else:
+            self._max_lyrics.set_lyrics(self.lyrics_widget.label.text())
+        content.addWidget(self._max_lyrics)
+
+        content.setStretchFactor(0, 3)
+        content.setStretchFactor(1, 2)
+        self._max_content = content
+
+        max_layout.addWidget(content, stretch=1)
+        self._max_widget.setLayout(max_layout)
+
+        self.layout_app.addWidget(self._max_widget)
+
+        # Apply theme to max mode
+        self._style_max_mode()
+
+        # Go fullscreen
+        self.showFullScreen()
+
+    def _style_max_mode(self):
+        t = dict(self.current_theme)
+        t['accent'] = self.accent_color
+        t['selection'] = self.accent_color
+        fs = self.font_size
+        self._max_widget.setStyleSheet(f"""
+            #max-mode {{
+                background-color: {t['bg']};
+            }}
+            #max-info {{
+                background-color: {t['bg']};
+                color: {t['fg']};
+                font-family: {theme.FONT};
+                font-size: {fs + 6}pt;
+                padding: 15px;
+                border-bottom: 2px solid {t['accent']};
+            }}
+            QSplitter::handle {{
+                background-color: {t['accent']};
+                width: 3px;
+            }}
+        """)
+        self._max_lyrics.setStyleSheet(f"""
+            #lyrics-widget, #max-lyrics {{
+                background-color: {t['bg']};
+            }}
+            #lyrics-scroll {{
+                background-color: {t['bg']};
+                border: none;
+            }}
+            #lyrics-text {{
+                background-color: {t['bg']};
+                color: {t['fg']};
+                font-family: {theme.FONT};
+                font-size: {fs + 8}pt;
+            }}
+        """)
+        self._max_lyrics.set_theme(t)
+
+    def _update_max_info(self):
+        if not hasattr(self, '_max_info'):
+            return
+        track = self.player.current_track
+        if track:
+            parts = [p for p in [track.artist, track.album, track.title] if p]
+            self._max_info.setText('  \u2014  '.join(parts))
+        elif self.player.album:
+            self._max_info.setText(
+                f'{self.player.album.artist}  \u2014  {self.player.album.title}')
+        else:
+            self._max_info.setText('lp')
+
+    def _update_max_mode(self):
+        """Update max mode lyrics and info on timer tick."""
+        if not self.is_maxplayer:
+            return
+        if self.player.playback.playing:
+            self._max_lyrics.update_position(self.player.playback.curr_pos)
+
+    def exit_maxplayer(self):
+        if not self.is_maxplayer:
+            return
+        self.is_maxplayer = False
+
+        # Remove max widget
+        if self._max_widget:
+            self.layout_app.removeWidget(self._max_widget)
+            self._max_widget.deleteLater()
+            self._max_widget = None
+            self._max_lyrics = None
+            self._max_art = None
+            self._max_info = None
+
+        # Restore normal UI
+        self.splitter.setVisible(True)
+        self.menuBar().setVisible(True)
+
+        # Restore side panels
+        self.folder_view.setVisible(self._pre_max_library)
+        self.album_view.setVisible(self._pre_max_tracklist)
+        self.lyrics_widget.setVisible(self._pre_max_lyrics)
+        self.player.toggle_library_btn.setChecked(self._pre_max_library)
+        self.player.toggle_folder_btn.setChecked(self._pre_max_tracklist)
+
+        # Restyle
+        self.apply_theme(self.current_theme)
+
+        # Exit fullscreen and restore geometry
+        self.showNormal()
+        if self._pre_max_geometry:
+            self.restoreGeometry(self._pre_max_geometry)
+            self.splitter.restoreState(self._pre_max_splitter)
+            self.right_splitter.restoreState(self._pre_max_right_splitter)
 
     def closeEvent(self, event):
         self.settings.setValue('geometry', self.saveGeometry())
