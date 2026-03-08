@@ -11,7 +11,7 @@ import theme
 
 from PyQt5.QtWidgets import (QMainWindow, QApplication, QWidget, QHBoxLayout,
     QAction, QActionGroup, QSplitter, QColorDialog, QShortcut, QDialog,
-    QVBoxLayout, QLabel)
+    QVBoxLayout, QLabel, QLineEdit)
 from PyQt5.QtCore import Qt, QSettings
 from PyQt5.QtGui import QColor, QPixmap, QIcon, QKeySequence
 
@@ -209,7 +209,8 @@ class App(QMainWindow):
             ('?',       'Show shortcuts',      self.show_help),
         ]
         for key, _, callback in self.keybindings:
-            QShortcut(QKeySequence(key), self, callback)
+            shortcut = QShortcut(QKeySequence(key), self)
+            shortcut.activated.connect(lambda cb=callback: cb() if not isinstance(self.focusWidget(), QLineEdit) else None)
 
     def _seek_relative(self, seconds):
         if self.player.current_track and self.player.playback.active:
@@ -235,12 +236,29 @@ class App(QMainWindow):
             QLabel {{ color: {t['fg']}; font-family: {theme.FONT}; font-size: 12pt; }}
         """)
         layout = QVBoxLayout()
+        nav_keys = [
+            ('j / k',   'Navigate down / up'),
+            ('h / l',   'Collapse / expand folder'),
+            ('/',       'Search in list'),
+            ('Esc',     'Close search'),
+            ('Enter',   'Open selected'),
+            ('G',       'Jump to bottom'),
+        ]
         rows = ''.join(
             f'<tr><td style="padding: 4px 20px 4px 0;"><b>{key}</b></td>'
             f'<td style="padding: 4px 0;">{desc}</td></tr>'
             for key, desc, _ in self.keybindings
         )
-        label = QLabel(f'<table>{rows}</table>')
+        nav_rows = ''.join(
+            f'<tr><td style="padding: 4px 20px 4px 0;"><b>{key}</b></td>'
+            f'<td style="padding: 4px 0;">{desc}</td></tr>'
+            for key, desc in nav_keys
+        )
+        label = QLabel(
+            f'<table>{rows}</table>'
+            f'<br><b>List Navigation</b>'
+            f'<table>{nav_rows}</table>'
+        )
         label.setTextFormat(Qt.RichText)
         layout.addWidget(label)
         dialog.setLayout(layout)
