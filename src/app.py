@@ -116,12 +116,17 @@ class App(QMainWindow):
             self.apply_theme(theme.DARK)
         else:
             self.apply_theme(self.current_theme)
+        last_album = self.settings.value('last_album')
+        if last_album:
+            self.album_view.load_album_listing(last_album)
 
     def closeEvent(self, event):
         self.settings.setValue('geometry', self.saveGeometry())
         self.settings.setValue('splitter', self.splitter.saveState())
         self.settings.setValue('dark_mode', 'true' if self.current_theme is theme.DARK else 'false')
         self.settings.setValue('font_size', self.font_size)
+        if self.album_view.album and self.album_view.album.path:
+            self.settings.setValue('last_album', self.album_view.album.path)
         super().closeEvent(event)
 
 def main():
