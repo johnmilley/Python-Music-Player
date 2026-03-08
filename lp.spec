@@ -51,7 +51,7 @@ exe = EXE(
     strip=False,
     upx=True,
     console=False,
-    icon='icon.png' if sys.platform != 'darwin' else None,
+    icon=None,  # icon set via QIcon at runtime; avoids platform format issues
 )
 
 coll = COLLECT(

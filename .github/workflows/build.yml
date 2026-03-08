@@ -13,7 +13,7 @@ jobs:
         include:
           - os: ubuntu-22.04
             artifact: lp-linux
-          - os: macos-13
+          - os: macos-latest
             artifact: lp-macos
           - os: windows-latest
             artifact: lp-windows
