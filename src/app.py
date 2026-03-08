@@ -41,6 +41,7 @@ class App(QMainWindow):
         self.splitter.setStretchFactor(0, 2)
         self.splitter.setStretchFactor(1, 3)
         self.splitter.setStretchFactor(2, 2)
+        self.splitter.setCollapsible(1, False)  # player can't be squeezed out
 
         self.layout_app = QHBoxLayout()
         self.layout_app.setContentsMargins(0, 0, 0, 0)
