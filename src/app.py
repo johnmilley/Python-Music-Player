@@ -42,7 +42,11 @@ class App(QMainWindow):
         self.player.timer.timeout.connect(self._update_lyrics_position)
 
         self.setWindowTitle("lp")
-        icon_path = Path(__file__).parent.parent / 'icon.png'
+        # Support both normal and PyInstaller-bundled paths
+        if getattr(sys, '_MEIPASS', None):
+            icon_path = Path(sys._MEIPASS) / 'icon.png'
+        else:
+            icon_path = Path(__file__).parent.parent / 'icon.png'
         self.setWindowIcon(QIcon(str(icon_path)))
         self.setMinimumSize(800, 600)
 
