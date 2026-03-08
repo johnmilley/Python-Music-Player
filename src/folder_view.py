@@ -30,24 +30,17 @@ class FolderView(QWidget):
         self.setMinimumWidth(150)
 
         self.model = QFileSystemModel()
-
         self.model.setIconProvider(MusicIconProvider())
-
-        # root = '/Users/jlm/Downloads/music'
-        root = '/mnt/media/02_PLEX_MEDIA/music'
-        self.model.setRootPath(root)
-        self.model.setFilter(QDir.Dirs | QDir.NoDotAndDotDot )
+        self.model.setFilter(QDir.Dirs | QDir.NoDotAndDotDot)
 
         self.layout = QVBoxLayout()
         self.view = VimTreeView()
-        self.view.setContextMenuPolicy(Qt.CustomContextMenu) # for right click open
+        self.view.setContextMenuPolicy(Qt.CustomContextMenu)
         self.view.customContextMenuRequested.connect(self.open_context_menu)
         self.view.header().hide()
         self.view.setModel(self.model)
         self.view.setItemsExpandable(True)
         self.view.setRootIsDecorated(False)
-
-        self.view.setRootIndex(self.model.index(root))
 
         for i in range(1, self.model.columnCount()):
             self.view.hideColumn(i)
@@ -81,6 +74,11 @@ class FolderView(QWidget):
                 self.view.setCurrentIndex(idx)
                 self.view.scrollTo(idx)
                 break
+
+    def set_root(self, path):
+        """Set the root music library folder."""
+        self.model.setRootPath(path)
+        self.view.setRootIndex(self.model.index(path))
 
     def toggle_expand(self, index):
         if self.view.isExpanded(index):

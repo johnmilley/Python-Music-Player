@@ -13,7 +13,7 @@ import theme
 
 from PyQt5.QtWidgets import (QMainWindow, QApplication, QWidget, QHBoxLayout,
     QAction, QActionGroup, QSplitter, QColorDialog, QShortcut, QDialog,
-    QVBoxLayout, QLabel, QLineEdit, QSizePolicy)
+    QVBoxLayout, QLabel, QLineEdit, QSizePolicy, QFileDialog)
 from PyQt5.QtCore import Qt, QSettings
 from PyQt5.QtGui import QColor, QPixmap, QIcon, QKeySequence
 
@@ -76,6 +76,11 @@ class App(QMainWindow):
 
         # Menu bar — Preferences
         self.prefs_menu = self.menuBar().addMenu('Preferences')
+
+        self.library_action = QAction('Music Library...', self)
+        self.library_action.triggered.connect(self._pick_library)
+        self.prefs_menu.addAction(self.library_action)
+        self.prefs_menu.addSeparator()
 
         self.dark_mode_action = QAction('Dark Mode', self)
         self.dark_mode_action.triggered.connect(self.toggle_theme)
@@ -188,6 +193,15 @@ class App(QMainWindow):
                 checked.setChecked(False)
             self.set_accent(color.name())
 
+    def _pick_library(self):
+        """Let user pick the root music library folder."""
+        current = self.settings.value('library_root', '')
+        path = QFileDialog.getExistingDirectory(
+            self, 'Select Music Library Folder', current)
+        if path:
+            self.folder_view.set_root(path)
+            self.settings.setValue('library_root', path)
+
     def _change_album_art(self):
         """Open artwork finder to search for new album cover."""
         if not self.player.album or not self.player.album.path:
@@ -209,6 +223,9 @@ class App(QMainWindow):
         return QIcon(pixmap)
 
     def _restore_state(self):
+        library_root = self.settings.value('library_root')
+        if library_root:
+            self.folder_view.set_root(library_root)
         geometry = self.settings.value('geometry')
         if geometry:
             self.restoreGeometry(geometry)
