@@ -141,12 +141,15 @@ class AlbumView(QWidget):
             item.setSizeHint(hint)
 
     def _on_search(self, text):
-        """Jump to first track matching the search text."""
+        """Jump to first track where any word starts with the search text."""
         if not text:
             return
+        query = text.lower()
         for row in range(self.track_list_widget.count()):
             item = self.track_list_widget.item(row)
-            if text.lower() in item.text().lower():
+            label = item.text().lower()
+            words = label.replace('-', ' ').replace('_', ' ').split()
+            if any(w.startswith(query) for w in words) or label.startswith(query):
                 self.track_list_widget.setCurrentRow(row)
                 self.track_list_widget.scrollToItem(item)
                 break
@@ -178,8 +181,9 @@ class AlbumView(QWidget):
 
     def set_current_track(self, selected):
         track_pos = selected.data(Qt.UserRole)
+        if track_pos is None or not self.album or not self.album.tracklist:
+            return
         self.current_track = self.album.tracklist[track_pos]
-        print(f"Current track: {self.current_track}")
 
         # Send Album to Player
         if self.player:

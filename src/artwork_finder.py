@@ -152,6 +152,8 @@ class ArtworkFinderDialog(QDialog):
             }}
         """)
         self.search_input.returnPressed.connect(self._on_search_submit)
+        # Prevent Enter from closing the dialog (QDialog default behaviour)
+        self.search_input.installEventFilter(self)
         search_layout.addWidget(self.search_input)
 
         search_btn = QPushButton('Search')
@@ -192,6 +194,14 @@ class ArtworkFinderDialog(QDialog):
         # Start search
         self._search()
 
+    def eventFilter(self, obj, event):
+        # Block Enter/Return from propagating to QDialog (which would close it)
+        if obj is self.search_input and event.type() == event.KeyPress:
+            if event.key() in (Qt.Key_Return, Qt.Key_Enter):
+                self._on_search_submit()
+                return True
+        return super().eventFilter(obj, event)
+
     def _on_search_submit(self):
         query = self.search_input.text().strip()
         if query:
@@ -230,7 +240,7 @@ class ArtworkFinderDialog(QDialog):
         })
         url = f'{ITUNES_SEARCH_URL}?{params}'
 
-        self._search_thread = SearchThread(url)
+        self._search_thread = SearchThread(url, query)
         self._search_thread.finished.connect(self._on_results)
         self._search_thread.start()
 
@@ -291,20 +301,59 @@ class ArtworkFinderDialog(QDialog):
 
 
 class SearchThread(QThread):
+    """Search iTunes: direct album search + artist lookup for better results."""
     finished = pyqtSignal(list)
 
-    def __init__(self, url):
+    def __init__(self, url, query=''):
         super().__init__()
         self.url = url
+        self.query = query
+
+    def _fetch_json(self, url):
+        req = urllib.request.Request(url, headers={'User-Agent': 'lp-music-player/1.0'})
+        data = urllib.request.urlopen(req, timeout=10).read()
+        return json.loads(data).get('results', [])
 
     def run(self):
         try:
-            req = urllib.request.Request(self.url, headers={
-                'User-Agent': 'lp-music-player/1.0'
-            })
-            data = urllib.request.urlopen(req, timeout=10).read()
-            parsed = json.loads(data)
-            self.finished.emit(parsed.get('results', []))
+            # 1) Direct album search
+            direct = self._fetch_json(self.url)
+
+            # 2) Artist lookup — find artist, then get their albums
+            artist_results = []
+            if self.query:
+                words = self.query.lower().split()
+                params = urllib.parse.urlencode({
+                    'term': self.query, 'entity': 'musicArtist', 'limit': 1
+                })
+                artists = self._fetch_json(f'{ITUNES_SEARCH_URL}?{params}')
+                if artists:
+                    artist_id = artists[0].get('artistId')
+                    if artist_id:
+                        lookup_url = f'https://itunes.apple.com/lookup?id={artist_id}&entity=album&limit=50'
+                        albums = self._fetch_json(lookup_url)
+                        artist_name = artists[0].get('artistName', '').lower()
+                        for a in albums:
+                            if a.get('wrapperType') != 'collection':
+                                continue
+                            # Only include albums by this artist (skip feat. compilations)
+                            if a.get('artistName', '').lower() != artist_name:
+                                continue
+                            name = a.get('collectionName', '').lower()
+                            # Keep albums where any query word matches the album name
+                            if any(w in name for w in words):
+                                artist_results.append(a)
+
+            # Merge: artist lookup matches first (more precise), then direct
+            seen_ids = set()
+            merged = []
+            for r in artist_results + direct:
+                cid = r.get('collectionId')
+                if cid and cid not in seen_ids:
+                    seen_ids.add(cid)
+                    merged.append(r)
+
+            self.finished.emit(merged[:12])
         except Exception as e:
             print(f'Artwork search error: {e}')
             self.finished.emit([])
@@ -345,5 +394,4 @@ class DownloadThread(QThread):
             self.finished.emit(str(dest))
         except Exception as e:
             print(f'Artwork download error: {e}')
-            self.finished.emit('')
             self.finished.emit('')

@@ -1,6 +1,8 @@
 # Theme definitions for light and dark modes
 # Each theme is a dict of color tokens used to generate QSS stylesheets
 
+from PyQt5.QtGui import QFontDatabase
+
 LIGHT = {
     'bg':             'white',
     'bg_alt':         '#f5f5f5',
@@ -25,7 +27,18 @@ DARK = {
     'scrollbar_bg':   '#2a2a2a',
 }
 
-FONT = "'Consolas', 'Courier New', 'Monaco', monospace"
+FONT_CANDIDATES = ['Consolas', 'Cascadia Mono', 'DejaVu Sans Mono', 'Courier New', 'Monaco']
+FONT = "'Consolas'"  # resolved at startup by resolve_font()
+
+def resolve_font():
+    """Pick the first available monospace font from FONT_CANDIDATES."""
+    global FONT
+    available = set(QFontDatabase().families())
+    for name in FONT_CANDIDATES:
+        if name in available:
+            FONT = f"'{name}'"
+            return
+    FONT = "'monospace'"
 
 DEFAULT_FONT_SIZE = 13
 FONT_SIZES = [10, 11, 12, 13, 14, 16, 18, 20]
@@ -43,7 +56,8 @@ ACCENT_PRESETS = {
     'Slate':      '#708090',
 }
 
-def app_qss(t):
+def app_qss(t, fs=DEFAULT_FONT_SIZE):
+    menu_fs = fs
     return f"""
         #main-window {{
             background-color: {t['bg']};
@@ -64,8 +78,9 @@ def app_qss(t):
             background-color: {t['bg']};
             color: {t['fg']};
             font-family: {FONT};
-            font-size: 11pt;
+            font-size: {menu_fs}pt;
             border-bottom: 2px solid {t['accent']};
+            padding: 2px 0;
         }}
         QMenuBar::item:selected {{
             background-color: {t['accent']};
@@ -75,8 +90,11 @@ def app_qss(t):
             background-color: {t['bg']};
             color: {t['fg']};
             font-family: {FONT};
-            font-size: 11pt;
+            font-size: {menu_fs}pt;
             border: 1px solid {t['border']};
+        }}
+        QMenu::item {{
+            padding: 4px 20px;
         }}
         QMenu::item:selected {{
             background-color: {t['accent']};
@@ -168,13 +186,14 @@ def player_qss(t, fs=DEFAULT_FONT_SIZE):
             font-size: {fs + 6}pt;
         }}
         #toggle-library-btn:checked, #toggle-folder-btn:checked {{
-            background-color: {t['accent']};
-            color: {t['selection_text']};
+            background-color: {t['bg']};
+            border: 2px solid {t['accent']};
+            color: {t['fg']};
         }}
     """
 
 def folder_view_qss(t, fs=DEFAULT_FONT_SIZE, focused=True):
-    item_h = fs + 14
+    item_pad = max(2, (fs - 10) // 2 + 2)
     sel_bg = t['selection'] if focused else 'transparent'
     sel_fg = t['selection_text'] if focused else t['fg']
     return f"""
@@ -186,7 +205,7 @@ def folder_view_qss(t, fs=DEFAULT_FONT_SIZE, focused=True):
             color: {t['fg']};
         }}
         QTreeView::item {{
-            height: {item_h};
+            padding: {item_pad}px 0;
         }}
         QTreeView::item:selected {{
             background-color: {sel_bg};
@@ -209,7 +228,7 @@ def folder_view_qss(t, fs=DEFAULT_FONT_SIZE, focused=True):
     """
 
 def album_view_qss(t, fs=DEFAULT_FONT_SIZE, focused=True):
-    item_pad = max(1, (fs - 10) // 2)
+    item_pad = max(2, (fs - 10) // 2 + 2)
     sel_bg = t['selection'] if focused else 'transparent'
     sel_fg = t['selection_text'] if focused else t['fg']
     return f"""

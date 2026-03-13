@@ -9,14 +9,14 @@ from player import Player
 from album_view import AlbumView
 from lyrics_widget import LyricsWidget
 from lyrics_fetcher import LyricsFetchThread, lyrics_path_for_track
-from color_extract import extract_palette, most_readable
+from color_extract import extract_palette, most_readable, text_color_for, ensure_contrast
 import theme
 
 from PyQt5.QtWidgets import (QMainWindow, QApplication, QWidget, QHBoxLayout,
     QAction, QActionGroup, QSplitter, QColorDialog, QShortcut, QDialog,
     QVBoxLayout, QLabel, QLineEdit, QSizePolicy, QFileDialog, QGraphicsDropShadowEffect,
     QWidgetAction, QPushButton, QFontDialog)
-from PyQt5.QtCore import Qt, QSettings
+from PyQt5.QtCore import Qt, QSettings, QTimer
 from PyQt5.QtGui import QColor, QPixmap, QIcon, QKeySequence
 
 
@@ -144,6 +144,7 @@ class App(QMainWindow):
 
         self.album_view.album_changed.connect(self.setWindowTitle)
         self.album_view.album_changed.connect(lambda _: self._update_accent_for_album())
+        self.album_view.album_changed.connect(lambda _: QTimer.singleShot(0, self._fit_right_splitter))
 
         # Restore saved state
         self.settings = QSettings('lp', 'music-player')
@@ -157,6 +158,7 @@ class App(QMainWindow):
         self.lyrics_widget.setFocusPolicy(Qt.NoFocus)
         self.lyrics_widget.label.setFocusPolicy(Qt.NoFocus)
         self.lyrics_widget.scroll.setFocusPolicy(Qt.NoFocus)
+        self.lyrics_widget.seek_requested.connect(self._on_lyrics_seek)
 
         # Focus change tracking for pane highlighting
         QApplication.instance().focusChanged.connect(self._on_focus_changed)
@@ -174,8 +176,9 @@ class App(QMainWindow):
         t = dict(t)
         t['accent'] = self.accent_color
         t['selection'] = self.accent_color
+        t['selection_text'] = text_color_for(self.accent_color)
         fs = self.font_size
-        self.setStyleSheet(theme.app_qss(t))
+        self.setStyleSheet(theme.app_qss(t, fs))
         self.player.setStyleSheet(theme.player_qss(t, fs))
         folder_focused = self.folder_view.view.hasFocus()
         album_focused = self.album_view.track_list_widget.hasFocus()
@@ -190,10 +193,10 @@ class App(QMainWindow):
         )
 
     def toggle_theme(self):
-        if self.current_theme is theme.LIGHT:
-            self.apply_theme(theme.DARK)
-        else:
-            self.apply_theme(theme.LIGHT)
+        new_theme = theme.DARK if self.current_theme is theme.LIGHT else theme.LIGHT
+        # Ensure accent is readable against the new background
+        self.accent_color = ensure_contrast(self.accent_color, new_theme['bg'])
+        self.apply_theme(new_theme)
         # Refresh colour menu so Dark/Light label stays in sync
         album_colors = []
         if self.player.album and self.player.album.art:
@@ -319,6 +322,7 @@ class App(QMainWindow):
         t = dict(self.current_theme)
         t['accent'] = self.accent_color
         t['selection'] = self.accent_color
+        t['selection_text'] = text_color_for(self.accent_color)
         dialog = ArtworkFinderDialog(
             self.player.album.artist, self.player.album.title,
             self.player.album.path, t, parent=self
@@ -391,6 +395,7 @@ class App(QMainWindow):
             ('3',       'Toggle lyrics',       self.toggle_lyrics),
             ('/',       'Search',              self._open_search),
             ('Shift+M', 'Toggle max mode',    self.toggle_maxplayer),
+            ('Shift+D', 'Toggle dark/light',   self.toggle_theme),
             ('Ctrl++',  'Increase font size',  lambda: self._step_font_size(1)),
             ('Ctrl+-',  'Decrease font size',  lambda: self._step_font_size(-1)),
             ('Ctrl+=',  None,                  lambda: self._step_font_size(1)),
@@ -419,6 +424,17 @@ class App(QMainWindow):
                 int((pos / self.player.current_track.length) * 1000))
             self.player.track_progress_label.setText(
                 self.player.current_track.length_to_string(pos))
+
+    def _on_lyrics_seek(self, seconds):
+        """Seek to a timestamp when a lyrics line is clicked."""
+        if self.player.current_track and self.player.playback.active:
+            seconds = max(0, min(seconds, self.player.current_track.length))
+            self.player.playback.seek(seconds)
+            self.player.progress_bar.setValue(
+                int((seconds / self.player.current_track.length) * 1000))
+            self.player.track_progress_label.setText(
+                self.player.current_track.length_to_string(seconds))
+            self.player._update_time_label(seconds)
 
     def _adjust_volume(self, delta):
         if self.player.playback.active:
@@ -507,6 +523,7 @@ class App(QMainWindow):
         t = dict(self.current_theme)
         t['accent'] = self.accent_color
         t['selection'] = self.accent_color
+        t['selection_text'] = text_color_for(self.accent_color)
         fs = self.font_size
         folder_focused = self.folder_view.view.hasFocus()
         album_focused = self.album_view.track_list_widget.hasFocus()
@@ -619,6 +636,7 @@ class App(QMainWindow):
             self._lyrics_thread.finished.disconnect(self._on_lyrics_fetched)
             self._lyrics_thread.quit()
             self._lyrics_thread.wait(2000)
+        self._lyrics_track_key = track_key
         self._lyrics_thread = LyricsFetchThread(
             track.artist, track.title, track.album, track, self.player.album
         )
@@ -626,14 +644,20 @@ class App(QMainWindow):
         self._lyrics_thread.start()
 
     def _on_lyrics_fetched(self, file_path, text):
+        # Verify this result is still for the current track (race condition guard)
+        current = self.player.current_track
+        if current:
+            current_key = f'{current.artist}:{current.title}:{current.album}'
+            if current_key != self._lyrics_track_key:
+                return
+
         if text:
             self.lyrics_widget.set_lyrics(text)
             if self.is_maxplayer and self._max_lyrics:
                 self._max_lyrics.set_lyrics(text)
         else:
-            track = self.player.current_track
-            if track:
-                self._failed_lyrics.add(f'{track.artist}:{track.title}:{track.album}')
+            if current:
+                self._failed_lyrics.add(self._lyrics_track_key)
             self.lyrics_widget.set_lyrics('')
             if self.is_maxplayer and self._max_lyrics:
                 self._max_lyrics.set_lyrics('')
@@ -680,10 +704,11 @@ class App(QMainWindow):
         self._max_info.setObjectName('max-info')
         self._max_info.setAlignment(Qt.AlignCenter)
         self._max_info.setWordWrap(True)
+        self._max_info.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
         self._update_max_info()
         max_layout.addWidget(self._max_info)
 
-        # Content: art centered (solo) or art left + lyrics right (50/50)
+        # Content: art (2/3) + lyrics (1/3), lyrics height matches art
         content = QWidget()
         content.setObjectName('max-content')
         content_layout = QHBoxLayout()
@@ -705,11 +730,12 @@ class App(QMainWindow):
         self._max_art.setGraphicsEffect(max_shadow)
         if self.player.album and self.player.album.art:
             self._set_max_art(QPixmap(str(self.player.album.art)))
-        content_layout.addWidget(self._max_art, stretch=1)
+        content_layout.addWidget(self._max_art, stretch=2)
 
-        # Lyrics — large font, hidden by default
+        # Lyrics — constrained to art height, vertically centered
         self._max_lyrics = LyricsWidget()
         self._max_lyrics.setObjectName('max-lyrics')
+        self._max_lyrics.seek_requested.connect(self._on_lyrics_seek)
         # Copy current lyrics content
         if self.lyrics_widget._synced_lines:
             lrc_text = '\n'.join(
@@ -719,7 +745,7 @@ class App(QMainWindow):
             self._max_lyrics.set_lyrics(lrc_text)
         else:
             self._max_lyrics.set_lyrics(self.lyrics_widget.label.text())
-        self._max_lyrics.setVisible(False)
+        self._max_lyrics.setVisible(True)
         content_layout.addWidget(self._max_lyrics, stretch=1)
 
         content.setLayout(content_layout)
@@ -740,6 +766,7 @@ class App(QMainWindow):
         t = dict(self.current_theme)
         t['accent'] = self.accent_color
         t['selection'] = self.accent_color
+        t['selection_text'] = text_color_for(self.accent_color)
         fs = self.font_size
         self._max_widget.setStyleSheet(f"""
             #max-mode {{
@@ -753,6 +780,7 @@ class App(QMainWindow):
                 color: {t['fg']};
                 font-family: {theme.FONT};
                 font-size: {fs + 6}pt;
+                font-weight: bold;
                 padding: 15px;
                 border-bottom: 2px solid {t['accent']};
             }}
@@ -770,7 +798,7 @@ class App(QMainWindow):
                 color: {t['fg']};
                 font-family: {theme.FONT};
                 font-size: {fs + 8}pt;
-                padding: 40px 60px;
+                padding: 0px 60px 0px 20px;
             }}
         """)
         self._max_lyrics.set_theme(t, fs + 8)
@@ -790,20 +818,53 @@ class App(QMainWindow):
         track = self.player.current_track
         if track:
             parts = [p for p in [track.artist, track.album, track.title] if p]
-            self._max_info.setText('  \u2014  '.join(parts))
+            self._max_info.setText('      '.join(parts))
         elif self.player.album:
             self._max_info.setText(
-                f'{self.player.album.artist}  \u2014  {self.player.album.title}')
+                f'{self.player.album.artist}      {self.player.album.title}')
         else:
             self._max_info.setText('lp')
 
+    def _fit_right_splitter(self):
+        """Size the right splitter so lyrics sit just below the tracklist."""
+        if self.is_maxplayer or not self.lyrics_widget.isVisible():
+            return
+        tw = self.album_view.track_list_widget
+        # Calculate total height needed for all items
+        track_h = 0
+        for row in range(tw.count()):
+            track_h += tw.sizeHintForRow(row)
+        # Add search bar height if visible, plus layout margins
+        margins = self.album_view.layout().contentsMargins()
+        track_h += margins.top() + margins.bottom()
+        if self.album_view.search_bar.isVisible():
+            track_h += self.album_view.search_bar.height()
+
+        total = self.right_splitter.height()
+        track_h = min(track_h, int(total * 0.50))  # cap at 50% — lyrics get at least half
+        lyrics_h = total - track_h
+        if lyrics_h > 0:
+            self.right_splitter.setSizes([track_h, lyrics_h])
+
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        if self.is_maxplayer and self._max_art and hasattr(self, '_max_art_pixmap'):
-            size = self._max_art.size()
-            scaled = self._max_art_pixmap.scaled(
-                size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-            self._max_art.setPixmap(scaled)
+        if not self.is_maxplayer:
+            self._fit_right_splitter()
+        if self.is_maxplayer and self._max_art:
+            if hasattr(self, '_max_art_pixmap'):
+                size = self._max_art.size()
+                scaled = self._max_art_pixmap.scaled(
+                    size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                self._max_art.setPixmap(scaled)
+                # Align lyrics top/bottom with the actual displayed pixmap
+                if self._max_lyrics and self._max_lyrics.isVisible():
+                    art_container_h = self._max_art.height()
+                    cm = self._max_art.contentsMargins()
+                    inner_h = art_container_h - cm.top() - cm.bottom()
+                    pix_h = scaled.height()
+                    top_pad = cm.top() + max(0, (inner_h - pix_h) // 2)
+                    bottom_pad = art_container_h - top_pad - pix_h
+                    self._max_lyrics.scroll.setContentsMargins(0, max(0, top_pad), 0, max(0, bottom_pad))
 
     def _update_max_mode(self):
         """Update max mode lyrics and info on timer tick."""
@@ -867,7 +928,18 @@ class App(QMainWindow):
         super().closeEvent(event)
 
 def main():
+    # HiDPI scaling — must be set before QApplication is created
+    QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
+    QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
+
     app = QApplication(sys.argv)
+
+    # Force Fusion style for consistent rendering across platforms.
+    # Without this, Qt picks up the system GTK theme on Linux desktops
+    # (e.g. Pop!_OS, GNOME), which overrides QSS colours and font sizes.
+    app.setStyle('Fusion')
+    theme.resolve_font()
+
     app.setDesktopFileName('lp')
     app_ui = App()
     app_ui.show()

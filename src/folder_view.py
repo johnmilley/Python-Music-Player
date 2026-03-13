@@ -64,14 +64,16 @@ class FolderView(QWidget):
         self.setLayout(self.layout)
 
     def _on_search(self, text):
-        """Jump to first folder matching the search text."""
+        """Jump to first folder where any word starts with the search text."""
         if not text:
             return
+        query = text.lower()
         root = self.view.rootIndex()
         for row in range(self.model.rowCount(root)):
             idx = self.model.index(row, 0, root)
             name = self.model.fileName(idx)
-            if text.lower() in name.lower():
+            words = name.lower().replace('-', ' ').replace('_', ' ').split()
+            if any(w.startswith(query) for w in words) or name.lower().startswith(query):
                 self.view.setCurrentIndex(idx)
                 self.view.scrollTo(idx)
                 break

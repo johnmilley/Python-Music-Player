@@ -9,7 +9,8 @@ from pathlib import Path
 
 from PyQt5.QtCore import QThread, pyqtSignal
 
-LRCLIB_API = 'https://lrclib.net/api/get'
+LRCLIB_GET = 'https://lrclib.net/api/get'
+LRCLIB_SEARCH = 'https://lrclib.net/api/search'
 
 
 def sanitize_filename(name):
@@ -49,6 +50,35 @@ class LyricsFetchThread(QThread):
         self.track = track
         self.album = album
 
+    @staticmethod
+    def _clean(text):
+        """Strip edition tags, brackets, feat. info for cleaner search."""
+        text = re.sub(r'\(.*?\)|\[.*?\]', '', text)
+        text = re.sub(r'\b(19|20)\d{2}\b', '', text)
+        text = re.sub(r'[-_]+', ' ', text)
+        return ' '.join(text.split()).strip()
+
+    @staticmethod
+    def _fetch(url):
+        req = urllib.request.Request(url, headers={'User-Agent': 'lp-music-player/1.0'})
+        data = urllib.request.urlopen(req, timeout=10).read()
+        return json.loads(data)
+
+    def _save_and_emit(self, synced, plain):
+        """Save lyrics to cache and emit result. Returns True if found."""
+        lyrics_dir, base = _lyrics_base(self.track, self.album)
+        if synced:
+            path = lyrics_dir / f'{base}.lrc'
+            path.write_text(synced, encoding='utf-8')
+            self.finished.emit(str(path), synced)
+            return True
+        elif plain:
+            path = lyrics_dir / f'{base}.txt'
+            path.write_text(plain, encoding='utf-8')
+            self.finished.emit(str(path), plain)
+            return True
+        return False
+
     def run(self):
         # Check cache first
         cached = lyrics_path_for_track(self.track, self.album)
@@ -57,37 +87,65 @@ class LyricsFetchThread(QThread):
             self.finished.emit(str(cached), text)
             return
 
-        # Query LRCLIB
-        params = urllib.parse.urlencode({
-            'artist_name': self.artist,
-            'track_name': self.track_title,
-            'album_name': self.album_title,
-        })
-        url = f'{LRCLIB_API}?{params}'
-
         try:
-            req = urllib.request.Request(url, headers={
-                'User-Agent': 'lp-music-player/1.0',
+            # 1) Exact match with raw metadata
+            params = urllib.parse.urlencode({
+                'artist_name': self.artist,
+                'track_name': self.track_title,
+                'album_name': self.album_title,
             })
-            data = urllib.request.urlopen(req, timeout=10).read()
-            result = json.loads(data)
+            try:
+                result = self._fetch(f'{LRCLIB_GET}?{params}')
+                if self._save_and_emit(
+                    result.get('syncedLyrics', ''),
+                    result.get('plainLyrics', '')
+                ):
+                    return
+            except Exception:
+                pass
 
-            # Prefer synced lyrics
-            synced = result.get('syncedLyrics') or ''
-            plain = result.get('plainLyrics') or ''
+            # 2) Exact match with cleaned album name
+            clean_album = self._clean(self.album_title)
+            if clean_album != self.album_title:
+                params = urllib.parse.urlencode({
+                    'artist_name': self.artist,
+                    'track_name': self.track_title,
+                    'album_name': clean_album,
+                })
+                try:
+                    result = self._fetch(f'{LRCLIB_GET}?{params}')
+                    if self._save_and_emit(
+                        result.get('syncedLyrics', ''),
+                        result.get('plainLyrics', '')
+                    ):
+                        return
+                except Exception:
+                    pass
 
-            lyrics_dir, base = _lyrics_base(self.track, self.album)
+            # 3) Search fallback — artist + track title
+            clean_title = self._clean(self.track_title)
+            clean_artist = self._clean(self.artist)
+            q = f'{clean_artist} {clean_title}'.strip()
+            if q:
+                params = urllib.parse.urlencode({'q': q})
+                results = self._fetch(f'{LRCLIB_SEARCH}?{params}')
+                # Pick best match: prefer synced, match artist name
+                artist_lower = clean_artist.lower()
+                for r in results:
+                    if artist_lower and artist_lower not in r.get('artistName', '').lower():
+                        continue
+                    synced = r.get('syncedLyrics', '')
+                    plain = r.get('plainLyrics', '')
+                    if self._save_and_emit(synced, plain):
+                        return
+                # If no artist match, try first result with lyrics
+                for r in results:
+                    synced = r.get('syncedLyrics', '')
+                    plain = r.get('plainLyrics', '')
+                    if self._save_and_emit(synced, plain):
+                        return
 
-            if synced:
-                path = lyrics_dir / f'{base}.lrc'
-                path.write_text(synced, encoding='utf-8')
-                self.finished.emit(str(path), synced)
-            elif plain:
-                path = lyrics_dir / f'{base}.txt'
-                path.write_text(plain, encoding='utf-8')
-                self.finished.emit(str(path), plain)
-            else:
-                self.finished.emit('', '')
+            self.finished.emit('', '')
         except Exception as e:
             print(f'Lyrics fetch error: {e}')
             self.finished.emit('', '')

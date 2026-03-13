@@ -104,6 +104,8 @@ class Player(QWidget):
 
         self.track_progress_label = QLabel('0:00')
         self.track_progress_label.setObjectName('track-progress')
+        self.track_progress_label.setFixedWidth(self.track_progress_label.fontMetrics().horizontalAdvance('-00:00') + 4)
+        self.track_progress_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
 
         self.progress_bar = ClickableProgressBar(self)
         self.progress_bar.seek_requested.connect(self.seek_to)
@@ -114,6 +116,10 @@ class Player(QWidget):
 
         self.track_length_label = QLabel('0:00')
         self.track_length_label.setObjectName('track-length')
+        self.track_length_label.setFixedWidth(self.track_length_label.fontMetrics().horizontalAdvance('-00:00') + 4)
+        self.track_length_label.setCursor(Qt.PointingHandCursor)
+        self.track_length_label.mousePressEvent = lambda e: self._toggle_time_display()
+        self._show_remaining = True
 
         self.layout_track_progress.addWidget(self.track_progress_label)
         self.layout_track_progress.addWidget(self.progress_bar)
@@ -160,9 +166,36 @@ class Player(QWidget):
         controls_layout.addLayout(self.layout_player_buttons)
 
         self.controls_container.setLayout(controls_layout)
-        self.layout_player.addWidget(self.controls_container, alignment=Qt.AlignCenter)
+
+        # Center controls horizontally using stretch spacers instead of
+        # alignment flags — alignment flags constrain the widget to its
+        # sizeHint, which breaks word-wrapped QLabel height calculation.
+        controls_row = QHBoxLayout()
+        controls_row.setContentsMargins(0, 0, 0, 0)
+        controls_row.addStretch()
+        controls_row.addWidget(self.controls_container)
+        controls_row.addStretch()
+        self.layout_player.addLayout(controls_row)
 
         self.setLayout(self.layout_player)
+
+    def _toggle_time_display(self):
+        self._show_remaining = not self._show_remaining
+        self._update_time_label()
+
+    def _update_time_label(self, pos=None):
+        if not self.current_track:
+            return
+        total = self.current_track.length
+        if pos is None:
+            pos = self.playback.curr_pos if self.playback.playing else 0
+        if self._show_remaining:
+            remaining = max(0, total - pos)
+            self.track_length_label.setText(
+                f"-{self.current_track.length_to_string(remaining)}")
+        else:
+            self.track_length_label.setText(
+                self.current_track.length_to_string(total))
 
     def seek_to(self, pos):
         self.playback.pause()
@@ -196,17 +229,18 @@ class Player(QWidget):
             self._time_elapsed = pos
             self.track_progress_label.setText(
                 self.current_track.length_to_string(pos))
+            self._update_time_label(pos)
 
-        # Check if Track fininshed playing
+        # Check if Track finished playing
         if pos >= total - 0.1:
             self.track_progress_label.setText(
                 self.current_track.length_to_string(self.current_track.length)
                 )
-            self.progress_bar.setValue(1000) # store size in var
+            self.progress_bar.setValue(1000)
             self.timer.stop()
             self.play_button.setText('\u25b6')
             self.track_finished.emit()
-            if self.current_track != self.album.tracklist[-1]:
+            if self.album and self.current_track != self.album.tracklist[-1]:
                 self.next_track()
 
     def next_track(self):
@@ -245,9 +279,10 @@ class Player(QWidget):
         try:
             self.playback.load_file(self.current_track.path)
             self.playback.play()
-        except:
-            # make a logger and add error handling - I need to teach it in Jan
-            print(f"LOG: Unable to play.")
+        except Exception as e:
+            print(f"LOG: Unable to play: {e}")
+            self.play_button.setText('\u25b6')
+            self.track_info.setText(f"Error: could not play file")
 
         # Updates AlbumViewer with track currently playing
         if self.album_view:
@@ -276,8 +311,8 @@ class Player(QWidget):
                 self.progress_bar.setValue(progress)
                 self.track_progress_label.setText(
                     self.current_track.length_to_string(seek_to))
-        except:
-            print(f"LOG: Unable to load track.")
+        except Exception as e:
+            print(f"LOG: Unable to load track: {e}")
 
     def pause(self):
         self.playback.pause()
@@ -311,10 +346,7 @@ class Player(QWidget):
 
         # Update DURATION
         if self.current_track:
-            track_length = self.current_track.length_to_string(
-                self.current_track.length
-                )
-            self.track_length_label.setText(track_length)
+            self._update_time_label(0)
 
     def load_album_art(self, album):
         """Load cover.jpg from album folder, or offer to search iTunes."""

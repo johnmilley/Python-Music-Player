@@ -13,14 +13,11 @@ class ClickableProgressBar(QProgressBar):
         self.setMouseTracking(True)
 
     def mousePressEvent(self, event):
-        if event.button() == Qt.LeftButton:
-            # Calculate percentage based on click horizontal position
+        if event.button() == Qt.LeftButton and self.width() > 0:
             val = event.x() / self.width()
-            new_pos = val * self.maximum()  # pos / 1000
-            # print(val, new_pos)
-            self.setValue(int(new_pos))     # update bar
-            self.seek_requested.emit(int(new_pos))
-            # print(new_pos)
+            new_pos = int(val * self.maximum())
+            self.setValue(new_pos)
+            self.seek_requested.emit(new_pos)
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
@@ -29,7 +26,8 @@ class ClickableProgressBar(QProgressBar):
         super().mouseMoveEvent(event)
 
     def _handle_click(self, event):
-        # Calculate ratio and clamp within [0, 1]
+        if self.width() == 0:
+            return
         ratio = max(0, min(event.x(), self.width())) / self.width()
         new_pos = int(ratio * self.maximum())
         
