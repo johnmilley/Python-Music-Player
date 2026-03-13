@@ -3,9 +3,16 @@
 
 import json
 import re
+import ssl
 import urllib.request
 import urllib.parse
 from pathlib import Path
+
+try:
+    import certifi
+    _ssl_ctx = ssl.create_default_context(cafile=certifi.where())
+except ImportError:
+    _ssl_ctx = ssl.create_default_context()
 
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
@@ -30,7 +37,7 @@ class ImageLoader(QThread):
 
     def run(self):
         try:
-            data = urllib.request.urlopen(self.url, timeout=10).read()
+            data = urllib.request.urlopen(self.url, timeout=10, context=_ssl_ctx).read()
             img = QImage()
             img.loadFromData(data)
             self.finished.emit(self.index, QPixmap.fromImage(img))
@@ -311,7 +318,7 @@ class SearchThread(QThread):
 
     def _fetch_json(self, url):
         req = urllib.request.Request(url, headers={'User-Agent': 'lp-music-player/1.0'})
-        data = urllib.request.urlopen(req, timeout=10).read()
+        data = urllib.request.urlopen(req, timeout=10, context=_ssl_ctx).read()
         return json.loads(data).get('results', [])
 
     def run(self):
@@ -380,7 +387,7 @@ class DownloadThread(QThread):
             req = urllib.request.Request(self.url, headers={
                 'User-Agent': 'lp-music-player/1.0'
             })
-            resp = urllib.request.urlopen(req, timeout=30)
+            resp = urllib.request.urlopen(req, timeout=30, context=_ssl_ctx)
             total = int(resp.headers.get('Content-Length', 0))
             data = b''
             while True:

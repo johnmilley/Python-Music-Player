@@ -15,7 +15,7 @@ import theme
 from PyQt5.QtWidgets import (QMainWindow, QApplication, QWidget, QHBoxLayout,
     QAction, QActionGroup, QSplitter, QColorDialog, QShortcut, QDialog,
     QVBoxLayout, QLabel, QLineEdit, QSizePolicy, QFileDialog, QGraphicsDropShadowEffect,
-    QWidgetAction, QPushButton, QFontDialog)
+    QPushButton, QFontDialog)
 from PyQt5.QtCore import Qt, QSettings, QTimer
 from PyQt5.QtGui import QColor, QPixmap, QIcon, QKeySequence
 
@@ -271,17 +271,12 @@ class App(QMainWindow):
             header.setEnabled(False)
             self.colour_menu.addAction(header)
         for c in colors:
-            wa = QWidgetAction(self)
-            btn = QPushButton()
-            btn.setFixedSize(140, 28)
-            border = '2px solid white' if c == self.accent_color else 'none'
-            btn.setStyleSheet(
-                f'QPushButton {{ background: {c}; border: {border}; }}'
-                f'QPushButton:hover {{ border: 2px solid white; }}'
-            )
-            btn.clicked.connect(lambda checked, color=c: (self.set_accent(color), self.colour_menu.close()))
-            wa.setDefaultWidget(btn)
-            self.colour_menu.addAction(wa)
+            action = QAction(self._color_icon(c), c, self)
+            if c == self.accent_color:
+                action.setCheckable(True)
+                action.setChecked(True)
+            action.triggered.connect(lambda checked, color=c: self.set_accent(color))
+            self.colour_menu.addAction(action)
 
     def _update_accent_for_album(self, force=False):
         """Extract palette from album art and update accent menu."""
@@ -440,6 +435,18 @@ class App(QMainWindow):
         if self.player.playback.active:
             vol = self.player.playback.volume + delta
             self.player.playback.set_volume(max(0, min(1, vol)))
+
+    def keyPressEvent(self, event):
+        """Handle key presses — fallback for max mode exit on macOS."""
+        if self.is_maxplayer:
+            key = event.key()
+            if key == Qt.Key_Escape:
+                self.toggle_maxplayer()
+                return
+            if key == Qt.Key_M and event.modifiers() & Qt.ShiftModifier:
+                self.toggle_maxplayer()
+                return
+        super().keyPressEvent(event)
 
     def eventFilter(self, obj, event):
         """Intercept Tab and vim keys for pane navigation."""
@@ -761,6 +768,12 @@ class App(QMainWindow):
 
         # Go fullscreen
         self.showFullScreen()
+
+        # Defer art scaling so the layout settles at fullscreen size first
+        # (macOS fullscreen animation delays the final resize)
+        if self.player.album and self.player.album.art:
+            QTimer.singleShot(150, lambda: self._set_max_art(QPixmap(str(self.player.album.art)))
+                              if self._max_art else None)
 
     def _style_max_mode(self):
         t = dict(self.current_theme)

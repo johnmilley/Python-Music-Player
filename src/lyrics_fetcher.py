@@ -3,9 +3,16 @@
 
 import json
 import re
+import ssl
 import urllib.request
 import urllib.parse
 from pathlib import Path
+
+try:
+    import certifi
+    _ssl_ctx = ssl.create_default_context(cafile=certifi.where())
+except ImportError:
+    _ssl_ctx = ssl.create_default_context()
 
 from PyQt5.QtCore import QThread, pyqtSignal
 
@@ -61,7 +68,7 @@ class LyricsFetchThread(QThread):
     @staticmethod
     def _fetch(url):
         req = urllib.request.Request(url, headers={'User-Agent': 'lp-music-player/1.0'})
-        data = urllib.request.urlopen(req, timeout=10).read()
+        data = urllib.request.urlopen(req, timeout=10, context=_ssl_ctx).read()
         return json.loads(data)
 
     def _save_and_emit(self, synced, plain):
