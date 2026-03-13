@@ -15,7 +15,7 @@ import theme
 from PyQt5.QtWidgets import (QMainWindow, QApplication, QWidget, QHBoxLayout,
     QAction, QActionGroup, QSplitter, QColorDialog, QShortcut, QDialog,
     QVBoxLayout, QLabel, QLineEdit, QSizePolicy, QFileDialog, QGraphicsDropShadowEffect,
-    QWidgetAction, QPushButton)
+    QWidgetAction, QPushButton, QFontDialog)
 from PyQt5.QtCore import Qt, QSettings
 from PyQt5.QtGui import QColor, QPixmap, QIcon, QKeySequence
 
@@ -42,7 +42,7 @@ class App(QMainWindow):
         self._failed_lyrics = set()  # track paths with no results
         self.player.track_changed.connect(self._on_track_changed)
         self.player.timer.timeout.connect(self._update_lyrics_position)
-        self.player.art_clicked.connect(lambda: self.toggle_maxplayer() if not self.is_miniplayer else None)
+        self.player.art_clicked.connect(self.toggle_maxplayer)
 
         self.setWindowTitle("lp")
         # Support both normal and PyInstaller-bundled paths
@@ -91,10 +91,6 @@ class App(QMainWindow):
         # Menu bar — Preferences
         self.prefs_menu = self.menuBar().addMenu('Preferences')
 
-        self.dark_mode_action = QAction('Dark Mode', self)
-        self.dark_mode_action.triggered.connect(self.toggle_theme)
-        self.prefs_menu.addAction(self.dark_mode_action)
-
         # Font size submenu
         self.font_size_menu = self.prefs_menu.addMenu('Font Size')
         self.font_size_group = QActionGroup(self)
@@ -109,8 +105,13 @@ class App(QMainWindow):
             self.font_size_group.addAction(action)
             self.font_size_menu.addAction(action)
 
-        # Menu bar — Colour
-        self.colour_menu = self.menuBar().addMenu('Colour')
+        # Font picker
+        self.font_action = QAction('Font...', self)
+        self.font_action.triggered.connect(self._pick_font)
+        self.prefs_menu.addAction(self.font_action)
+
+        # Menu bar — Theme
+        self.colour_menu = self.menuBar().addMenu('Theme')
         self.accent_color = theme.DEFAULT_ACCENT
         self._album_accents = {}  # album_path -> accent color
         self._populate_accent_menu([])
@@ -133,11 +134,6 @@ class App(QMainWindow):
         self.about_action.triggered.connect(self.show_about)
         self.help_menu.addAction(self.about_action)
 
-        # Miniplayer state
-        self.is_miniplayer = False
-        self._pre_mini_geometry = None
-        self._pre_mini_splitter = None
-
         # Max mode state
         self.is_maxplayer = False
         self._max_widget = None
@@ -153,26 +149,39 @@ class App(QMainWindow):
         self.settings = QSettings('lp', 'music-player')
         self._restore_state()
 
+        # Set player buttons to NoFocus so Tab skips them
+        for w in [self.player.prev_track_button, self.player.play_button,
+                  self.player.next_track_button, self.player.toggle_library_btn,
+                  self.player.toggle_folder_btn, self.player.progress_bar]:
+            w.setFocusPolicy(Qt.NoFocus)
+        self.lyrics_widget.setFocusPolicy(Qt.NoFocus)
+        self.lyrics_widget.label.setFocusPolicy(Qt.NoFocus)
+        self.lyrics_widget.scroll.setFocusPolicy(Qt.NoFocus)
+
+        # Focus change tracking for pane highlighting
+        QApplication.instance().focusChanged.connect(self._on_focus_changed)
+
+        # Tab key cycles between folder view and album view
+        self.folder_view.view.installEventFilter(self)
+        self.album_view.track_list_widget.installEventFilter(self)
+
         # Keyboard shortcuts
         self._setup_shortcuts()
 
     def apply_theme(self, t):
         self.current_theme = t
-        # Update menu text to show available action
-        if t is theme.DARK:
-            self.dark_mode_action.setText('Light Mode')
-        else:
-            self.dark_mode_action.setText('Dark Mode')
         # Override accent/selection with user's chosen color
         t = dict(t)
         t['accent'] = self.accent_color
         t['selection'] = self.accent_color
         fs = self.font_size
-        compact = self.is_miniplayer
         self.setStyleSheet(theme.app_qss(t))
-        self.player.setStyleSheet(theme.player_qss(t, fs, compact))
-        self.folder_view.setStyleSheet(theme.folder_view_qss(t, fs))
-        self.album_view.setStyleSheet(theme.album_view_qss(t, fs))
+        self.player.setStyleSheet(theme.player_qss(t, fs))
+        folder_focused = self.folder_view.view.hasFocus()
+        album_focused = self.album_view.track_list_widget.hasFocus()
+        self.folder_view.setStyleSheet(theme.folder_view_qss(t, fs, focused=folder_focused))
+        self.album_view.setStyleSheet(theme.album_view_qss(t, fs, focused=album_focused))
+        self.album_view.track_list_widget._selection_text_color = t['selection_text']
         self.lyrics_widget.setStyleSheet(theme.lyrics_qss(t, fs))
         self.lyrics_widget.set_theme(t, fs)
         self.right_splitter.setStyleSheet(
@@ -185,6 +194,11 @@ class App(QMainWindow):
             self.apply_theme(theme.DARK)
         else:
             self.apply_theme(theme.LIGHT)
+        # Refresh colour menu so Dark/Light label stays in sync
+        album_colors = []
+        if self.player.album and self.player.album.art:
+            album_colors = extract_palette(str(self.player.album.art))
+        self._populate_accent_menu(album_colors)
 
     def set_font_size(self, size):
         self.font_size = size
@@ -211,6 +225,16 @@ class App(QMainWindow):
             self._album_accents[self.player.album.path] = color
         self.apply_theme(self.current_theme)
 
+    def _pick_font(self):
+        """Open system font dialog and apply the chosen font."""
+        from PyQt5.QtGui import QFont
+        current = QFont(theme.FONT.split("'")[1] if "'" in theme.FONT else 'Consolas')
+        font, ok = QFontDialog.getFont(current, self, 'Pick Font')
+        if ok:
+            family = font.family()
+            theme.FONT = f"'{family}'"
+            self.apply_theme(self.current_theme)
+
     def pick_custom_accent(self):
         color = QColorDialog.getColor(QColor(self.accent_color), self, 'Pick Accent Color')
         if color.isValid():
@@ -219,12 +243,20 @@ class App(QMainWindow):
     _FUN_COLOURS = ['#ff6f61', '#e8557a', '#5ba4cf', '#2bbbad', '#f0c040']
 
     def _populate_accent_menu(self, album_colors):
-        """Rebuild the colour menu with album swatches and fun colours."""
+        """Rebuild the colour menu with theme toggle, album swatches, and presets."""
         self.colour_menu.clear()
+        # Light/Dark toggle
+        current = getattr(self, 'current_theme', theme.LIGHT)
+        theme_action = QAction('Dark Mode' if current is theme.LIGHT else 'Light Mode', self)
+        theme_action.triggered.connect(self.toggle_theme)
+        self.colour_menu.addAction(theme_action)
+        self.colour_menu.addSeparator()
+        # Album colours
         if album_colors:
             self._add_colour_section('Album', album_colors)
             self.colour_menu.addSeparator()
-        self._add_colour_section(None, self._FUN_COLOURS)
+        # Preset colours
+        self._add_colour_section('Presets', self._FUN_COLOURS)
         self.colour_menu.addSeparator()
         custom_action = QAction('Custom...', self)
         custom_action.triggered.connect(self.pick_custom_accent)
@@ -327,12 +359,13 @@ class App(QMainWindow):
         saved_album_accents = self.settings.value('album_accents')
         if saved_album_accents and isinstance(saved_album_accents, dict):
             self._album_accents = saved_album_accents
+        saved_font = self.settings.value('font_family')
+        if saved_font:
+            theme.FONT = f"'{saved_font}'"
         if self.settings.value('dark_mode') == 'true':
             self.apply_theme(theme.DARK)
         else:
             self.apply_theme(self.current_theme)
-        if self.settings.value('miniplayer') == 'true':
-            self.enter_miniplayer()
         last_album = self.settings.value('last_album')
         if last_album:
             self.album_view.load_album_listing(last_album)
@@ -353,17 +386,22 @@ class App(QMainWindow):
             ('b',       'Seek back 5s',        lambda: self._seek_relative(-5)),
             ('.',       'Volume up',           lambda: self._adjust_volume(0.05)),
             (',',       'Volume down',         lambda: self._adjust_volume(-0.05)),
-            ('1',       'Toggle library',      lambda: None if self.is_maxplayer else (self.exit_miniplayer() if self.is_miniplayer else self.player.toggle_library())),
-            ('2',       'Toggle tracklist',    lambda: None if self.is_maxplayer else (self.exit_miniplayer() if self.is_miniplayer else self.player.toggle_tracklist())),
+            ('1',       'Toggle library',      self._toggle_and_focus_library),
+            ('2',       'Toggle tracklist',    self._toggle_and_focus_tracklist),
             ('3',       'Toggle lyrics',       self.toggle_lyrics),
-            ('l',       None,                  self.toggle_lyrics),
-            ('m',       'Toggle miniplayer',   lambda: None if self.is_maxplayer else self.toggle_miniplayer()),
-            ('Shift+M', 'Toggle max mode',    lambda: None if self.is_miniplayer else self.toggle_maxplayer()),
+            ('/',       'Search',              self._open_search),
+            ('Shift+M', 'Toggle max mode',    self.toggle_maxplayer),
             ('Ctrl++',  'Increase font size',  lambda: self._step_font_size(1)),
             ('Ctrl+-',  'Decrease font size',  lambda: self._step_font_size(-1)),
             ('Ctrl+=',  None,                  lambda: self._step_font_size(1)),
             ('q',       'Quit',                self.close),
             ('?',       'Show shortcuts',      self.show_help),
+        ]
+        # These keys are shown in help but handled by eventFilter/views, not QShortcut
+        self._display_bindings = self.keybindings + [
+            ('Tab',     'Switch pane',         None),
+            ('j / k',   'Navigate down / up',  None),
+            ('h / l',   'Folder: collapse / expand; Tracklist: go to library', None),
         ]
         for key, _, callback in self.keybindings:
             shortcut = QShortcut(QKeySequence(key), self)
@@ -387,6 +425,101 @@ class App(QMainWindow):
             vol = self.player.playback.volume + delta
             self.player.playback.set_volume(max(0, min(1, vol)))
 
+    def eventFilter(self, obj, event):
+        """Intercept Tab and vim keys for pane navigation."""
+        if event.type() == event.KeyPress and not isinstance(self.focusWidget(), QLineEdit):
+            key = event.key()
+            if key == Qt.Key_Tab:
+                self._cycle_pane_focus()
+                return True
+            # h/l on album tracklist → switch to folder view
+            if obj is self.album_view.track_list_widget and key in (Qt.Key_H, Qt.Key_L):
+                if not self.folder_view.isVisible():
+                    self.player.toggle_library()
+                self.folder_view.view.setFocus()
+                return True
+            if obj is self.folder_view.view:
+                idx = self.folder_view.view.currentIndex()
+                # l on a music directory → load album and switch to tracklist
+                if key == Qt.Key_L and idx.isValid():
+                    path = self.folder_view.model.filePath(idx)
+                    if self.folder_view._has_music(path):
+                        self.album_view.load_album_listing(path)
+                        if not self.album_view.isVisible():
+                            self.player.toggle_tracklist()
+                        self.album_view.track_list_widget.setFocus()
+                        return True
+                # h at top level → switch to tracklist
+                if key == Qt.Key_H:
+                    root = self.folder_view.view.rootIndex()
+                    at_top = not idx.isValid() or (not self.folder_view.view.isExpanded(idx)
+                                                   and idx.parent() == root)
+                    if at_top:
+                        if not self.album_view.isVisible():
+                            self.player.toggle_tracklist()
+                        self.album_view.track_list_widget.setFocus()
+                        return True
+        return super().eventFilter(obj, event)
+
+    def _toggle_and_focus_library(self):
+        """Toggle library panel and focus it if shown."""
+        if self.is_maxplayer:
+            return
+        self.player.toggle_library()
+        if self.folder_view.isVisible():
+            self.folder_view.view.setFocus()
+        elif self.album_view.isVisible():
+            self.album_view.track_list_widget.setFocus()
+
+    def _toggle_and_focus_tracklist(self):
+        """Toggle tracklist panel and focus it if shown."""
+        if self.is_maxplayer:
+            return
+        self.player.toggle_tracklist()
+        if self.album_view.isVisible():
+            self.album_view.track_list_widget.setFocus()
+        elif self.folder_view.isVisible():
+            self.folder_view.view.setFocus()
+
+    def _open_search(self):
+        """Open the search bar of the focused pane (folder view by default)."""
+        if self.album_view.track_list_widget.hasFocus():
+            bar = self.album_view.search_bar
+        else:
+            bar = self.folder_view.search_bar
+        bar.setVisible(True)
+        bar.setFocus()
+        bar.clear()
+
+    def _cycle_pane_focus(self):
+        """Toggle focus between folder view and album view."""
+        if self.folder_view.view.hasFocus():
+            self.album_view.track_list_widget.setFocus()
+        else:
+            self.folder_view.view.setFocus()
+
+    def _on_focus_changed(self, old, new):
+        """Update pane highlighting when focus changes."""
+        self._apply_pane_styles()
+
+    def _apply_pane_styles(self):
+        """Re-apply view stylesheets based on which pane has focus."""
+        t = dict(self.current_theme)
+        t['accent'] = self.accent_color
+        t['selection'] = self.accent_color
+        fs = self.font_size
+        folder_focused = self.folder_view.view.hasFocus()
+        album_focused = self.album_view.track_list_widget.hasFocus()
+        self.folder_view.setStyleSheet(theme.folder_view_qss(t, fs, focused=folder_focused))
+        self.album_view.setStyleSheet(theme.album_view_qss(t, fs, focused=album_focused))
+        # Store selection text color for the delegate
+        self.album_view.track_list_widget._selection_text_color = t['selection_text']
+        # Force re-polish so child widgets pick up the new stylesheet immediately
+        for view in (self.folder_view.view, self.album_view.track_list_widget):
+            view.style().unpolish(view)
+            view.style().polish(view)
+            view.viewport().update()
+
     def show_help(self):
         t = self.current_theme
         dialog = QDialog(self)
@@ -401,7 +534,7 @@ class App(QMainWindow):
         rows = ''.join(
             f'<tr><td style="padding: 4px 20px 4px 0;"><b>{esc(key)}</b></td>'
             f'<td style="padding: 4px 0;">{esc(desc)}</td></tr>'
-            for key, desc, _ in self.keybindings if desc
+            for key, desc, _ in self._display_bindings if desc
         )
         label = QLabel(f'<table>{rows}</table>')
         label.setTextFormat(Qt.RichText)
@@ -435,8 +568,6 @@ class App(QMainWindow):
     def toggle_lyrics(self):
         if self.is_maxplayer:
             self._toggle_max_lyrics()
-        elif self.is_miniplayer:
-            self._toggle_mini_lyrics()
         else:
             self.lyrics_widget.setVisible(not self.lyrics_widget.isVisible())
 
@@ -444,10 +575,13 @@ class App(QMainWindow):
         if not self._max_lyrics or not self._max_art:
             return
         self._max_lyrics.setVisible(not self._max_lyrics.isVisible())
-        # Re-scale art to fit new available space
-        if hasattr(self, '_max_art_pixmap'):
-            from PyQt5.QtCore import QTimer as QT
-            QT.singleShot(0, lambda: self._set_max_art(self._max_art_pixmap) if self._max_art else None)
+        # Re-apply style so lyrics render at the correct max-mode font size
+        if self._max_lyrics.isVisible():
+            self._style_max_mode()
+        # Re-scale art after layout settles
+        from PyQt5.QtCore import QTimer as QT
+        QT.singleShot(0, lambda: self._set_max_art(self._max_art_pixmap)
+                       if self._max_art and hasattr(self, '_max_art_pixmap') else None)
 
     def _on_track_changed(self, track):
         """Fetch lyrics when the track changes."""
@@ -511,128 +645,6 @@ class App(QMainWindow):
                 self.lyrics_widget.update_position(self.player.playback.curr_pos)
             self._update_max_mode()
 
-    def toggle_miniplayer(self):
-        if self.is_miniplayer:
-            self.exit_miniplayer()
-        else:
-            self.enter_miniplayer()
-
-    def _toggle_mini_lyrics(self):
-        vis = not self.lyrics_widget.isVisible()
-        self._mini_lyrics_btn.setChecked(vis)
-        # Resize window to accommodate lyrics
-        if vis:
-            self.lyrics_widget.setMinimumHeight(350)
-            self.lyrics_widget.setVisible(True)
-            self.resize(self.width(), self.height() + 450)
-        else:
-            lyrics_h = self.lyrics_widget.height()
-            self.lyrics_widget.setMinimumHeight(0)
-            self.lyrics_widget.setVisible(False)
-            self.resize(self.width(), self.height() - lyrics_h)
-
-    def enter_miniplayer(self):
-        if self.is_miniplayer:
-            return
-        self.is_miniplayer = True
-
-        # Save current state for restoration
-        self._pre_mini_geometry = self.saveGeometry()
-        self._pre_mini_splitter = self.splitter.saveState()
-        self._pre_mini_right_splitter = self.right_splitter.saveState()
-        self._pre_mini_library = self.folder_view.isVisible()
-        self._pre_mini_tracklist = self.album_view.isVisible()
-        self._pre_mini_lyrics = self.lyrics_widget.isVisible()
-
-        # Hide side panels and menu bar
-        self.folder_view.setVisible(False)
-        self.album_view.setVisible(False)
-        self.right_splitter.setVisible(False)
-        self.menuBar().setVisible(False)
-
-        # Move lyrics widget into player layout for miniplayer
-        self.lyrics_widget.setVisible(False)
-        self.lyrics_widget.scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.player.layout_player.addWidget(self.lyrics_widget)
-
-        # Add lyrics toggle button to player button row
-        from PyQt5.QtWidgets import QPushButton
-        self._mini_lyrics_btn = QPushButton('\u266A')  # musical note
-        self._mini_lyrics_btn.setObjectName('lyrics-toggle-btn')
-        self._mini_lyrics_btn.setCheckable(True)
-        self._mini_lyrics_btn.setChecked(False)
-        self._mini_lyrics_btn.pressed.connect(self._toggle_mini_lyrics)
-        self.player.layout_player_buttons.addWidget(self._mini_lyrics_btn)
-
-        # Hide non-essential player widgets
-        self.player.toggle_library_btn.setVisible(False)
-        self.player.toggle_folder_btn.setVisible(False)
-        self.player.track_progress_label.setVisible(False)
-        self.player.track_length_label.setVisible(False)
-        self.player.progress_widget.setVisible(False)
-
-        # Reduce minimum sizes
-        self.player.setMinimumSize(200, 250)
-        self.setMinimumSize(280, 320)
-
-        # Restyle for compact mode
-        self.apply_theme(self.current_theme)
-
-        # Resize to compact
-        self.resize(320, 400)
-
-        # Stay on top
-        self.setWindowFlags(self.windowFlags() | Qt.WindowStaysOnTopHint)
-        self.show()
-
-    def exit_miniplayer(self):
-        if not self.is_miniplayer:
-            return
-        self.is_miniplayer = False
-
-        # Remove stay on top
-        self.setWindowFlags(self.windowFlags() & ~Qt.WindowStaysOnTopHint)
-        self.show()
-
-        # Remove mini lyrics button
-        if hasattr(self, '_mini_lyrics_btn'):
-            self.player.layout_player_buttons.removeWidget(self._mini_lyrics_btn)
-            self._mini_lyrics_btn.deleteLater()
-            del self._mini_lyrics_btn
-
-        # Move lyrics widget back to right splitter
-        self.lyrics_widget.scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        self.right_splitter.addWidget(self.lyrics_widget)
-
-        # Restore minimum sizes
-        self.setMinimumSize(800, 400)
-        self.player.setMinimumSize(350, 300)
-
-        # Show everything
-        self.menuBar().setVisible(True)
-        self.player.toggle_library_btn.setVisible(True)
-        self.player.toggle_folder_btn.setVisible(True)
-        self.player.track_progress_label.setVisible(True)
-        self.player.track_length_label.setVisible(True)
-        self.player.progress_widget.setVisible(True)
-
-        # Restore side panels
-        self.right_splitter.setVisible(True)
-        self.folder_view.setVisible(self._pre_mini_library)
-        self.album_view.setVisible(self._pre_mini_tracklist)
-        self.lyrics_widget.setVisible(self._pre_mini_lyrics)
-        self.player.toggle_library_btn.setChecked(self._pre_mini_library)
-        self.player.toggle_folder_btn.setChecked(self._pre_mini_tracklist)
-
-        # Restyle for normal mode
-        self.apply_theme(self.current_theme)
-
-        # Restore geometry
-        if self._pre_mini_geometry:
-            self.restoreGeometry(self._pre_mini_geometry)
-            self.splitter.restoreState(self._pre_mini_splitter)
-            self.right_splitter.restoreState(self._pre_mini_right_splitter)
-
     def toggle_maxplayer(self):
         if self.is_maxplayer:
             self.exit_maxplayer()
@@ -642,9 +654,6 @@ class App(QMainWindow):
     def enter_maxplayer(self):
         if self.is_maxplayer:
             return
-        # Exit miniplayer first if active
-        if self.is_miniplayer:
-            self.exit_miniplayer()
         self.is_maxplayer = True
 
         # Save state
@@ -674,9 +683,12 @@ class App(QMainWindow):
         self._update_max_info()
         max_layout.addWidget(self._max_info)
 
-        # Content: large art (left) + large lyrics (right)
-        content = QSplitter(Qt.Horizontal)
-        content.setObjectName('max-splitter')
+        # Content: art centered (solo) or art left + lyrics right (50/50)
+        content = QWidget()
+        content.setObjectName('max-content')
+        content_layout = QHBoxLayout()
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.setSpacing(0)
 
         # Album art — large, scaled
         self._max_art = QLabel()
@@ -693,14 +705,13 @@ class App(QMainWindow):
         self._max_art.setGraphicsEffect(max_shadow)
         if self.player.album and self.player.album.art:
             self._set_max_art(QPixmap(str(self.player.album.art)))
-        content.addWidget(self._max_art)
+        content_layout.addWidget(self._max_art, stretch=1)
 
-        # Lyrics — large font
+        # Lyrics — large font, hidden by default
         self._max_lyrics = LyricsWidget()
         self._max_lyrics.setObjectName('max-lyrics')
         # Copy current lyrics content
         if self.lyrics_widget._synced_lines:
-            # Re-render synced lyrics
             lrc_text = '\n'.join(
                 f'[{int(ts//60):02d}:{ts%60:05.2f}] {line}'
                 for ts, line in self.lyrics_widget._synced_lines
@@ -708,10 +719,10 @@ class App(QMainWindow):
             self._max_lyrics.set_lyrics(lrc_text)
         else:
             self._max_lyrics.set_lyrics(self.lyrics_widget.label.text())
-        content.addWidget(self._max_lyrics)
+        self._max_lyrics.setVisible(False)
+        content_layout.addWidget(self._max_lyrics, stretch=1)
 
-        content.setStretchFactor(0, 3)
-        content.setStretchFactor(1, 2)
+        content.setLayout(content_layout)
         self._max_content = content
 
         max_layout.addWidget(content, stretch=1)
@@ -734,6 +745,9 @@ class App(QMainWindow):
             #max-mode {{
                 background-color: {t['bg']};
             }}
+            #max-content {{
+                background-color: {t['bg']};
+            }}
             #max-info {{
                 background-color: {t['bg']};
                 color: {t['fg']};
@@ -742,18 +756,10 @@ class App(QMainWindow):
                 padding: 15px;
                 border-bottom: 2px solid {t['accent']};
             }}
-            QSplitter::handle {{
-                background-color: transparent;
-                width: 6px;
-            }}
-            QSplitter::handle:hover {{
-                background-color: {t['accent']};
-            }}
         """)
         self._max_lyrics.setStyleSheet(f"""
             #lyrics-widget, #max-lyrics {{
                 background-color: {t['bg']};
-                padding: 20px;
             }}
             #lyrics-scroll {{
                 background-color: {t['bg']};
@@ -764,6 +770,7 @@ class App(QMainWindow):
                 color: {t['fg']};
                 font-family: {theme.FONT};
                 font-size: {fs + 8}pt;
+                padding: 40px 60px;
             }}
         """)
         self._max_lyrics.set_theme(t, fs + 8)
@@ -847,9 +854,11 @@ class App(QMainWindow):
         self.settings.setValue('dark_mode', 'true' if self.current_theme is theme.DARK else 'false')
         self.settings.setValue('font_size', self.font_size)
         self.settings.setValue('accent_color', self.accent_color)
+        # Save font family (extract from CSS format)
+        font_family = theme.FONT.strip("'\"")
+        self.settings.setValue('font_family', font_family)
         self.settings.setValue('album_accents', self._album_accents)
         self.settings.setValue('lyrics_visible', 'true' if self.lyrics_widget.isVisible() else 'false')
-        self.settings.setValue('miniplayer', 'true' if self.is_miniplayer else 'false')
         if self.album_view.album and self.album_view.album.path:
             self.settings.setValue('last_album', self.album_view.album.path)
         if self.player.current_track:

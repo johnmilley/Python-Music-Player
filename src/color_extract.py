@@ -64,6 +64,11 @@ def extract_palette(image_path, count=6):
             seen.add(c)
             results.append(c)
 
+    # Sort by saturation (most vibrant first)
+    def saturation(hex_c):
+        return QColor(hex_c).saturation()
+    results.sort(key=saturation, reverse=True)
+
     return results
 
 

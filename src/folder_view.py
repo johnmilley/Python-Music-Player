@@ -51,6 +51,7 @@ class FolderView(QWidget):
         self.view.setWordWrap(True)
 
         self.view.clicked.connect(self.on_item_clicked)
+        self.view.doubleClicked.connect(self.on_item_clicked)
 
         # Search bar
         self.search_bar = SearchBar(self.view)

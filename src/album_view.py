@@ -9,7 +9,7 @@ from PyQt5.QtWidgets import (
     QStyledItemDelegate, QStyle
 )
 from PyQt5.QtCore import Qt, pyqtSignal, QSize, QRect
-from PyQt5.QtGui import QFontMetrics, QTextOption
+from PyQt5.QtGui import QColor, QFontMetrics, QTextOption
 
 # local
 from album import Album
@@ -53,21 +53,25 @@ class WrapIndentDelegate(QStyledItemDelegate):
         style = option.widget.style() if option.widget else QApplication.style()
         style.drawControl(QStyle.CE_ItemViewItem, option, painter, option.widget)
 
+        # Use the selection text color stored on the widget when focused+selected,
+        # otherwise use normal text color
+        if option.state & QStyle.State_Selected and option.widget and option.widget.hasFocus():
+            sel_color = getattr(option.widget, '_selection_text_color', None)
+            pen_color = QColor(sel_color) if sel_color else option.palette.color(option.palette.HighlightedText)
+        else:
+            pen_color = option.palette.color(option.palette.Text)
+
         if fm.horizontalAdvance(text) <= avail:
             # Single line — draw normally
             text_rect = option.rect.adjusted(padding, 0, -padding, 0)
-            painter.setPen(option.palette.color(
-                option.palette.HighlightedText if option.state & QStyle.State_Selected
-                else option.palette.Text))
+            painter.setPen(pen_color)
             painter.setFont(option.font)
             painter.drawText(text_rect, Qt.AlignVCenter | Qt.AlignLeft, text)
         else:
             # Two lines with indent on continuation
             first, rest = self._split_text(text, fm, avail)
             line_h = fm.height()
-            painter.setPen(option.palette.color(
-                option.palette.HighlightedText if option.state & QStyle.State_Selected
-                else option.palette.Text))
+            painter.setPen(pen_color)
             painter.setFont(option.font)
             r1 = QRect(option.rect.x() + padding, option.rect.y() + 1,
                         avail, line_h)

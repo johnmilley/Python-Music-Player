@@ -105,11 +105,11 @@ def app_qss(t):
         }}
     """
 
-def player_qss(t, fs=DEFAULT_FONT_SIZE, compact=False):
-    btn_h = 28 if compact else 34
-    art_margin = '2px' if compact else '10px'
+def player_qss(t, fs=DEFAULT_FONT_SIZE):
+    btn_h = 34
+    art_margin = '10px'
     info_fs = fs
-    btn_fs = fs if compact else fs + 2
+    btn_fs = fs + 2
     return f"""
         #player {{
             background-color: {t['bg']};
@@ -148,7 +148,7 @@ def player_qss(t, fs=DEFAULT_FONT_SIZE, compact=False):
             background-color: {t['bg']};
             border: 1px solid {t['border']};
             color: {t['fg']};
-            min-width: {'30px' if compact else '40px'};
+            min-width: 40px;
             height: {btn_h}px;
             padding: 0 6px;
             font-family: {FONT};
@@ -173,8 +173,10 @@ def player_qss(t, fs=DEFAULT_FONT_SIZE, compact=False):
         }}
     """
 
-def folder_view_qss(t, fs=DEFAULT_FONT_SIZE):
+def folder_view_qss(t, fs=DEFAULT_FONT_SIZE, focused=True):
     item_h = fs + 14
+    sel_bg = t['selection'] if focused else 'transparent'
+    sel_fg = t['selection_text'] if focused else t['fg']
     return f"""
         QTreeView {{
             font-size: {fs}pt;
@@ -187,8 +189,8 @@ def folder_view_qss(t, fs=DEFAULT_FONT_SIZE):
             height: {item_h};
         }}
         QTreeView::item:selected {{
-            background-color: {t['selection']};
-            color: {t['selection_text']};
+            background-color: {sel_bg};
+            color: {sel_fg};
         }}
         QTreeView::branch {{
             image: none;
@@ -206,8 +208,10 @@ def folder_view_qss(t, fs=DEFAULT_FONT_SIZE):
         }}
     """
 
-def album_view_qss(t, fs=DEFAULT_FONT_SIZE):
+def album_view_qss(t, fs=DEFAULT_FONT_SIZE, focused=True):
     item_pad = max(1, (fs - 10) // 2)
+    sel_bg = t['selection'] if focused else 'transparent'
+    sel_fg = t['selection_text'] if focused else t['fg']
     return f"""
         #track-list {{
             background-color: {t['bg']};
@@ -220,8 +224,8 @@ def album_view_qss(t, fs=DEFAULT_FONT_SIZE):
             padding: {item_pad}px 0;
         }}
         #track-list::item:selected {{
-            background-color: {t['selection']};
-            color: {t['selection_text']};
+            background-color: {sel_bg};
+            color: {sel_fg};
         }}
         #search-bar {{
             background-color: {t['bg']};
@@ -247,19 +251,5 @@ def lyrics_qss(t, fs=DEFAULT_FONT_SIZE):
             color: {t['fg']};
             font-family: {FONT};
             font-size: {fs}pt;
-        }}
-        #lyrics-toggle-btn {{
-            background-color: {t['bg']};
-            border: 1px solid {t['border']};
-            color: {t['fg']};
-            font-family: {FONT};
-            font-size: {fs + 2}pt;
-            min-width: 34px;
-            max-width: 34px;
-            height: 34px;
-        }}
-        #lyrics-toggle-btn:checked {{
-            background-color: {t['accent']};
-            color: {t['selection_text']};
         }}
     """

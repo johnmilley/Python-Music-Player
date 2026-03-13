@@ -8,9 +8,6 @@ from track import Track
 
 # mutagen
 import mutagen
-from mutagen.mp3 import MP3
-from mutagen.flac import FLAC
-from mutagen.mp4 import MP4
 
 class Album:
     def __init__(self, directory=""):
@@ -70,7 +67,7 @@ class Album:
                 continue
             if track is None:
                 continue
-            length = get_length(path)
+            length = track.info.length if track.info else 0
 
             if file.lower().endswith('.flac'):
                 tracknumber = meta_check(track.get('tracknumber'))
@@ -121,21 +118,6 @@ class Album:
                 s += f"{track}\n"
         return s
 
-
-def get_length(path):
-    """
-    helper method to get the length of song in seconds
-    
-    :param path: pathlib Path object
-    """
-    if str(path).lower().endswith('.mp3'):
-        mp3 = MP3(path)
-        return mp3.info.length
-    if str(path).lower().endswith('.flac'):
-        flac = FLAC(path)
-        return flac.info.length
-    if str(path).lower().endswith('.m4a'):
-        return MP4(path).info.length
 
 def main():
     album = Album(Path("/Users/jlm/Downloads/music/Carly Rae Jepsen - Emotion (10th Anniversary Edition) - (2025)"))
