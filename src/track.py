@@ -13,12 +13,11 @@ class Track:
         self.filename = filename # fallback display
         self.path = path         # for playback
 
-    def length_to_string(self, length:int):
-        minutes = math.floor(length / 60) 
-        seconds = str(math.floor(length - (minutes * 60)))
-        if len(seconds) == 1:
-            seconds = "0" + seconds
-        return f"{minutes}:{seconds}"
+    def length_to_string(self, length):
+        total_seconds = int(length)
+        minutes = total_seconds // 60
+        seconds = total_seconds % 60
+        return f"{minutes}:{seconds:02d}"
         
     def __repr__(self):
         if self.tracknumber and self.title:

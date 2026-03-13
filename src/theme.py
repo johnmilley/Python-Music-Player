@@ -49,13 +49,16 @@ def app_qss(t):
             background-color: {t['bg']};
         }}
         QSplitter::handle {{
+            background-color: transparent;
+        }}
+        QSplitter::handle:hover {{
             background-color: {t['accent']};
         }}
         QSplitter::handle:horizontal {{
-            width: 3px;
+            width: 6px;
         }}
         QSplitter::handle:vertical {{
-            height: 3px;
+            height: 6px;
         }}
         QMenuBar {{
             background-color: {t['bg']};
@@ -94,13 +97,19 @@ def app_qss(t):
             height: 10px;
             margin-left: 6px;
         }}
+        QScrollBar:vertical {{
+            width: 0;
+        }}
+        QScrollBar:horizontal {{
+            height: 0;
+        }}
     """
 
 def player_qss(t, fs=DEFAULT_FONT_SIZE, compact=False):
-    btn_h = 35 if compact else 50
+    btn_h = 28 if compact else 34
     art_margin = '2px' if compact else '10px'
-    info_fs = fs if compact else fs + 2
-    btn_fs = fs + 2 if compact else fs + 5
+    info_fs = fs
+    btn_fs = fs if compact else fs + 2
     return f"""
         #player {{
             background-color: {t['bg']};
@@ -108,6 +117,7 @@ def player_qss(t, fs=DEFAULT_FONT_SIZE, compact=False):
         #album-art {{
             padding: 0;
             margin-top: {art_margin};
+            border: none;
         }}
         #track-info {{
             font-family: {FONT};
@@ -115,7 +125,7 @@ def player_qss(t, fs=DEFAULT_FONT_SIZE, compact=False):
             color: {t['fg']};
         }}
         #track-progress-widget {{
-            margin-left: 20;
+            margin: 0;
         }}
         #track-progress {{
             font-family: {FONT};
@@ -138,17 +148,24 @@ def player_qss(t, fs=DEFAULT_FONT_SIZE, compact=False):
             background-color: {t['bg']};
             border: 1px solid {t['border']};
             color: {t['fg']};
-            min-width: {'35px' if compact else '50px'};
+            min-width: {'30px' if compact else '40px'};
             height: {btn_h}px;
-            padding: 0;
+            padding: 0 6px;
             font-family: {FONT};
             font-size: {btn_fs}pt;
         }}
+        .QPushButton:hover {{
+            background-color: {t['bg_alt']};
+        }}
+        .QPushButton:pressed {{
+            background-color: {t['accent']};
+            color: {t['selection_text']};
+        }}
         #toggle-library-btn, #toggle-folder-btn {{
-            min-width: 40px;
-            max-width: 40px;
-            height: 50px;
-            font-size: {fs + 9}pt;
+            min-width: 34px;
+            max-width: 34px;
+            height: {btn_h}px;
+            font-size: {fs + 6}pt;
         }}
         #toggle-library-btn:checked, #toggle-folder-btn:checked {{
             background-color: {t['accent']};
@@ -157,6 +174,7 @@ def player_qss(t, fs=DEFAULT_FONT_SIZE, compact=False):
     """
 
 def folder_view_qss(t, fs=DEFAULT_FONT_SIZE):
+    item_h = fs + 14
     return f"""
         QTreeView {{
             font-size: {fs}pt;
@@ -166,7 +184,7 @@ def folder_view_qss(t, fs=DEFAULT_FONT_SIZE):
             color: {t['fg']};
         }}
         QTreeView::item {{
-            height: 25;
+            height: {item_h};
         }}
         QTreeView::item:selected {{
             background-color: {t['selection']};
@@ -177,22 +195,6 @@ def folder_view_qss(t, fs=DEFAULT_FONT_SIZE):
         }}
         QTreeView::branch:selected {{
             background-color: {t['bg']};
-        }}
-        QScrollBar:vertical {{
-            border: none;
-            background: {t['scrollbar_bg']};
-            width: 0;
-        }}
-        QScrollBar::handle:vertical {{
-            background: {t['accent']};
-            min-height: 0px;
-        }}
-        QScrollBar::up-arrow:vertical, QScrollBar::down-arrow:vertical {{
-            border: none;
-            background: none;
-        }}
-        QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
-            background: none;
         }}
         #search-bar {{
             background-color: {t['bg']};
@@ -205,6 +207,7 @@ def folder_view_qss(t, fs=DEFAULT_FONT_SIZE):
     """
 
 def album_view_qss(t, fs=DEFAULT_FONT_SIZE):
+    item_pad = max(1, (fs - 10) // 2)
     return f"""
         #track-list {{
             background-color: {t['bg']};
@@ -214,7 +217,7 @@ def album_view_qss(t, fs=DEFAULT_FONT_SIZE):
             color: {t['fg']};
         }}
         #track-list::item {{
-            height: 25;
+            padding: {item_pad}px 0;
         }}
         #track-list::item:selected {{
             background-color: {t['selection']};
@@ -251,9 +254,9 @@ def lyrics_qss(t, fs=DEFAULT_FONT_SIZE):
             color: {t['fg']};
             font-family: {FONT};
             font-size: {fs + 2}pt;
-            min-width: 40px;
-            max-width: 40px;
-            height: 50px;
+            min-width: 34px;
+            max-width: 34px;
+            height: 34px;
         }}
         #lyrics-toggle-btn:checked {{
             background-color: {t['accent']};

@@ -2,13 +2,14 @@
 # Searches for album artwork and allows downloading to album folder
 
 import json
+import re
 import urllib.request
 import urllib.parse
 from pathlib import Path
 
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QScrollArea, QWidget, QSizePolicy
+    QScrollArea, QWidget, QSizePolicy, QLineEdit, QProgressBar
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QSize
 from PyQt5.QtGui import QPixmap, QImage
@@ -47,9 +48,9 @@ class ArtworkResult(QWidget):
         self.result = result
         self.index = index
 
-        # Build high-res URL (replace 100x100 with 1200x1200)
+        # Build high-res URL (replace 100x100 with 3000x3000)
         art100 = result.get('artworkUrl100', '')
-        self.hi_res_url = art100.replace('100x100bb', '1200x1200bb')
+        self.hi_res_url = art100.replace('100x100bb', '3000x3000bb')
         self.preview_url = art100.replace('100x100bb', '300x300bb')
 
         layout = QHBoxLayout()
@@ -83,7 +84,7 @@ class ArtworkResult(QWidget):
 
         # Download button
         dl_btn = QPushButton('Save')
-        dl_btn.setFixedSize(70, 35)
+        dl_btn.setMinimumSize(70, 35)
         dl_btn.setStyleSheet(f"""
             QPushButton {{
                 background: {t['accent']};
@@ -133,8 +134,43 @@ class ArtworkFinderDialog(QDialog):
 
         layout = QVBoxLayout()
 
+        # Search bar
+        search_layout = QHBoxLayout()
+        self.search_input = QLineEdit()
+        self.search_input.setPlaceholderText('Search for album artwork...')
+        self.search_input.setText(
+            f'{self._clean_query(self.artist)} {self._clean_query(self.album_title)}'.strip()
+        )
+        self.search_input.setStyleSheet(f"""
+            QLineEdit {{
+                background-color: {t['bg_alt']};
+                color: {t['fg']};
+                border: 1px solid {t['border']};
+                font-family: {theme.FONT};
+                font-size: 11pt;
+                padding: 6px;
+            }}
+        """)
+        self.search_input.returnPressed.connect(self._on_search_submit)
+        search_layout.addWidget(self.search_input)
+
+        search_btn = QPushButton('Search')
+        search_btn.setFixedSize(70, 35)
+        search_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: {t['accent']};
+                color: {t['selection_text']};
+                border: none;
+                font-family: {theme.FONT};
+                font-size: 11pt;
+            }}
+        """)
+        search_btn.clicked.connect(self._on_search_submit)
+        search_layout.addWidget(search_btn)
+        layout.addLayout(search_layout)
+
         # Status label
-        self.status = QLabel(f'Searching for: {self.artist} - {self.album_title}')
+        self.status = QLabel()
         self.status.setStyleSheet(f'color: {t["fg"]}; font-family: {theme.FONT}; font-size: 11pt;')
         self.status.setWordWrap(True)
         layout.addWidget(self.status)
@@ -142,6 +178,7 @@ class ArtworkFinderDialog(QDialog):
         # Scroll area for results
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
+        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.results_widget = QWidget()
         self.results_widget.setObjectName('results-container')
         self.results_layout = QVBoxLayout()
@@ -155,11 +192,36 @@ class ArtworkFinderDialog(QDialog):
         # Start search
         self._search()
 
-    def _search(self):
-        query = f'{self.artist} {self.album_title}'.strip()
+    def _on_search_submit(self):
+        query = self.search_input.text().strip()
+        if query:
+            self._search(query)
+
+    @staticmethod
+    def _clean_query(text):
+        """Strip years, edition tags, and brackets for a cleaner search."""
+        text = re.sub(r'\(.*?\)|\[.*?\]', '', text)   # remove bracketed text
+        text = re.sub(r'\b(19|20)\d{2}\b', '', text)  # remove years
+        text = re.sub(r'[-_]+', ' ', text)             # dashes/underscores to spaces
+        return ' '.join(text.split()).strip()
+
+    def _search(self, query=None):
+        if query is None:
+            artist = self._clean_query(self.artist)
+            album = self._clean_query(self.album_title)
+            query = f'{artist} {album}'.strip()
         if not query:
             self.status.setText('No artist/album info available.')
             return
+
+        # Clear previous results
+        while self.results_layout.count():
+            item = self.results_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        self._loaders.clear()
+
+        self.status.setText(f'Searching for: {query}')
 
         params = urllib.parse.urlencode({
             'term': query,
@@ -200,12 +262,26 @@ class ArtworkFinderDialog(QDialog):
                 break
 
     def _download_artwork(self, url, album_name):
-        self.status.setText(f'Downloading artwork...')
+        t = self.theme_dict
+        self.status.setText('Downloading...')
+        self._dl_progress = QProgressBar()
+        self._dl_progress.setRange(0, 100)
+        self._dl_progress.setFixedHeight(14)
+        self._dl_progress.setTextVisible(False)
+        self._dl_progress.setStyleSheet(f"""
+            QProgressBar {{ border: 1px solid {t['accent']}; background: {t['bg']}; }}
+            QProgressBar::chunk {{ background-color: {t['accent']}; }}
+        """)
+        self.layout().addWidget(self._dl_progress)
         self._dl_thread = DownloadThread(url, self.album_path)
+        self._dl_thread.progress.connect(self._dl_progress.setValue)
         self._dl_thread.finished.connect(self._on_downloaded)
         self._dl_thread.start()
 
     def _on_downloaded(self, path):
+        if hasattr(self, '_dl_progress') and self._dl_progress:
+            self._dl_progress.deleteLater()
+            self._dl_progress = None
         if path:
             self.status.setText(f'Saved to {path}')
             self.artwork_saved.emit(path)
@@ -236,6 +312,7 @@ class SearchThread(QThread):
 
 class DownloadThread(QThread):
     finished = pyqtSignal(str)
+    progress = pyqtSignal(int)  # percentage 0-100
 
     def __init__(self, url, album_path):
         super().__init__()
@@ -254,9 +331,19 @@ class DownloadThread(QThread):
             req = urllib.request.Request(self.url, headers={
                 'User-Agent': 'lp-music-player/1.0'
             })
-            data = urllib.request.urlopen(req, timeout=30).read()
+            resp = urllib.request.urlopen(req, timeout=30)
+            total = int(resp.headers.get('Content-Length', 0))
+            data = b''
+            while True:
+                chunk = resp.read(65536)
+                if not chunk:
+                    break
+                data += chunk
+                if total > 0:
+                    self.progress.emit(int(len(data) / total * 100))
             dest.write_bytes(data)
             self.finished.emit(str(dest))
         except Exception as e:
             print(f'Artwork download error: {e}')
+            self.finished.emit('')
             self.finished.emit('')

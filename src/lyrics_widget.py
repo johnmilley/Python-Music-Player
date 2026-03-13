@@ -2,8 +2,8 @@
 # Supports both plain text and synced (LRC) lyrics with line highlighting
 
 import re
-from PyQt5.QtWidgets import QWidget, QVBoxLayout, QScrollArea, QLabel
-from PyQt5.QtCore import Qt
+from PyQt5.QtWidgets import QWidget, QVBoxLayout, QScrollArea, QLabel, QTextBrowser
+from PyQt5.QtCore import Qt, QTimer
 
 import theme
 
@@ -31,6 +31,7 @@ class LyricsWidget(QWidget):
         self._synced_lines = None  # list of (seconds, text) if synced
         self._current_line = -1
         self._theme = None
+        self._font_size = None
 
         layout = QVBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
@@ -51,9 +52,10 @@ class LyricsWidget(QWidget):
         layout.addWidget(self.scroll)
         self.setLayout(layout)
 
-    def set_theme(self, t):
-        """Store theme dict for building highlighted HTML."""
+    def set_theme(self, t, fs=None):
+        """Store theme dict and font size for building highlighted HTML."""
         self._theme = t
+        self._font_size = fs
 
     def set_lyrics(self, text):
         """Set lyrics text. Detects LRC format automatically."""
@@ -99,20 +101,26 @@ class LyricsWidget(QWidget):
         dim = t.get('grip', '#888888')
         font = theme.FONT
 
+        fs = self._font_size or 13
+        line_pad = max(2, fs // 3)
+
         html_lines = []
+        next_idx = active_idx + 1
         for i, (_, text) in enumerate(self._synced_lines):
             if not text.strip():
                 html_lines.append('<br>')
                 continue
+            # Place anchor at the next line after active
+            anchor = f'<a name="scroll-target"></a>' if i == next_idx else ''
             if i == active_idx:
                 html_lines.append(
-                    f'<div id="line-{i}" style="color: {accent}; '
+                    f'<div style="color: {accent}; '
                     f'font-weight: bold; font-size: 105%; '
-                    f'padding: 2px 0;">{text}</div>')
+                    f'padding: {line_pad}px 0;">{text}</div>')
             else:
                 color = fg if i > active_idx or active_idx < 0 else dim
                 html_lines.append(
-                    f'<div style="color: {color}; padding: 2px 0;">{text}</div>')
+                    f'{anchor}<div style="color: {color}; padding: {line_pad}px 0;">{text}</div>')
 
         self.label.setTextFormat(Qt.RichText)
         self.label.setText(
@@ -121,12 +129,12 @@ class LyricsWidget(QWidget):
             + '</div>'
         )
 
-        # Auto-scroll to keep active line visible
+        # Auto-scroll after layout updates
         if active_idx >= 0:
-            self._scroll_to_line(active_idx)
+            QTimer.singleShot(0, lambda: self._scroll_to_line(active_idx))
 
     def _scroll_to_line(self, idx):
-        """Scroll so the active line sits in the top 30% of the viewport."""
+        """Scroll so the next line sits in the top third of the viewport."""
         if not self._synced_lines:
             return
         total = len(self._synced_lines)
@@ -134,16 +142,34 @@ class LyricsWidget(QWidget):
             return
         scrollbar = self.scroll.verticalScrollBar()
         max_val = scrollbar.maximum()
-        label_h = self.label.sizeHint().height()
         viewport_h = self.scroll.viewport().height()
-        if label_h <= viewport_h:
+        if max_val == 0:
             return
-        # Estimate the y position of the active line
-        line_y = (idx / max(1, total)) * label_h
-        # Place it at 30% from the top of the viewport
-        target = int(line_y - viewport_h * 0.3)
+
+        # Use a QTextBrowser offscreen to find the exact anchor position
+        doc = QTextBrowser()
+        doc.setFixedWidth(self.label.width())
+        doc.setHtml(self.label.text())
+        doc.document().setDefaultFont(self.label.font())
+        doc.document().setTextWidth(self.label.width() - 20)
+
+        # Find the anchor position
+        cursor = doc.document().find('scroll-target')
+        if not cursor.isNull():
+            rect = doc.cursorRect(cursor)
+            line_y = rect.y()
+        else:
+            # Fallback: ratio-based estimate
+            content_h = max_val + viewport_h
+            next_idx = min(idx + 1, total - 1)
+            line_y = (next_idx / max(1, total)) * content_h
+
+        # Place it at ~30% from the top
+        target = int(line_y - viewport_h * 0.30)
         target = max(0, min(target, max_val))
         scrollbar.setValue(target)
+
+        doc.deleteLater()
 
     def clear(self):
         self._synced_lines = None

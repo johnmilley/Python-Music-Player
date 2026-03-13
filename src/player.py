@@ -16,9 +16,9 @@ from artwork_finder import ArtworkFinderDialog
 from just_playback import Playback
 
 # pyqt5
-from PyQt5.QtWidgets import (QMainWindow, QApplication, QWidget, QHBoxLayout, QPushButton, QLabel, QVBoxLayout, QSizePolicy)
+from PyQt5.QtWidgets import (QMainWindow, QApplication, QWidget, QHBoxLayout, QPushButton, QLabel, QVBoxLayout, QSizePolicy, QGraphicsDropShadowEffect)
 from PyQt5.QtCore import Qt, QTimer, QSize, pyqtSignal
-from PyQt5.QtGui import QPixmap
+from PyQt5.QtGui import QPixmap, QColor
 
 
 class Player(QWidget):
@@ -26,6 +26,7 @@ class Player(QWidget):
 
     track_finished = pyqtSignal()
     track_changed = pyqtSignal(object)
+    art_clicked = pyqtSignal()
 
     def __init__(self, album=None, folder_view=None, album_view=None):
         super().__init__()
@@ -60,104 +61,106 @@ class Player(QWidget):
                 Add X Layout to PARENT layout (player)
 
         """
-        self.setMinimumSize(350, 500)
+        self.setMinimumSize(350, 300)
 
         self.layout_player = QVBoxLayout()
-        self.layout_player.setContentsMargins(0,0,0,0)
+        self.layout_player.setContentsMargins(0, 0, 0, 12)
         self.player = QWidget()
         self.player.setObjectName('player')
 
         # ALBUM ART
         self.layout_album_display = QVBoxLayout()
         self.album_widget = QLabel()
-        self.album_widget.setMinimumSize(200, 200)
+        self.album_widget.setMinimumSize(200, 150)
         self.album_widget.setObjectName('album-art')
         self.album_widget.setAlignment(Qt.AlignCenter)
         self.album_widget.setScaledContents(True)
+        self.album_widget.setCursor(Qt.PointingHandCursor)
+        self.album_widget.mousePressEvent = lambda e: self.art_clicked.emit() if e.button() == Qt.LeftButton else None
+        shadow = QGraphicsDropShadowEffect(self)
+        shadow.setBlurRadius(25)
+        shadow.setOffset(4, 4)
+        shadow.setColor(QColor(0, 0, 0, 160))
+        self.album_widget.setGraphicsEffect(shadow)
         self.layout_player.addWidget(self.album_widget, stretch=1, alignment=Qt.AlignCenter)
 
-        # SONG TITLE - ARTIST   *improve text, center
-        self.layout_track_information = QVBoxLayout()
+        # Controls container — matches album art width
+        self.controls_container = QWidget()
+        controls_layout = QVBoxLayout()
+        controls_layout.setContentsMargins(0, 4, 0, 0)
+        controls_layout.setSpacing(6)
+
+        # SONG TITLE - ARTIST
         self.track_info = QLabel('')
         self.track_info.setWordWrap(True)
         self.track_info.setObjectName('track-info')
-        
         self.track_info.setAlignment(Qt.AlignCenter)
-        self.layout_track_information.addWidget(self.track_info, alignment=Qt.AlignCenter)
-        self.layout_player.addLayout(self.layout_track_information)
+        self.track_info.setContentsMargins(0, 2, 0, 2)
+        controls_layout.addWidget(self.track_info)
 
-        # PROGRESS BAR  *build progress bar, center
-        self.progress_widget = QWidget()
-        self.progress_widget.setObjectName('track-progress-widget')
-        
+        # PROGRESS BAR
         self.layout_track_progress = QHBoxLayout()
-        self.layout_track_progress.setAlignment(Qt.AlignCenter)
-        
-        # TIME ELAPSED
+        self.layout_track_progress.setContentsMargins(0, 0, 0, 0)
+
         self.track_progress_label = QLabel('0:00')
         self.track_progress_label.setObjectName('track-progress')
-       
 
         self.progress_bar = ClickableProgressBar(self)
         self.progress_bar.seek_requested.connect(self.seek_to)
         self.progress_bar.start_playback.connect(self.resume)
         self.progress_bar.setRange(0, 1000)
         self.progress_bar.setTextVisible(False)
-        self.progress_bar.setFixedHeight(18)
+        self.progress_bar.setFixedHeight(14)
 
         self.track_length_label = QLabel('0:00')
         self.track_length_label.setObjectName('track-length')
 
-        # Add track information to track layout
         self.layout_track_progress.addWidget(self.track_progress_label)
         self.layout_track_progress.addWidget(self.progress_bar)
         self.layout_track_progress.addWidget(self.track_length_label)
-
-        self.progress_widget.setLayout(self.layout_track_progress)
-        self.layout_player.addWidget(self.progress_widget)
+        controls_layout.addLayout(self.layout_track_progress)
 
         # Toggle Library/Tracklist buttons
-        self.toggle_library_btn = QPushButton('\u2630')  # hamburger menu icon
+        self.toggle_library_btn = QPushButton('\u2630')
         self.toggle_library_btn.setToolTip('Toggle Library')
         self.toggle_library_btn.pressed.connect(self.toggle_library)
         self.toggle_library_btn.setObjectName('toggle-library-btn')
         self.toggle_library_btn.setCheckable(True)
         self.toggle_library_btn.setChecked(True)
 
-        self.toggle_folder_btn = QPushButton('\u2261')  # list icon
+        self.toggle_folder_btn = QPushButton('\u2261')
         self.toggle_folder_btn.setToolTip('Toggle Tracklist')
         self.toggle_folder_btn.pressed.connect(self.toggle_tracklist)
         self.toggle_folder_btn.setObjectName('toggle-folder-btn')
         self.toggle_folder_btn.setCheckable(True)
         self.toggle_folder_btn.setChecked(True)
 
-        # TRACK CONTROL BUTTONS (PREV PLAY/PAUSE NEXT)
+        # TRACK CONTROL BUTTONS
         self.layout_player_buttons = QHBoxLayout()
-        self.layout_player_buttons.setSpacing(8)
-        self.layout_player_buttons.setContentsMargins(10, 0, 10, 10)
+        self.layout_player_buttons.setSpacing(4)
+        self.layout_player_buttons.setContentsMargins(0, 0, 0, 0)
 
-        # PREV
-        self.prev_track_button = QPushButton('<<')
+        self.prev_track_button = QPushButton('\u23ee')
         self.prev_track_button.pressed.connect(self.prev_track)
         self.prev_track_button.setObjectName('prev-button')
 
-        # PLAY / PAUSE
-        self.play_button = QPushButton('PLAY')
+        self.play_button = QPushButton('\u25b6')
         self.play_button.pressed.connect(self.toggle_play_pause_button_text)
         self.play_button.setObjectName('play-button')
 
-        # NEXT
-        self.next_track_button = QPushButton('>>')
+        self.next_track_button = QPushButton('\u23ed')
         self.next_track_button.pressed.connect(self.next_track)
         self.next_track_button.setObjectName('next-button')
 
-        # Add buttons to button layout
         self.layout_player_buttons.addWidget(self.toggle_library_btn)
         self.layout_player_buttons.addWidget(self.prev_track_button)
         self.layout_player_buttons.addWidget(self.play_button)
         self.layout_player_buttons.addWidget(self.next_track_button)
         self.layout_player_buttons.addWidget(self.toggle_folder_btn)
-        self.layout_player.addLayout(self.layout_player_buttons)
+        controls_layout.addLayout(self.layout_player_buttons)
+
+        self.controls_container.setLayout(controls_layout)
+        self.layout_player.addWidget(self.controls_container, alignment=Qt.AlignCenter)
 
         self.setLayout(self.layout_player)
 
@@ -201,7 +204,7 @@ class Player(QWidget):
                 )
             self.progress_bar.setValue(1000) # store size in var
             self.timer.stop()
-            self.play_button.setText('PLAY')
+            self.play_button.setText('\u25b6')
             self.track_finished.emit()
             if self.current_track != self.album.tracklist[-1]:
                 self.next_track()
@@ -258,7 +261,7 @@ class Player(QWidget):
         self.track_changed.emit(self.current_track)
 
         self.update_gui_after_tracklist_load(self.album)
-        self.play_button.setText('PLAY')
+        self.play_button.setText('\u25b6')
 
         if self.album_view:
             self.album_view.track_list_widget.setCurrentRow(self.track_pos)
@@ -282,7 +285,7 @@ class Player(QWidget):
     def resume(self):
         self.playback.resume()
         self.timer.start(self.APP_UPDATE_TIME)
-        self.play_button.setText('PAUSE')
+        self.play_button.setText('\u23f8')
 
     def update_gui_after_tracklist_load(self, album):
         """
@@ -304,7 +307,7 @@ class Player(QWidget):
         else:
             self.track_info.setText(self.current_track.filename)
 
-        self.play_button.setText('PAUSE')
+        self.play_button.setText('\u23f8')
 
         # Update DURATION
         if self.current_track:
@@ -347,25 +350,17 @@ class Player(QWidget):
         self.album.art = P(path)
         pixmap = QPixmap(path)
         self.album_widget.setPixmap(pixmap)
+        # Notify app to update accent palette
+        app = self.window()
+        if hasattr(app, '_update_accent_for_album'):
+            app._update_accent_for_album(force=True)
 
     def _toggle_panel(self, panel, button):
-        """Hides or shows a side panel and shrinks/grows the window to match."""
+        """Hides or shows a side panel within the existing window size."""
         if not panel:
             return
-        app_window = self.window()
-        handle_width = app_window.splitter.handleWidth()
-
-        if panel.isVisible():
-            panel_width = panel.width() + handle_width
-            panel.setVisible(False)
-            button.setChecked(False)
-            app_window.resize(app_window.width() - panel_width, app_window.height())
-        else:
-            panel.setVisible(True)
-            button.setChecked(True)
-            panel.adjustSize()
-            panel_width = panel.sizeHint().width() + handle_width
-            app_window.resize(app_window.width() + panel_width, app_window.height())
+        panel.setVisible(not panel.isVisible())
+        button.setChecked(panel.isVisible())
 
     def toggle_library(self):
         self._toggle_panel(self.folder_view, self.toggle_library_btn)
@@ -377,20 +372,21 @@ class Player(QWidget):
     def toggle_play_pause_button_text(self):
         if self.playback.active:
             if self.playback.playing:
-                self.play_button.setText('PLAY')
+                self.play_button.setText('\u25b6')
                 self.pause()
             else:
-                self.play_button.setText('PAUSE')
+                self.play_button.setText('\u23f8')
                 self.resume()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
         # Keep album art square, fitting within available width
-        available = self.width() - 20  # account for margins
-        controls_height = 120 if self.height() < 450 else 250
+        available = self.width() - 10
+        controls_height = 100 if self.height() < 450 else 180
         size = min(available, self.height() - controls_height)
         size = max(size, 100)
         self.album_widget.setFixedSize(size, size)
+        self.controls_container.setFixedWidth(size)
         
 def main():
 

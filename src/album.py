@@ -60,11 +60,18 @@ class Album:
         root = directory_path
         for file in os.listdir(directory_path):
             path = Path(root, file)
-            if not path.is_dir():
+            if path.is_dir():
+                continue
+            if not file.lower().endswith(('.flac', '.mp3', '.m4a')):
+                continue
+            try:
                 track = mutagen.File(path)
-                length = get_length(path)
+            except Exception:
+                continue
+            if track is None:
+                continue
+            length = get_length(path)
 
-            # Supported file types: .flac, .mp3 (just because)
             if file.lower().endswith('.flac'):
                 tracknumber = meta_check(track.get('tracknumber'))
                 tracknumber = int_or_none(tracknumber)
