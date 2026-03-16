@@ -13,8 +13,8 @@ LIGHT = {
     'selection':      'orange',
     'selection_text':  'black',
     'scrollbar_bg':   'white',
-    'btn_bg':         '#f0f0f0',
-    'btn_hover':      '#e4e4e4',
+    'btn_bg':         '#ebebeb',
+    'btn_hover':      '#e0e0e0',
 }
 
 DARK = {
@@ -172,6 +172,8 @@ def player_qss(t, fs=DEFAULT_FONT_SIZE):
         .QPushButton {{
             background-color: {t['btn_bg']};
             border: none;
+            border-radius: 0;
+            margin: 0 2px;
             color: {t['fg']};
             min-width: 50px;
             height: {btn_h}px;
