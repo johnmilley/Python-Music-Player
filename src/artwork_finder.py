@@ -2,17 +2,29 @@
 # Searches for album artwork and allows downloading to album folder
 
 import json
+import os
 import re
 import ssl
+import sys
 import urllib.request
 import urllib.parse
 from pathlib import Path
 
-try:
-    import certifi
-    _ssl_ctx = ssl.create_default_context(cafile=certifi.where())
-except ImportError:
-    _ssl_ctx = ssl.create_default_context()
+
+def _make_ssl_ctx():
+    if getattr(sys, 'frozen', False):
+        bundle_dir = sys._MEIPASS
+        ca = os.path.join(bundle_dir, 'certifi', 'cacert.pem')
+        if os.path.isfile(ca):
+            return ssl.create_default_context(cafile=ca)
+    try:
+        import certifi
+        return ssl.create_default_context(cafile=certifi.where())
+    except ImportError:
+        return ssl.create_default_context()
+
+
+_ssl_ctx = _make_ssl_ctx()
 
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,

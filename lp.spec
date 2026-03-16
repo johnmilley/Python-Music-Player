@@ -4,6 +4,8 @@
 import sys
 from pathlib import Path
 
+import certifi
+
 block_cipher = None
 
 a = Analysis(
@@ -13,6 +15,7 @@ a = Analysis(
     datas=[
         ('icon.png', '.'),
         ('src/icons', 'icons'),
+        (certifi.where(), 'certifi'),
     ],
     hiddenimports=[
         'just_playback',
