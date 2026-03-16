@@ -686,14 +686,14 @@ class App(QMainWindow):
             self._max_lyrics.set_lyrics('Fetching lyrics...')
         # Stop any in-progress fetch before starting a new one
         if self._lyrics_thread and self._lyrics_thread.isRunning():
-            self._lyrics_thread.finished.disconnect(self._on_lyrics_fetched)
+            self._lyrics_thread.lyrics_ready.disconnect(self._on_lyrics_fetched)
             self._lyrics_thread.quit()
             self._lyrics_thread.wait(2000)
         self._lyrics_track_key = track_key
         self._lyrics_thread = LyricsFetchThread(
             track.artist, track.title, track.album, track, self.player.album
         )
-        self._lyrics_thread.finished.connect(self._on_lyrics_fetched)
+        self._lyrics_thread.lyrics_ready.connect(self._on_lyrics_fetched)
         self._lyrics_thread.start()
 
     def _on_lyrics_fetched(self, file_path, text):

@@ -47,7 +47,7 @@ def lyrics_path_for_track(track, album):
 
 class LyricsFetchThread(QThread):
     """Fetch lyrics from LRCLIB in background, save to disk."""
-    finished = pyqtSignal(str, str)  # (file_path, lyrics_text)
+    lyrics_ready = pyqtSignal(str, str)  # (file_path, lyrics_text)
 
     def __init__(self, artist, track_title, album_title, track, album):
         super().__init__()
@@ -77,12 +77,12 @@ class LyricsFetchThread(QThread):
         if synced:
             path = lyrics_dir / f'{base}.lrc'
             path.write_text(synced, encoding='utf-8')
-            self.finished.emit(str(path), synced)
+            self.lyrics_ready.emit(str(path), synced)
             return True
         elif plain:
             path = lyrics_dir / f'{base}.txt'
             path.write_text(plain, encoding='utf-8')
-            self.finished.emit(str(path), plain)
+            self.lyrics_ready.emit(str(path), plain)
             return True
         return False
 
@@ -91,7 +91,7 @@ class LyricsFetchThread(QThread):
         cached = lyrics_path_for_track(self.track, self.album)
         if cached.exists():
             text = cached.read_text(encoding='utf-8')
-            self.finished.emit(str(cached), text)
+            self.lyrics_ready.emit(str(cached), text)
             return
 
         try:
@@ -152,7 +152,7 @@ class LyricsFetchThread(QThread):
                     if self._save_and_emit(synced, plain):
                         return
 
-            self.finished.emit('', '')
+            self.lyrics_ready.emit('', '')
         except Exception as e:
             print(f'Lyrics fetch error: {e}')
-            self.finished.emit('', '')
+            self.lyrics_ready.emit('', '')

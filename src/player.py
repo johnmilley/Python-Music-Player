@@ -133,7 +133,7 @@ class Player(QWidget):
         self.progress_bar.start_playback.connect(self.resume)
         self.progress_bar.setRange(0, 1000)
         self.progress_bar.setTextVisible(False)
-        self.progress_bar.setFixedHeight(6)
+        self.progress_bar.setFixedHeight(10)
 
         self.track_length_label = QLabel('0:00')
         self.track_length_label.setObjectName('track-length')
