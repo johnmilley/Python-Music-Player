@@ -13,6 +13,8 @@ LIGHT = {
     'selection':      'orange',
     'selection_text':  'black',
     'scrollbar_bg':   'white',
+    'btn_bg':         '#f0f0f0',
+    'btn_hover':      '#e4e4e4',
 }
 
 DARK = {
@@ -25,6 +27,8 @@ DARK = {
     'selection':      '#e8871e',
     'selection_text':  'black',
     'scrollbar_bg':   '#2a2a2a',
+    'btn_bg':         '#272727',
+    'btn_hover':      '#303030',
 }
 
 FONT_CANDIDATES = ['Consolas', 'Cascadia Mono', 'DejaVu Sans Mono', 'Courier New', 'Monaco']
@@ -80,7 +84,10 @@ def app_qss(t, fs=DEFAULT_FONT_SIZE):
             font-family: {FONT};
             font-size: {menu_fs}pt;
             border-bottom: 2px solid {t['accent']};
-            padding: 2px 0;
+            padding: 4px 0;
+        }}
+        QMenuBar::item {{
+            padding: 4px 8px;
         }}
         QMenuBar::item:selected {{
             background-color: {t['accent']};
@@ -124,10 +131,10 @@ def app_qss(t, fs=DEFAULT_FONT_SIZE):
     """
 
 def player_qss(t, fs=DEFAULT_FONT_SIZE):
-    btn_h = 34
+    btn_h = 42
     art_margin = '10px'
     info_fs = fs
-    btn_fs = fs + 2
+    btn_fs = fs + 4
     return f"""
         #player {{
             background-color: {t['bg']};
@@ -156,39 +163,51 @@ def player_qss(t, fs=DEFAULT_FONT_SIZE):
             color: {t['fg']};
         }}
         QProgressBar {{
-            border: 1px solid {t['accent']};
+            border: none;
             background: {t['bg']};
         }}
         QProgressBar::chunk {{
             background-color: {t['accent']};
         }}
         .QPushButton {{
-            background-color: {t['bg']};
-            border: 1px solid {t['border']};
+            background-color: {t['btn_bg']};
+            border: none;
             color: {t['fg']};
-            min-width: 40px;
+            min-width: 50px;
             height: {btn_h}px;
             padding: 0 6px;
             font-family: {FONT};
             font-size: {btn_fs}pt;
         }}
-        .QPushButton:hover {{
-            background-color: {t['bg_alt']};
+        .QPushButton:hover, .QPushButton:focus {{
+            background-color: {t['accent']};
+            color: {t['selection_text']};
         }}
         .QPushButton:pressed {{
             background-color: {t['accent']};
             color: {t['selection_text']};
         }}
-        #toggle-library-btn, #toggle-folder-btn {{
-            min-width: 34px;
-            max-width: 34px;
-            height: {btn_h}px;
-            font-size: {fs + 6}pt;
+        #play-button {{
+            min-width: 80px;
         }}
-        #toggle-library-btn:checked, #toggle-folder-btn:checked {{
-            background-color: {t['bg']};
-            border: 2px solid {t['accent']};
+    """
+
+def panel_toggle_qss(t, fs=DEFAULT_FONT_SIZE):
+    return f"""
+        #panel-toggle {{
+            background-color: transparent;
             color: {t['fg']};
+            border: none;
+            font-family: {FONT};
+            font-size: {fs}pt;
+            padding: 0 6px;
+            min-width: 20px;
+        }}
+        #panel-toggle:hover {{
+            color: {t['accent']};
+        }}
+        #panel-toggle:checked {{
+            color: {t['accent']};
         }}
     """
 

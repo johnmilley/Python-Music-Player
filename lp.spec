@@ -12,6 +12,7 @@ a = Analysis(
     binaries=[],
     datas=[
         ('icon.png', '.'),
+        ('src/icons', 'icons'),
     ],
     hiddenimports=[
         'just_playback',

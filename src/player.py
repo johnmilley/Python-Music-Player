@@ -17,8 +17,29 @@ from just_playback import Playback
 
 # pyqt5
 from PyQt5.QtWidgets import (QMainWindow, QApplication, QWidget, QHBoxLayout, QPushButton, QLabel, QVBoxLayout, QSizePolicy, QGraphicsDropShadowEffect)
-from PyQt5.QtCore import Qt, QTimer, QSize, pyqtSignal
-from PyQt5.QtGui import QPixmap, QColor
+from PyQt5.QtCore import Qt, QTimer, QSize, pyqtSignal, QByteArray
+from PyQt5.QtGui import QPixmap, QColor, QIcon, QPainter
+from PyQt5.QtSvg import QSvgRenderer
+
+
+if getattr(sys, '_MEIPASS', None):
+    ICONS_DIR = Path(sys._MEIPASS) / 'icons'
+else:
+    ICONS_DIR = Path(__file__).parent / 'icons'
+
+def _svg_icon(name, color='black', size=32):
+    """Load an SVG icon from icons/ and render it with the given fill color."""
+    svg_path = ICONS_DIR / f'{name}.svg'
+    svg_data = svg_path.read_text()
+    # Inject fill color into the SVG path
+    svg_data = svg_data.replace('<path d=', f'<path fill="{color}" d=')
+    renderer = QSvgRenderer(QByteArray(svg_data.encode()))
+    pixmap = QPixmap(size, size)
+    pixmap.fill(Qt.transparent)
+    painter = QPainter(pixmap)
+    renderer.render(painter)
+    painter.end()
+    return QIcon(pixmap)
 
 
 class Player(QWidget):
@@ -112,7 +133,7 @@ class Player(QWidget):
         self.progress_bar.start_playback.connect(self.resume)
         self.progress_bar.setRange(0, 1000)
         self.progress_bar.setTextVisible(False)
-        self.progress_bar.setFixedHeight(14)
+        self.progress_bar.setFixedHeight(6)
 
         self.track_length_label = QLabel('0:00')
         self.track_length_label.setObjectName('track-length')
@@ -126,43 +147,40 @@ class Player(QWidget):
         self.layout_track_progress.addWidget(self.track_length_label)
         controls_layout.addLayout(self.layout_track_progress)
 
-        # Toggle Library/Tracklist buttons
-        self.toggle_library_btn = QPushButton('\u2630')
-        self.toggle_library_btn.setToolTip('Toggle Library')
-        self.toggle_library_btn.pressed.connect(self.toggle_library)
-        self.toggle_library_btn.setObjectName('toggle-library-btn')
-        self.toggle_library_btn.setCheckable(True)
-        self.toggle_library_btn.setChecked(True)
-
-        self.toggle_folder_btn = QPushButton('\u2261')
-        self.toggle_folder_btn.setToolTip('Toggle Tracklist')
-        self.toggle_folder_btn.pressed.connect(self.toggle_tracklist)
-        self.toggle_folder_btn.setObjectName('toggle-folder-btn')
-        self.toggle_folder_btn.setCheckable(True)
-        self.toggle_folder_btn.setChecked(True)
-
         # TRACK CONTROL BUTTONS
+        self._icon_size = QSize(24, 24)
         self.layout_player_buttons = QHBoxLayout()
         self.layout_player_buttons.setSpacing(4)
         self.layout_player_buttons.setContentsMargins(0, 0, 0, 0)
 
-        self.prev_track_button = QPushButton('\u23ee')
+        self.prev_track_button = QPushButton()
         self.prev_track_button.pressed.connect(self.prev_track)
         self.prev_track_button.setObjectName('prev-button')
+        self.prev_track_button.setIconSize(self._icon_size)
 
-        self.play_button = QPushButton('\u25b6')
+        self.play_button = QPushButton()
         self.play_button.pressed.connect(self.toggle_play_pause_button_text)
         self.play_button.setObjectName('play-button')
+        self.play_button.setIconSize(self._icon_size)
 
-        self.next_track_button = QPushButton('\u23ed')
+        self.next_track_button = QPushButton()
         self.next_track_button.pressed.connect(self.next_track)
         self.next_track_button.setObjectName('next-button')
+        self.next_track_button.setIconSize(self._icon_size)
 
-        self.layout_player_buttons.addWidget(self.toggle_library_btn)
+        self._is_playing = False
+        self.update_button_icons()
+
+        for btn in (self.prev_track_button, self.play_button, self.next_track_button):
+            shadow = QGraphicsDropShadowEffect(btn)
+            shadow.setBlurRadius(6)
+            shadow.setOffset(0, 2)
+            shadow.setColor(QColor(0, 0, 0, 50))
+            btn.setGraphicsEffect(shadow)
+
         self.layout_player_buttons.addWidget(self.prev_track_button)
         self.layout_player_buttons.addWidget(self.play_button)
         self.layout_player_buttons.addWidget(self.next_track_button)
-        self.layout_player_buttons.addWidget(self.toggle_folder_btn)
         controls_layout.addLayout(self.layout_player_buttons)
 
         self.controls_container.setLayout(controls_layout)
@@ -182,6 +200,21 @@ class Player(QWidget):
     def _toggle_time_display(self):
         self._show_remaining = not self._show_remaining
         self._update_time_label()
+
+    def update_button_icons(self, color='black'):
+        """Refresh all button icons with the given color (for theme changes)."""
+        self._icon_color = color
+        self.prev_track_button.setIcon(_svg_icon('skip_previous', color))
+        self.next_track_button.setIcon(_svg_icon('skip_next', color))
+        self._set_play_icon()
+
+    def _set_play_icon(self, playing=None):
+        """Update play button icon to play or pause."""
+        if playing is not None:
+            self._is_playing = playing
+        name = 'pause' if self._is_playing else 'play_arrow'
+        color = getattr(self, '_icon_color', 'black')
+        self.play_button.setIcon(_svg_icon(name, color))
 
     def _update_time_label(self, pos=None):
         if not self.current_track:
@@ -205,6 +238,7 @@ class Player(QWidget):
             self.track_progress_label.setText(
                 self.current_track.length_to_string(seconds)
                 )
+            self._update_time_label(seconds)
             self.playback.seek(seconds)
     
     def check_track_pos(self):
@@ -238,7 +272,7 @@ class Player(QWidget):
                 )
             self.progress_bar.setValue(1000)
             self.timer.stop()
-            self.play_button.setText('\u25b6')
+            self._set_play_icon(False)
             self.track_finished.emit()
             if self.album and self.current_track != self.album.tracklist[-1]:
                 self.next_track()
@@ -281,7 +315,7 @@ class Player(QWidget):
             self.playback.play()
         except Exception as e:
             print(f"LOG: Unable to play: {e}")
-            self.play_button.setText('\u25b6')
+            self._set_play_icon(False)
             self.track_info.setText(f"Error: could not play file")
 
         # Updates AlbumViewer with track currently playing
@@ -296,7 +330,7 @@ class Player(QWidget):
         self.track_changed.emit(self.current_track)
 
         self.update_gui_after_tracklist_load(self.album)
-        self.play_button.setText('\u25b6')
+        self._set_play_icon(False)
 
         if self.album_view:
             self.album_view.track_list_widget.setCurrentRow(self.track_pos)
@@ -320,7 +354,7 @@ class Player(QWidget):
     def resume(self):
         self.playback.resume()
         self.timer.start(self.APP_UPDATE_TIME)
-        self.play_button.setText('\u23f8')
+        self._set_play_icon(True)
 
     def update_gui_after_tracklist_load(self, album):
         """
@@ -342,7 +376,7 @@ class Player(QWidget):
         else:
             self.track_info.setText(self.current_track.filename)
 
-        self.play_button.setText('\u23f8')
+        self._set_play_icon(True)
 
         # Update DURATION
         if self.current_track:
@@ -387,27 +421,15 @@ class Player(QWidget):
         if hasattr(app, '_update_accent_for_album'):
             app._update_accent_for_album(force=True)
 
-    def _toggle_panel(self, panel, button):
-        """Hides or shows a side panel within the existing window size."""
-        if not panel:
-            return
-        panel.setVisible(not panel.isVisible())
-        button.setChecked(panel.isVisible())
-
-    def toggle_library(self):
-        self._toggle_panel(self.folder_view, self.toggle_library_btn)
-
-    def toggle_tracklist(self):
-        self._toggle_panel(self.album_view, self.toggle_folder_btn)
     
     # mix of UI and logic
     def toggle_play_pause_button_text(self):
         if self.playback.active:
             if self.playback.playing:
-                self.play_button.setText('\u25b6')
+                self._set_play_icon(False)
                 self.pause()
             else:
-                self.play_button.setText('\u23f8')
+                self._set_play_icon(True)
                 self.resume()
 
     def resizeEvent(self, event):

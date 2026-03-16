@@ -13,9 +13,9 @@ from color_extract import extract_palette, most_readable, text_color_for, ensure
 import theme
 
 from PyQt5.QtWidgets import (QMainWindow, QApplication, QWidget, QHBoxLayout,
-    QAction, QActionGroup, QSplitter, QColorDialog, QShortcut, QDialog,
+    QAction, QSplitter, QColorDialog, QShortcut, QDialog,
     QVBoxLayout, QLabel, QLineEdit, QSizePolicy, QFileDialog, QGraphicsDropShadowEffect,
-    QPushButton, QFontDialog)
+    QPushButton, QFontDialog, QToolButton)
 from PyQt5.QtCore import Qt, QSettings, QTimer
 from PyQt5.QtGui import QColor, QPixmap, QIcon, QKeySequence
 
@@ -91,21 +91,8 @@ class App(QMainWindow):
         # Menu bar — Preferences
         self.prefs_menu = self.menuBar().addMenu('Preferences')
 
-        # Font size submenu
-        self.font_size_menu = self.prefs_menu.addMenu('Font Size')
-        self.font_size_group = QActionGroup(self)
+        # Font picker (includes size)
         self.font_size = theme.DEFAULT_FONT_SIZE
-        for size in theme.FONT_SIZES:
-            action = QAction(f'{size}pt', self)
-            action.setCheckable(True)
-            action.setData(size)
-            if size == theme.DEFAULT_FONT_SIZE:
-                action.setChecked(True)
-            action.triggered.connect(lambda checked, s=size: self.set_font_size(s))
-            self.font_size_group.addAction(action)
-            self.font_size_menu.addAction(action)
-
-        # Font picker
         self.font_action = QAction('Font...', self)
         self.font_action.triggered.connect(self._pick_font)
         self.prefs_menu.addAction(self.font_action)
@@ -134,6 +121,42 @@ class App(QMainWindow):
         self.about_action.triggered.connect(self.show_about)
         self.help_menu.addAction(self.about_action)
 
+        # Panel toggle buttons — right side of menu bar
+        self._toggle_container = QWidget()
+        toggle_layout = QHBoxLayout()
+        toggle_layout.setContentsMargins(0, 0, 4, 0)
+        toggle_layout.setSpacing(0)
+
+        self.toggle_library_btn = QToolButton()
+        self.toggle_library_btn.setText('\u25e7')  # ◧ left panel
+        self.toggle_library_btn.setToolTip('Toggle Library (1)')
+        self.toggle_library_btn.setCheckable(True)
+        self.toggle_library_btn.setChecked(True)
+        self.toggle_library_btn.setObjectName('panel-toggle')
+        self.toggle_library_btn.clicked.connect(self._on_toggle_library)
+
+        self.toggle_tracklist_btn = QToolButton()
+        self.toggle_tracklist_btn.setText('\u25e8')  # ◨ right panel
+        self.toggle_tracklist_btn.setToolTip('Toggle Tracklist (2)')
+        self.toggle_tracklist_btn.setCheckable(True)
+        self.toggle_tracklist_btn.setChecked(True)
+        self.toggle_tracklist_btn.setObjectName('panel-toggle')
+        self.toggle_tracklist_btn.clicked.connect(self._on_toggle_tracklist)
+
+        self.toggle_lyrics_btn = QToolButton()
+        self.toggle_lyrics_btn.setText('\u266a')  # ♪ lyrics
+        self.toggle_lyrics_btn.setToolTip('Toggle Lyrics (3)')
+        self.toggle_lyrics_btn.setCheckable(True)
+        self.toggle_lyrics_btn.setChecked(True)
+        self.toggle_lyrics_btn.setObjectName('panel-toggle')
+        self.toggle_lyrics_btn.clicked.connect(self._on_toggle_lyrics)
+
+        toggle_layout.addWidget(self.toggle_library_btn)
+        toggle_layout.addWidget(self.toggle_tracklist_btn)
+        toggle_layout.addWidget(self.toggle_lyrics_btn)
+        self._toggle_container.setLayout(toggle_layout)
+        self.menuBar().setCornerWidget(self._toggle_container, Qt.TopRightCorner)
+
         # Max mode state
         self.is_maxplayer = False
         self._max_widget = None
@@ -150,10 +173,11 @@ class App(QMainWindow):
         self.settings = QSettings('lp', 'music-player')
         self._restore_state()
 
-        # Set player buttons to NoFocus so Tab skips them
+        # Set player buttons and toggle buttons to NoFocus so Tab skips them
         for w in [self.player.prev_track_button, self.player.play_button,
-                  self.player.next_track_button, self.player.toggle_library_btn,
-                  self.player.toggle_folder_btn, self.player.progress_bar]:
+                  self.player.next_track_button, self.player.progress_bar,
+                  self.toggle_library_btn, self.toggle_tracklist_btn,
+                  self.toggle_lyrics_btn]:
             w.setFocusPolicy(Qt.NoFocus)
         self.lyrics_widget.setFocusPolicy(Qt.NoFocus)
         self.lyrics_widget.label.setFocusPolicy(Qt.NoFocus)
@@ -180,11 +204,13 @@ class App(QMainWindow):
         fs = self.font_size
         self.setStyleSheet(theme.app_qss(t, fs))
         self.player.setStyleSheet(theme.player_qss(t, fs))
+        self.player.update_button_icons(t['fg'])
         folder_focused = self.folder_view.view.hasFocus()
         album_focused = self.album_view.track_list_widget.hasFocus()
         self.folder_view.setStyleSheet(theme.folder_view_qss(t, fs, focused=folder_focused))
         self.album_view.setStyleSheet(theme.album_view_qss(t, fs, focused=album_focused))
         self.album_view.track_list_widget._selection_text_color = t['selection_text']
+        self._toggle_container.setStyleSheet(theme.panel_toggle_qss(t, fs))
         self.lyrics_widget.setStyleSheet(theme.lyrics_qss(t, fs))
         self.lyrics_widget.set_theme(t, fs)
         self.right_splitter.setStyleSheet(
@@ -206,11 +232,6 @@ class App(QMainWindow):
     def set_font_size(self, size):
         self.font_size = size
         self.apply_theme(self.current_theme)
-        # Keep menu checkmark in sync
-        for action in self.font_size_group.actions():
-            if action.data() == size:
-                action.setChecked(True)
-                break
 
     def _step_font_size(self, delta):
         sizes = theme.FONT_SIZES
@@ -229,13 +250,15 @@ class App(QMainWindow):
         self.apply_theme(self.current_theme)
 
     def _pick_font(self):
-        """Open system font dialog and apply the chosen font."""
+        """Open system font dialog and apply the chosen font and size."""
         from PyQt5.QtGui import QFont
         current = QFont(theme.FONT.split("'")[1] if "'" in theme.FONT else 'Consolas')
+        current.setPointSize(self.font_size)
         font, ok = QFontDialog.getFont(current, self, 'Pick Font')
         if ok:
-            family = font.family()
-            theme.FONT = f"'{family}'"
+            theme.FONT = f"'{font.family()}'"
+            min_fs, max_fs = theme.FONT_SIZES[0], theme.FONT_SIZES[-1]
+            self.font_size = max(min_fs, min(max_fs, font.pointSize()))
             self.apply_theme(self.current_theme)
 
     def pick_custom_accent(self):
@@ -346,12 +369,11 @@ class App(QMainWindow):
             self.right_splitter.restoreState(right_splitter_state)
         if self.settings.value('lyrics_visible') == 'false':
             self.lyrics_widget.setVisible(False)
+            self.toggle_lyrics_btn.setChecked(False)
         saved_fs = self.settings.value('font_size', type=int)
-        if saved_fs and saved_fs in theme.FONT_SIZES:
-            self.font_size = saved_fs
-            for action in self.font_size_group.actions():
-                if action.data() == saved_fs:
-                    action.setChecked(True)
+        if saved_fs:
+            min_fs, max_fs = theme.FONT_SIZES[0], theme.FONT_SIZES[-1]
+            self.font_size = max(min_fs, min(max_fs, saved_fs))
         saved_accent = self.settings.value('accent_color')
         if saved_accent:
             self.accent_color = saved_accent
@@ -458,7 +480,7 @@ class App(QMainWindow):
             # h/l on album tracklist → switch to folder view
             if obj is self.album_view.track_list_widget and key in (Qt.Key_H, Qt.Key_L):
                 if not self.folder_view.isVisible():
-                    self.player.toggle_library()
+                    self.toggle_library()
                 self.folder_view.view.setFocus()
                 return True
             if obj is self.folder_view.view:
@@ -469,7 +491,7 @@ class App(QMainWindow):
                     if self.folder_view._has_music(path):
                         self.album_view.load_album_listing(path)
                         if not self.album_view.isVisible():
-                            self.player.toggle_tracklist()
+                            self.toggle_tracklist()
                         self.album_view.track_list_widget.setFocus()
                         return True
                 # h at top level → switch to tracklist
@@ -479,7 +501,7 @@ class App(QMainWindow):
                                                    and idx.parent() == root)
                     if at_top:
                         if not self.album_view.isVisible():
-                            self.player.toggle_tracklist()
+                            self.toggle_tracklist()
                         self.album_view.track_list_widget.setFocus()
                         return True
         return super().eventFilter(obj, event)
@@ -488,7 +510,7 @@ class App(QMainWindow):
         """Toggle library panel and focus it if shown."""
         if self.is_maxplayer:
             return
-        self.player.toggle_library()
+        self.toggle_library()
         if self.folder_view.isVisible():
             self.folder_view.view.setFocus()
         elif self.album_view.isVisible():
@@ -498,7 +520,7 @@ class App(QMainWindow):
         """Toggle tracklist panel and focus it if shown."""
         if self.is_maxplayer:
             return
-        self.player.toggle_tracklist()
+        self.toggle_tracklist()
         if self.album_view.isVisible():
             self.album_view.track_list_widget.setFocus()
         elif self.folder_view.isVisible():
@@ -589,11 +611,35 @@ class App(QMainWindow):
         dialog.setLayout(layout)
         dialog.exec_()
 
+    def _on_toggle_library(self, checked):
+        self.folder_view.setVisible(checked)
+
+    def _on_toggle_tracklist(self, checked):
+        self.album_view.setVisible(checked)
+
+    def _on_toggle_lyrics(self, checked):
+        if self.is_maxplayer:
+            self._toggle_max_lyrics()
+        else:
+            self.lyrics_widget.setVisible(checked)
+
+    def toggle_library(self):
+        vis = not self.folder_view.isVisible()
+        self.folder_view.setVisible(vis)
+        self.toggle_library_btn.setChecked(vis)
+
+    def toggle_tracklist(self):
+        vis = not self.album_view.isVisible()
+        self.album_view.setVisible(vis)
+        self.toggle_tracklist_btn.setChecked(vis)
+
     def toggle_lyrics(self):
         if self.is_maxplayer:
             self._toggle_max_lyrics()
         else:
-            self.lyrics_widget.setVisible(not self.lyrics_widget.isVisible())
+            vis = not self.lyrics_widget.isVisible()
+            self.lyrics_widget.setVisible(vis)
+            self.toggle_lyrics_btn.setChecked(vis)
 
     def _toggle_max_lyrics(self):
         if not self._max_lyrics or not self._max_art:
@@ -908,8 +954,9 @@ class App(QMainWindow):
         self.folder_view.setVisible(self._pre_max_library)
         self.album_view.setVisible(self._pre_max_tracklist)
         self.lyrics_widget.setVisible(self._pre_max_lyrics)
-        self.player.toggle_library_btn.setChecked(self._pre_max_library)
-        self.player.toggle_folder_btn.setChecked(self._pre_max_tracklist)
+        self.toggle_library_btn.setChecked(self._pre_max_library)
+        self.toggle_tracklist_btn.setChecked(self._pre_max_tracklist)
+        self.toggle_lyrics_btn.setChecked(self._pre_max_lyrics)
 
         # Restyle
         self.apply_theme(self.current_theme)
