@@ -53,6 +53,20 @@ a = Analysis(
     cipher=block_cipher,
 )
 
+# On Linux, exclude bundled GLib/GIO/GStreamer libs. PyInstaller bundles these
+# from the build system (Ubuntu 22.04), but they're older than what Fedora/etc
+# ship. System GStreamer plugins need the system GLib (newer symbols like
+# g_assertion_message_cmpint). GLib is backward-compatible, so bundled Qt
+# (built against older GLib) works fine with the system's newer GLib.
+if sys.platform == 'linux':
+    _exclude_prefixes = (
+        'libglib-', 'libgio-', 'libgobject-', 'libgmodule-', 'libgthread-',
+        'libgstreamer', 'libgstbase', 'libgstapp', 'libgsttag',
+        'libgstaudio', 'libgstvideo', 'libgstpbutils', 'libgstallocators',
+    )
+    a.binaries = [(name, path, typ) for name, path, typ in a.binaries
+                  if not any(name.startswith(p) for p in _exclude_prefixes)]
+
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
 exe = EXE(
