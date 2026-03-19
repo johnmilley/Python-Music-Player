@@ -63,6 +63,7 @@ if sys.platform == 'linux':
         'libglib-', 'libgio-', 'libgobject-', 'libgmodule-', 'libgthread-',
         'libgstreamer', 'libgstbase', 'libgstapp', 'libgsttag',
         'libgstaudio', 'libgstvideo', 'libgstpbutils', 'libgstallocators',
+        'libssl', 'libcrypto',
     )
     a.binaries = [(name, path, typ) for name, path, typ in a.binaries
                   if not any(name.startswith(p) for p in _exclude_prefixes)]

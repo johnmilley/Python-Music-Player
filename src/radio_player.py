@@ -347,15 +347,25 @@ class RadioPlayer(QObject):
     state_changed = pyqtSignal(bool)  # True = playing
     metadata_changed = pyqtSignal(str)  # now-playing title string
 
+    error_occurred = pyqtSignal(str)  # error message string
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self._player = QMediaPlayer()
         self._player.stateChanged.connect(self._on_state)
         self._player.metaDataChanged.connect(self._on_metadata)
+        self._player.error.connect(self._on_error)
         self._last_title = ''
 
     def _on_state(self, state):
         self.state_changed.emit(state == QMediaPlayer.PlayingState)
+
+    def _on_error(self, error):
+        if error != QMediaPlayer.NoError:
+            msg = self._player.errorString() or 'Unknown playback error'
+            print(f'LOG: Radio error: {msg}')
+            self._player.stop()
+            self.error_occurred.emit(msg)
 
     def _on_metadata(self):
         title = self._player.metaData('Title') or ''
