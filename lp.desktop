@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=lp
+Comment=Music Player
+Exec=lp
+Icon=lp
+Terminal=false
+Type=Application
+Categories=Audio;Music;Player;

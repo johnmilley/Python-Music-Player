@@ -17,8 +17,7 @@ class Album:
             self.title = self.tracklist[0].album
             self.artist = self.tracklist[0].artist
             self.year = self.tracklist[0].year
-            path_split = self.tracklist[0].path.split('/')[:-1]
-            self.path = '/'.join(path_split)
+            self.path = str(Path(self.tracklist[0].path).parent)
             art_path = Path(self.path, 'cover.jpg')
             self.art = art_path if art_path.exists() else None
 

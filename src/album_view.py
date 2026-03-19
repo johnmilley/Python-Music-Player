@@ -167,11 +167,10 @@ class AlbumView(QWidget):
                 item = QListWidgetItem(str(track))
                 item.setData(Qt.UserRole, i)
                 self.track_list_widget.addItem(item)
-            # LOAD DATA into PLAYER
+            # Update album art display (does not affect playback playlist)
             if self.player:
                 self.player.album = self.album
                 self.player.load_album_art(self.player.album)
-                self.player.track_pos = 0
             # Emit after player has the album so listeners can read album art
             if self.album.title and self.album.artist:
                 self.album_changed.emit(f"{self.album.title} - {self.album.artist}")

@@ -56,8 +56,14 @@ class LyricsWidget(QWidget):
         self.setLayout(layout)
 
     def _on_link_clicked(self, url):
-        """Handle click on a lyrics line — seek to its timestamp."""
-        if url.startswith('seek:') and self._synced_lines:
+        """Handle click on a lyrics line or timestamp — seek to position."""
+        if url.startswith('seekto:'):
+            try:
+                seconds = float(url.split(':', 1)[1])
+                self.seek_requested.emit(seconds)
+            except (ValueError, IndexError):
+                pass
+        elif url.startswith('seek:') and self._synced_lines:
             try:
                 idx = int(url.split(':')[1])
                 if 0 <= idx < len(self._synced_lines):
@@ -174,6 +180,126 @@ class LyricsWidget(QWidget):
         line_y = (next_idx / max(1, total)) * content_h
 
         # Place it at ~30% from the top
+        target = int(line_y - viewport_h * 0.30)
+        target = max(0, min(target, max_val))
+        scrollbar.setValue(target)
+
+    def set_description(self, text):
+        """Display text with timestamps (e.g. 12:34, 1:02:30) as clickable seek links.
+
+        Segments between timestamps are tracked so update_position() can
+        highlight the currently-playing section, just like synced lyrics.
+        """
+        self._synced_lines = None
+        self._desc_segments = None
+        self._current_line = -1
+        self._full_description = text
+        if not text:
+            self.label.setTextFormat(Qt.PlainText)
+            self.label.setText('')
+            return
+
+        # Find timestamps in the text so we can make them clickable seek links.
+        ts_pattern = re.compile(r'\b((\d{1,2}):)?(\d{1,2}):(\d{2})\b')
+        segments = []  # list of (seconds, segment_text)
+        last_end = 0
+        preamble = None
+
+        for m in ts_pattern.finditer(text):
+            if last_end == 0 and m.start() > 0:
+                preamble = text[:m.start()]
+            elif last_end > 0:
+                segments.append((prev_secs, text[last_end:m.start()]))
+
+            hours = int(m.group(2)) if m.group(2) else 0
+            mins = int(m.group(3))
+            secs_val = int(m.group(4))
+            prev_secs = hours * 3600 + mins * 60 + secs_val
+            last_end = m.start()
+
+        if last_end > 0:
+            segments.append((prev_secs, text[last_end:]))
+
+        if not segments:
+            # No timestamps found — render as rich text (preserving UTF-8)
+            import html as html_mod
+            display = html_mod.escape(text).replace('\n', '<br>')
+            t = self._theme or {}
+            font = theme.FONT
+            self.label.setTextFormat(Qt.RichText)
+            self.label.setText(f'<div style="font-family: {font};">{display}</div>')
+            self.scroll.verticalScrollBar().setValue(0)
+            return
+
+        self._desc_segments = segments
+        self._desc_preamble = preamble
+        self._render_description(-1)
+        self.scroll.verticalScrollBar().setValue(0)
+
+    def _render_description(self, active_idx):
+        """Render description segments with the active one highlighted."""
+        if not self._desc_segments:
+            return
+        t = self._theme or {}
+        accent = t.get('accent', 'orange')
+        fg = t.get('fg', 'white')
+        dim = t.get('grip', '#888888')
+        font = theme.FONT
+        fs = self._font_size or 13
+        line_pad = max(2, fs // 3)
+
+        html_parts = []
+
+        import html as html_mod
+
+        # Preamble (text before first timestamp)
+        if self._desc_preamble:
+            pre = html_mod.escape(self._desc_preamble).replace('\n', '<br>')
+            html_parts.append(
+                f'<div style="color: {fg}; padding: {line_pad}px 0;">{pre}</div>')
+
+        for i, (secs, segment_text) in enumerate(self._desc_segments):
+            segment_html = html_mod.escape(segment_text).replace('\n', '<br>')
+            # Make the timestamp itself a seek link
+            ts_re = re.compile(r'\b((\d{1,2}):)?(\d{1,2}):(\d{2})\b')
+            segment_html = ts_re.sub(
+                lambda m: (f'<a href="seekto:{secs}" style="color: {accent}; '
+                           f'text-decoration: none; font-weight: bold;">'
+                           f'{m.group(0)}</a>'),
+                segment_html,
+                count=1,
+            )
+
+            if i == active_idx:
+                html_parts.append(
+                    f'<div style="color: {accent}; font-weight: bold; '
+                    f'padding: {line_pad}px 0;">{segment_html}</div>')
+            else:
+                color = fg if i > active_idx or active_idx < 0 else dim
+                html_parts.append(
+                    f'<div style="color: {color}; '
+                    f'padding: {line_pad}px 0;">{segment_html}</div>')
+
+        self.label.setTextFormat(Qt.RichText)
+        self.label.setText(
+            f'<div style="font-family: {font};">'
+            + ''.join(html_parts)
+            + '</div>'
+        )
+
+        if active_idx >= 0:
+            total = len(self._desc_segments)
+            QTimer.singleShot(0, lambda: self._scroll_to_desc(active_idx, total))
+
+    def _scroll_to_desc(self, idx, total):
+        """Scroll so the active description segment is visible."""
+        scrollbar = self.scroll.verticalScrollBar()
+        max_val = scrollbar.maximum()
+        viewport_h = self.scroll.viewport().height()
+        if max_val == 0:
+            return
+        content_h = max_val + viewport_h
+        line_y = ((idx + 1) / max(1, total)) * content_h
         target = int(line_y - viewport_h * 0.30)
         target = max(0, min(target, max_val))
         scrollbar.setValue(target)

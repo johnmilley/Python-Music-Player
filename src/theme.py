@@ -45,7 +45,7 @@ def resolve_font():
     FONT = "'monospace'"
 
 DEFAULT_FONT_SIZE = 13
-FONT_SIZES = [10, 11, 12, 13, 14, 16, 18, 20]
+FONT_SIZES = [8, 9, 10, 11, 12, 13, 14, 16, 18, 20, 24, 28, 32, 36, 40, 44, 48, 54]
 
 DEFAULT_ACCENT = 'orange'
 ACCENT_PRESETS = {
@@ -61,7 +61,6 @@ ACCENT_PRESETS = {
 }
 
 def app_qss(t, fs=DEFAULT_FONT_SIZE):
-    menu_fs = fs
     return f"""
         #main-window {{
             background-color: {t['bg']};
@@ -80,47 +79,10 @@ def app_qss(t, fs=DEFAULT_FONT_SIZE):
         }}
         QMenuBar {{
             background-color: {t['bg']};
-            color: {t['fg']};
-            font-family: {FONT};
-            font-size: {menu_fs}pt;
-            border-bottom: 2px solid {t['accent']};
-            padding: 4px 0;
-        }}
-        QMenuBar::item {{
-            padding: 4px 8px;
-        }}
-        QMenuBar::item:selected {{
-            background-color: {t['accent']};
-            color: {t['selection_text']};
-        }}
-        QMenu {{
-            background-color: {t['bg']};
-            color: {t['fg']};
-            font-family: {FONT};
-            font-size: {menu_fs}pt;
-            border: 1px solid {t['border']};
-        }}
-        QMenu::item {{
-            padding: 4px 20px;
-        }}
-        QMenu::item:selected {{
-            background-color: {t['accent']};
-            color: {t['selection_text']};
-        }}
-        QMenu::indicator:checked {{
-            image: none;
-            background-color: {t['accent']};
-            border: 1px solid {t['border']};
-            width: 10px;
-            height: 10px;
-            margin-left: 6px;
-        }}
-        QMenu::indicator:unchecked {{
-            background-color: {t['bg']};
-            border: 1px solid {t['border']};
-            width: 10px;
-            height: 10px;
-            margin-left: 6px;
+            border: none;
+            padding: 0;
+            margin: 0;
+            max-height: 0;
         }}
         QScrollBar:vertical {{
             width: 0;
@@ -132,7 +94,7 @@ def app_qss(t, fs=DEFAULT_FONT_SIZE):
 
 def player_qss(t, fs=DEFAULT_FONT_SIZE):
     btn_h = 42
-    art_margin = '10px'
+    art_margin = '4px'
     info_fs = fs
     btn_fs = fs + 4
     return f"""
@@ -175,7 +137,6 @@ def player_qss(t, fs=DEFAULT_FONT_SIZE):
             border-radius: 0;
             margin: 0 2px;
             color: {t['fg']};
-            min-width: 50px;
             height: {btn_h}px;
             padding: 0 6px;
             font-family: {FONT};
@@ -189,14 +150,19 @@ def player_qss(t, fs=DEFAULT_FONT_SIZE):
             background-color: {t['accent']};
             color: {t['selection_text']};
         }}
-        #play-button {{
-            min-width: 80px;
-        }}
     """
 
 def panel_toggle_qss(t, fs=DEFAULT_FONT_SIZE):
+    return hover_menu_qss(t, fs)
+
+
+def hover_menu_qss(t, fs=DEFAULT_FONT_SIZE):
     return f"""
-        #panel-toggle {{
+        #toolbar {{
+            background-color: {t['bg']};
+            border-top: 3px solid {t['accent']};
+        }}
+        #panel-toggle, #mode-toggle {{
             background-color: transparent;
             color: {t['fg']};
             border: none;
@@ -205,11 +171,141 @@ def panel_toggle_qss(t, fs=DEFAULT_FONT_SIZE):
             padding: 0 6px;
             min-width: 20px;
         }}
-        #panel-toggle:hover {{
+        #panel-toggle:hover, #mode-toggle:hover {{
             color: {t['accent']};
         }}
-        #panel-toggle:checked {{
+        #panel-toggle:checked, #mode-toggle:checked {{
             color: {t['accent']};
+        }}
+        #menu-button {{
+            background-color: transparent;
+            color: {t['fg']};
+            border: none;
+            font-family: {FONT};
+            font-size: {fs}pt;
+            padding: 4px 8px;
+        }}
+        #menu-button:hover {{
+            color: {t['accent']};
+        }}
+        #menu-button::menu-indicator {{
+            image: none;
+            width: 0;
+        }}
+        QMenu {{
+            background-color: {t['bg']};
+            color: {t['fg']};
+            font-family: {FONT};
+            font-size: {fs}pt;
+            border: 1px solid {t['border']};
+        }}
+        QMenu::item {{
+            padding: 4px 20px;
+        }}
+        QMenu::item:selected {{
+            color: {t['accent']};
+        }}
+        QMenu::indicator:checked {{
+            image: none;
+            background-color: {t['accent']};
+            border: 1px solid {t['border']};
+            width: 10px;
+            height: 10px;
+            margin-left: 6px;
+        }}
+        QMenu::indicator:unchecked {{
+            background-color: {t['bg']};
+            border: 1px solid {t['border']};
+            width: 10px;
+            height: 10px;
+            margin-left: 6px;
+        }}
+    """
+
+
+def podcast_view_qss(t, fs=DEFAULT_FONT_SIZE):
+    return f"""
+        QListWidget {{
+            font-size: {fs}pt;
+            font-family: {FONT};
+            color: {t['fg']};
+            background-color: {t['bg']};
+            border: none;
+            outline: none;
+        }}
+        QListWidget::item {{
+            padding: 4px 6px;
+        }}
+        QListWidget::item:selected {{
+            background-color: {t['selection']};
+            color: {t['selection_text']};
+        }}
+        QLineEdit {{
+            font-size: {fs}pt;
+            font-family: {FONT};
+            color: {t['fg']};
+            background-color: {t['bg_alt']};
+            border: none;
+            padding: 4px;
+        }}
+        QPushButton {{
+            font-size: {fs}pt;
+            color: {t['fg']};
+            background-color: {t['btn_bg']};
+            border: none;
+            padding: 4px;
+        }}
+        QPushButton:hover {{
+            background-color: {t['btn_hover']};
+        }}
+        #podcast-status {{
+            font-size: {fs - 1}pt;
+            font-family: {FONT};
+            color: {t['fg']};
+            padding: 2px;
+        }}
+    """
+
+def radio_view_qss(t, fs=DEFAULT_FONT_SIZE):
+    return f"""
+        QListWidget {{
+            font-size: {fs}pt;
+            font-family: {FONT};
+            color: {t['fg']};
+            background-color: {t['bg']};
+            border: none;
+            outline: none;
+        }}
+        QListWidget::item {{
+            padding: 4px 6px;
+        }}
+        QListWidget::item:selected {{
+            background-color: {t['selection']};
+            color: {t['selection_text']};
+        }}
+        QLineEdit {{
+            font-size: {fs}pt;
+            font-family: {FONT};
+            color: {t['fg']};
+            background-color: {t['bg_alt']};
+            border: none;
+            padding: 4px;
+        }}
+        QPushButton {{
+            font-size: {fs}pt;
+            color: {t['fg']};
+            background-color: {t['btn_bg']};
+            border: none;
+            padding: 4px;
+        }}
+        QPushButton:hover {{
+            background-color: {t['btn_hover']};
+        }}
+        #radio-status {{
+            font-size: {fs - 1}pt;
+            font-family: {FONT};
+            color: {t['fg']};
+            padding: 2px;
         }}
     """
 
@@ -250,7 +346,7 @@ def folder_view_qss(t, fs=DEFAULT_FONT_SIZE, focused=True):
 
 def album_view_qss(t, fs=DEFAULT_FONT_SIZE, focused=True):
     item_pad = max(2, (fs - 10) // 2 + 2)
-    sel_bg = t['selection'] if focused else 'transparent'
+    sel_bg = t['selection'] if focused else t.get('grip', '#3a3a3a')
     sel_fg = t['selection_text'] if focused else t['fg']
     return f"""
         #track-list {{

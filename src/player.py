@@ -11,6 +11,7 @@ from album import Album
 from album_view import AlbumView
 from progress_bar import ClickableProgressBar
 from artwork_finder import ArtworkFinderDialog
+from marquee_label import MarqueeLabel
 
 # media playback - find one that uses crossplat mediakeys out of the box
 from just_playback import Playback
@@ -31,8 +32,9 @@ def _svg_icon(name, color='black', size=32):
     """Load an SVG icon from icons/ and render it with the given fill color."""
     svg_path = ICONS_DIR / f'{name}.svg'
     svg_data = svg_path.read_text()
-    # Inject fill color into the SVG path
+    # Inject fill/stroke color into the SVG path
     svg_data = svg_data.replace('<path d=', f'<path fill="{color}" d=')
+    svg_data = svg_data.replace('stroke="black"', f'stroke="{color}"')
     renderer = QSvgRenderer(QByteArray(svg_data.encode()))
     pixmap = QPixmap(size, size)
     pixmap.fill(Qt.transparent)
@@ -70,6 +72,9 @@ class Player(QWidget):
         # Tracklist: a list of Track objects
         self.current_track = None
         self.track_pos = 0
+        # Playlist: the album/feed that is actually playing (not just displayed)
+        self.playlist = None
+        self.playlist_pos = 0
 
     def build_gui(self):
         """
@@ -82,41 +87,41 @@ class Player(QWidget):
                 Add X Layout to PARENT layout (player)
 
         """
-        self.setMinimumSize(350, 300)
+        self.setMinimumSize(200, 250)
 
         self.layout_player = QVBoxLayout()
-        self.layout_player.setContentsMargins(0, 0, 0, 12)
+        self.layout_player.setContentsMargins(0, 0, 0, 2)
         self.player = QWidget()
         self.player.setObjectName('player')
 
         # ALBUM ART
         self.layout_album_display = QVBoxLayout()
         self.album_widget = QLabel()
-        self.album_widget.setMinimumSize(200, 150)
+        self.album_widget.setMinimumSize(80, 80)
         self.album_widget.setObjectName('album-art')
         self.album_widget.setAlignment(Qt.AlignCenter)
         self.album_widget.setScaledContents(True)
         self.album_widget.setCursor(Qt.PointingHandCursor)
         self.album_widget.mousePressEvent = lambda e: self.art_clicked.emit() if e.button() == Qt.LeftButton else None
         shadow = QGraphicsDropShadowEffect(self)
-        shadow.setBlurRadius(25)
-        shadow.setOffset(4, 4)
-        shadow.setColor(QColor(0, 0, 0, 160))
+        shadow.setBlurRadius(6)
+        shadow.setOffset(2, 2)
+        shadow.setColor(QColor(0, 0, 0, 200))
         self.album_widget.setGraphicsEffect(shadow)
         self.layout_player.addWidget(self.album_widget, stretch=1, alignment=Qt.AlignCenter)
 
         # Controls container — matches album art width
         self.controls_container = QWidget()
         controls_layout = QVBoxLayout()
-        controls_layout.setContentsMargins(0, 4, 0, 0)
-        controls_layout.setSpacing(6)
+        controls_layout.setContentsMargins(0, 2, 0, 0)
+        controls_layout.setSpacing(4)
 
         # SONG TITLE - ARTIST
-        self.track_info = QLabel('')
-        self.track_info.setWordWrap(True)
+        self.track_info = MarqueeLabel('')
         self.track_info.setObjectName('track-info')
         self.track_info.setAlignment(Qt.AlignCenter)
-        self.track_info.setContentsMargins(0, 2, 0, 2)
+        self.track_info.setContentsMargins(0, 0, 0, 0)
+        self.track_info.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         controls_layout.addWidget(self.track_info)
 
         # PROGRESS BAR
@@ -125,7 +130,6 @@ class Player(QWidget):
 
         self.track_progress_label = QLabel('0:00')
         self.track_progress_label.setObjectName('track-progress')
-        self.track_progress_label.setFixedWidth(self.track_progress_label.fontMetrics().horizontalAdvance('-00:00') + 4)
         self.track_progress_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
 
         self.progress_bar = ClickableProgressBar(self)
@@ -137,7 +141,6 @@ class Player(QWidget):
 
         self.track_length_label = QLabel('0:00')
         self.track_length_label.setObjectName('track-length')
-        self.track_length_label.setFixedWidth(self.track_length_label.fontMetrics().horizontalAdvance('-00:00') + 4)
         self.track_length_label.setCursor(Qt.PointingHandCursor)
         self.track_length_label.mousePressEvent = lambda e: self._toggle_time_display()
         self._show_remaining = True
@@ -157,30 +160,42 @@ class Player(QWidget):
         self.prev_track_button.pressed.connect(self.prev_track)
         self.prev_track_button.setObjectName('prev-button')
         self.prev_track_button.setIconSize(self._icon_size)
+        self.prev_track_button.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
 
         self.play_button = QPushButton()
         self.play_button.pressed.connect(self.toggle_play_pause_button_text)
         self.play_button.setObjectName('play-button')
         self.play_button.setIconSize(self._icon_size)
+        self.play_button.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
 
         self.next_track_button = QPushButton()
         self.next_track_button.pressed.connect(self.next_track)
         self.next_track_button.setObjectName('next-button')
         self.next_track_button.setIconSize(self._icon_size)
+        self.next_track_button.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
 
         self._is_playing = False
         self.update_button_icons()
 
         for btn in (self.prev_track_button, self.play_button, self.next_track_button):
+            btn.setMinimumWidth(20)
             shadow = QGraphicsDropShadowEffect(btn)
             shadow.setBlurRadius(6)
             shadow.setOffset(0, 2)
             shadow.setColor(QColor(0, 0, 0, 50))
             btn.setGraphicsEffect(shadow)
 
-        self.layout_player_buttons.addWidget(self.prev_track_button)
-        self.layout_player_buttons.addWidget(self.play_button)
-        self.layout_player_buttons.addWidget(self.next_track_button)
+        self._btn_container = QWidget()
+        btn_layout = QHBoxLayout()
+        btn_layout.setSpacing(4)
+        btn_layout.setContentsMargins(0, 0, 0, 0)
+        btn_layout.addWidget(self.prev_track_button)
+        btn_layout.addWidget(self.play_button)
+        btn_layout.addWidget(self.next_track_button)
+        self._btn_container.setLayout(btn_layout)
+        self.layout_player_buttons.addStretch()
+        self.layout_player_buttons.addWidget(self._btn_container)
+        self.layout_player_buttons.addStretch()
         controls_layout.addLayout(self.layout_player_buttons)
 
         self.controls_container.setLayout(controls_layout)
@@ -274,28 +289,24 @@ class Player(QWidget):
             self.timer.stop()
             self._set_play_icon(False)
             self.track_finished.emit()
-            if self.album and self.current_track != self.album.tracklist[-1]:
+            if self.playlist and self.current_track != self.playlist.tracklist[-1]:
                 self.next_track()
 
     def next_track(self):
-        # print(self.track_pos)
-        if self.album:
-            if self.track_pos != len(self.album.tracklist) - 1:
-                self.track_pos += 1
-                self.play(self.album, self.track_pos)
+        if self.playlist:
+            if self.playlist_pos != len(self.playlist.tracklist) - 1:
+                self.playlist_pos += 1
             else:
-                self.track_pos = 0
-                self.play(self.album, self.track_pos)
-    
+                self.playlist_pos = 0
+            self.play(self.playlist, self.playlist_pos)
+
     def prev_track(self):
-        # print(self.track_pos)
-        if self.album:
-            if self.track_pos != 0:
-                self.track_pos -= 1
-                self.play(self.album, self.track_pos)
-            else: # go to end of tracklist
-                self.track_pos = len(self.album.tracklist) - 1
-                self.play(self.album, self.track_pos)
+        if self.playlist:
+            if self.playlist_pos != 0:
+                self.playlist_pos -= 1
+            else:
+                self.playlist_pos = len(self.playlist.tracklist) - 1
+            self.play(self.playlist, self.playlist_pos)
 
     def play(self, album, track_pos):
         self.timer.start(self.APP_UPDATE_TIME) # updates time elapsed
@@ -303,6 +314,8 @@ class Player(QWidget):
         # update instance variables (from AlbumView)
         self.album = album
         self.track_pos = track_pos
+        self.playlist = album
+        self.playlist_pos = track_pos
         self.current_track = self.album.tracklist[self.track_pos]
         self.track_changed.emit(self.current_track)
 
@@ -326,6 +339,8 @@ class Player(QWidget):
         """Load a track and update UI without playing. Optionally seek to position."""
         self.album = album
         self.track_pos = track_pos
+        self.playlist = album
+        self.playlist_pos = track_pos
         self.current_track = self.album.tracklist[self.track_pos]
         self.track_changed.emit(self.current_track)
 
@@ -390,6 +405,7 @@ class Player(QWidget):
         else:
             self.album_widget.clear()
             self._offer_artwork_search()
+        self.update_layout()
 
     def _offer_artwork_search(self):
         """Open the artwork finder dialog to search iTunes for cover art."""
@@ -432,15 +448,52 @@ class Player(QWidget):
                 self._set_play_icon(True)
                 self.resume()
 
+    def update_layout(self):
+        """Recalculate control sizing after mode/visibility changes."""
+        self.resizeEvent(None)
+
     def resizeEvent(self, event):
-        super().resizeEvent(event)
-        # Keep album art square, fitting within available width
-        available = self.width() - 10
-        controls_height = self.controls_container.sizeHint().height() + 20
+        if event:
+            super().resizeEvent(event)
+        # Calculate controls height from actual child sizes
+        line_h = self.track_info.fontMetrics().lineSpacing()
+        bar_h = self.progress_bar.height()
+        btn_h = self.play_button.sizeHint().height()
+        margins = self.layout_player.contentsMargins()
+        controls_height = line_h + bar_h + btn_h + margins.top() + margins.bottom() + 20
+
+        # Keep album art square, filling available width with minimal margin
+        margin = min(10, int(self.width() * 0.02))
+        available = self.width() - margin * 2
         size = min(available, self.height() - controls_height)
-        size = max(size, 100)
+        size = max(size, 80)
         self.album_widget.setFixedSize(size, size)
         self.controls_container.setFixedWidth(size)
+
+        # Scale controls to fit available width
+        compact = size < 250
+        icon_dim = max(16, min(24, size // 12))
+        icon_size = QSize(icon_dim, icon_dim)
+        btn_spacing = self._btn_container.layout().spacing()
+        visible = [b for b in (self.prev_track_button, self.play_button, self.next_track_button) if b.isVisible()]
+        btn_w = max(24, (size - btn_spacing * (len(visible) + 1)) // max(len(visible), 1))
+        for btn in (self.prev_track_button, self.play_button, self.next_track_button):
+            btn.setIconSize(icon_size)
+            btn.setFixedWidth(btn_w)
+
+        # Constrain button container so buttons shrink together
+        self._btn_container.setMaximumWidth(size)
+
+        # Adapt time label widths — use fraction of controls width
+        time_w = max(30, size // 5)
+        self.track_progress_label.setFixedWidth(time_w)
+        self.track_length_label.setFixedWidth(time_w)
+
+        # Tighten spacing when compact
+        sp = 2 if compact else 4
+        self.controls_container.layout().setSpacing(sp)
+        self.controls_container.layout().setContentsMargins(0, sp, 0, 0)
+        self._btn_container.layout().setSpacing(2 if compact else 4)
         
 def main():
 
