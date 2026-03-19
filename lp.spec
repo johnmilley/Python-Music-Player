@@ -1,12 +1,16 @@
 # -*- mode: python ; coding: utf-8 -*-
 # PyInstaller spec file for lp music player
 
+import os
 import sys
 from pathlib import Path
 
 import certifi
+from PyQt5.QtCore import QLibraryInfo
 
 block_cipher = None
+
+qt_plugins = QLibraryInfo.location(QLibraryInfo.PluginsPath)
 
 a = Analysis(
     ['src/app.py'],
@@ -16,6 +20,9 @@ a = Analysis(
         ('icon.png', '.'),
         ('src/icons', 'icons'),
         (certifi.where(), 'certifi'),
+        (os.path.join(qt_plugins, 'audio'), os.path.join('PyQt5', 'Qt5', 'plugins', 'audio')),
+        (os.path.join(qt_plugins, 'mediaservice'), os.path.join('PyQt5', 'Qt5', 'plugins', 'mediaservice')),
+        (os.path.join(qt_plugins, 'playlistformats'), os.path.join('PyQt5', 'Qt5', 'plugins', 'playlistformats')),
     ],
     hiddenimports=[
         'just_playback',
