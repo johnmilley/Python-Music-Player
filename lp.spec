@@ -53,16 +53,6 @@ a = Analysis(
     cipher=block_cipher,
 )
 
-# On Linux, exclude bundled GStreamer core libs so Qt's mediaservice plugins
-# use the system GStreamer (which has the full plugin registry and elements).
-# Bundling partial GStreamer causes "no element" errors at runtime.
-if sys.platform == 'linux':
-    _gst_exclude = {'libgstreamer', 'libgstbase', 'libgstapp', 'libgsttag',
-                    'libgstaudio', 'libgstvideo', 'libgstpbutils',
-                    'libgstallocators'}
-    a.binaries = [(name, path, typ) for name, path, typ in a.binaries
-                  if not any(name.startswith(g) for g in _gst_exclude)]
-
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
 exe = EXE(

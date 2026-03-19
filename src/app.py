@@ -6,27 +6,25 @@ from pathlib import Path
 
 # When running as a PyInstaller bundle on Linux, fix GStreamer so QMediaPlayer
 # (used for radio streaming) can find system GStreamer plugins and scanner.
-# Without this, the bundled GStreamer libs can't locate the plugin registry.
+# PyInstaller bundles GStreamer core libs but not the plugin elements (identity,
+# decodebin, etc.), so we point the bundled GStreamer at the system plugin dir.
 if getattr(sys, 'frozen', False) and sys.platform == 'linux':
     for _gst_dir in ['/usr/lib64/gstreamer-1.0',
-                     '/usr/lib/x86_64-linux-gnu/gstreamer-1.0']:
+                     '/usr/lib/x86_64-linux-gnu/gstreamer-1.0',
+                     '/usr/lib/gstreamer-1.0']:
         if os.path.isdir(_gst_dir):
             os.environ.setdefault('GST_PLUGIN_SYSTEM_PATH', _gst_dir)
+            os.environ.setdefault('GST_PLUGIN_PATH', _gst_dir)
             break
     for _scanner in ['/usr/libexec/gstreamer-1.0/gst-plugin-scanner',
-                     '/usr/lib/x86_64-linux-gnu/gstreamer-1.0/gst-plugin-scanner']:
+                     '/usr/lib/x86_64-linux-gnu/gstreamer-1.0/gst-plugin-scanner',
+                     '/usr/lib64/gstreamer-1.0/gst-plugin-scanner']:
         if os.path.isfile(_scanner):
             os.environ.setdefault('GST_PLUGIN_SCANNER', _scanner)
             break
-    # Remove PyInstaller's temp dir from LD_LIBRARY_PATH so GStreamer
-    # loads system libs (with full plugin support) instead of bundled ones
-    _ld_path = os.environ.get('LD_LIBRARY_PATH', '')
-    _meipass = getattr(sys, '_MEIPASS', '')
-    _paths = [p for p in _ld_path.split(':') if p and p != _meipass]
-    if _paths:
-        os.environ['LD_LIBRARY_PATH'] = ':'.join(_paths)
-    elif 'LD_LIBRARY_PATH' in os.environ:
-        del os.environ['LD_LIBRARY_PATH']
+    # Disable registry forking — the forked scanner inherits LD_LIBRARY_PATH
+    # pointing to bundled libs, which can cause version mismatches
+    os.environ.setdefault('GST_REGISTRY_FORK', 'no')
 
 # local
 from folder_view import FolderView
