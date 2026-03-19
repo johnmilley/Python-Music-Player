@@ -1,16 +1,12 @@
 # -*- mode: python ; coding: utf-8 -*-
 # PyInstaller spec file for lp music player
 
-import os
 import sys
 from pathlib import Path
 
 import certifi
-from PyQt5.QtCore import QLibraryInfo
 
 block_cipher = None
-
-qt_plugins = QLibraryInfo.location(QLibraryInfo.PluginsPath)
 
 a = Analysis(
     ['src/app.py'],
@@ -20,9 +16,6 @@ a = Analysis(
         ('icon.png', '.'),
         ('src/icons', 'icons'),
         (certifi.where(), 'certifi'),
-        (os.path.join(qt_plugins, 'audio'), os.path.join('PyQt5', 'Qt5', 'plugins', 'audio')),
-        (os.path.join(qt_plugins, 'mediaservice'), os.path.join('PyQt5', 'Qt5', 'plugins', 'mediaservice')),
-        (os.path.join(qt_plugins, 'playlistformats'), os.path.join('PyQt5', 'Qt5', 'plugins', 'playlistformats')),
     ],
     hiddenimports=[
         'just_playback',
@@ -52,21 +45,6 @@ a = Analysis(
     optimize=0,
     cipher=block_cipher,
 )
-
-# On Linux, exclude bundled GLib/GIO/GStreamer libs. PyInstaller bundles these
-# from the build system (Ubuntu 22.04), but they're older than what Fedora/etc
-# ship. System GStreamer plugins need the system GLib (newer symbols like
-# g_assertion_message_cmpint). GLib is backward-compatible, so bundled Qt
-# (built against older GLib) works fine with the system's newer GLib.
-if sys.platform == 'linux':
-    _exclude_prefixes = (
-        'libglib-', 'libgio-', 'libgobject-', 'libgmodule-', 'libgthread-',
-        'libgstreamer', 'libgstbase', 'libgstapp', 'libgsttag',
-        'libgstaudio', 'libgstvideo', 'libgstpbutils', 'libgstallocators',
-        'libssl', 'libcrypto',
-    )
-    a.binaries = [(name, path, typ) for name, path, typ in a.binaries
-                  if not any(name.startswith(p) for p in _exclude_prefixes)]
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 

@@ -8,8 +8,13 @@ import urllib.request
 import ssl
 from pathlib import Path
 
-from PyQt5.QtMultimedia import QMediaPlayer, QMediaContent
 from PyQt5.QtCore import QUrl, pyqtSignal, QObject, QThread, Qt, QSize
+
+try:
+    from PyQt5.QtMultimedia import QMediaPlayer, QMediaContent
+except ImportError:
+    QMediaPlayer = None
+    QMediaContent = None
 from PyQt5.QtGui import QImage, QPixmap
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
@@ -341,13 +346,22 @@ class StationArtDialog(QDialog):
 
 # ── Radio player ────────────────────────────────────────────────
 
-class RadioPlayer(QObject):
+def _make_radio_player(parent=None):
+    """Factory: return SubprocessRadioPlayer in frozen builds on Linux (avoids
+    GLib/GStreamer version conflicts with bundled libs), QMediaPlayer otherwise."""
+    if getattr(_sys, 'frozen', False) and _sys.platform == 'linux':
+        return _SubprocessRadioPlayer(parent)
+    if QMediaPlayer is None:
+        return _SubprocessRadioPlayer(parent)
+    return _QtRadioPlayer(parent)
+
+
+class _QtRadioPlayer(QObject):
     """Streams radio URLs via QMediaPlayer."""
 
     state_changed = pyqtSignal(bool)  # True = playing
     metadata_changed = pyqtSignal(str)  # now-playing title string
-
-    error_occurred = pyqtSignal(str)  # error message string
+    error_occurred = pyqtSignal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -402,3 +416,118 @@ class RadioPlayer(QObject):
     @volume.setter
     def volume(self, val):
         self._player.setVolume(int(val))
+
+
+import subprocess
+import shutil
+
+class _SubprocessRadioPlayer(QObject):
+    """Streams radio via ffplay/gst-play subprocess with clean env.
+    Used in PyInstaller builds to avoid GLib/GStreamer version conflicts."""
+
+    state_changed = pyqtSignal(bool)
+    metadata_changed = pyqtSignal(str)
+    error_occurred = pyqtSignal(str)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._proc = None
+        self._playing = False
+        self._volume = 80
+        self._url = None
+        self._last_title = ''
+        self._player_cmd = self._find_player()
+        if self._player_cmd:
+            print(f'LOG: Radio using subprocess: {self._player_cmd[0]}')
+        else:
+            print('LOG: No radio player found (install ffmpeg or gstreamer)')
+
+    def _find_player(self):
+        """Find an available command-line audio player."""
+        # Clean env for which lookups
+        clean_env = {k: v for k, v in os.environ.items()
+                     if k != 'LD_LIBRARY_PATH'}
+        for cmd in ['ffplay', 'gst-play-1.0', 'mpv']:
+            path = shutil.which(cmd, path=clean_env.get('PATH'))
+            if path:
+                return [path]
+        return None
+
+    def _clean_env(self):
+        """Return env without PyInstaller's LD_LIBRARY_PATH."""
+        env = dict(os.environ)
+        meipass = getattr(_sys, '_MEIPASS', '')
+        ld_path = env.get('LD_LIBRARY_PATH', '')
+        paths = [p for p in ld_path.split(':') if p and p != meipass]
+        if paths:
+            env['LD_LIBRARY_PATH'] = ':'.join(paths)
+        else:
+            env.pop('LD_LIBRARY_PATH', None)
+        return env
+
+    def _build_cmd(self, url):
+        if not self._player_cmd:
+            return None
+        name = self._player_cmd[0]
+        if 'ffplay' in name:
+            return self._player_cmd + ['-nodisp', '-loglevel', 'quiet',
+                                        '-volume', str(self._volume), url]
+        elif 'gst-play' in name:
+            return self._player_cmd + [url]
+        elif 'mpv' in name:
+            return self._player_cmd + ['--no-video', '--really-quiet',
+                                        f'--volume={self._volume}', url]
+        return None
+
+    def play_stream(self, url):
+        self.stop()
+        self._url = url
+        self._last_title = ''
+        cmd = self._build_cmd(url)
+        if not cmd:
+            self.error_occurred.emit('No audio player available (install ffmpeg)')
+            return
+        try:
+            self._proc = subprocess.Popen(
+                cmd, env=self._clean_env(),
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            self._playing = True
+            self.state_changed.emit(True)
+        except Exception as e:
+            self.error_occurred.emit(str(e))
+
+    def pause(self):
+        self.stop()
+
+    def resume(self):
+        if self._url:
+            self.play_stream(self._url)
+
+    def stop(self):
+        if self._proc:
+            try:
+                self._proc.terminate()
+                self._proc.wait(timeout=2)
+            except Exception:
+                try:
+                    self._proc.kill()
+                except Exception:
+                    pass
+            self._proc = None
+        self._playing = False
+        self._last_title = ''
+        self.state_changed.emit(False)
+
+    @property
+    def is_playing(self):
+        if self._proc and self._proc.poll() is not None:
+            self._playing = False
+        return self._playing
+
+    @property
+    def volume(self):
+        return self._volume
+
+    @volume.setter
+    def volume(self, val):
+        self._volume = int(val)

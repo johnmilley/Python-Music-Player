@@ -1,30 +1,7 @@
 # App contains Player, Album View, and FolderView widgets
 
-import os
 import sys
 from pathlib import Path
-
-# When running as a PyInstaller bundle on Linux, fix GStreamer so QMediaPlayer
-# (used for radio streaming) can find system GStreamer plugins and scanner.
-# PyInstaller bundles GStreamer core libs but not the plugin elements (identity,
-# decodebin, etc.), so we point the bundled GStreamer at the system plugin dir.
-if getattr(sys, 'frozen', False) and sys.platform == 'linux':
-    for _gst_dir in ['/usr/lib64/gstreamer-1.0',
-                     '/usr/lib/x86_64-linux-gnu/gstreamer-1.0',
-                     '/usr/lib/gstreamer-1.0']:
-        if os.path.isdir(_gst_dir):
-            os.environ.setdefault('GST_PLUGIN_SYSTEM_PATH', _gst_dir)
-            os.environ.setdefault('GST_PLUGIN_PATH', _gst_dir)
-            break
-    for _scanner in ['/usr/libexec/gstreamer-1.0/gst-plugin-scanner',
-                     '/usr/lib/x86_64-linux-gnu/gstreamer-1.0/gst-plugin-scanner',
-                     '/usr/lib64/gstreamer-1.0/gst-plugin-scanner']:
-        if os.path.isfile(_scanner):
-            os.environ.setdefault('GST_PLUGIN_SCANNER', _scanner)
-            break
-    # Disable registry forking — the forked scanner inherits LD_LIBRARY_PATH
-    # pointing to bundled libs, which can cause version mismatches
-    os.environ.setdefault('GST_REGISTRY_FORK', 'no')
 
 # local
 from folder_view import FolderView
@@ -36,7 +13,7 @@ from color_extract import extract_palette, most_readable, text_color_for, ensure
 from podcast_view import PodcastView
 from podcast_feed import PodcastFeed, EpisodeDownloadThread, ImageDownloadThread
 from radio_view import RadioView
-from radio_player import RadioPlayer, StationArtDialog, station_art_path
+from radio_player import _make_radio_player, StationArtDialog, station_art_path
 from radio_station import RadioStation
 from media_keys import MediaKeyHandler, start_native_backend
 import theme
@@ -93,7 +70,7 @@ class App(QMainWindow):
         self.folder_view = FolderView(self.album_view)
         self.podcast_view = PodcastView()
         self.radio_view = RadioView()
-        self.radio_player = RadioPlayer()
+        self.radio_player = _make_radio_player()
 
         # Mode: 'music', 'podcast', or 'radio'
         self._mode = 'music'
@@ -330,7 +307,7 @@ class App(QMainWindow):
         fs = self.font_size
         self.setStyleSheet(theme.app_qss(t, fs))
         self.player.setStyleSheet(theme.player_qss(t, fs))
-        self.player.update_button_icons(t['fg'])
+        self.player.update_button_icons(t['fg'], hover_color=t['selection_text'])
         folder_focused = self.folder_view.view.hasFocus()
         album_focused = self.album_view.track_list_widget.hasFocus()
         self.folder_view.setStyleSheet(theme.folder_view_qss(t, fs, focused=folder_focused))
@@ -1356,13 +1333,14 @@ class App(QMainWindow):
         p.prev_track_button.pressed.connect(lambda: self._seek_relative(-30))
         p.next_track_button.pressed.connect(lambda: self._seek_relative(30))
         color = getattr(p, '_icon_color', 'black')
+        hover_color = getattr(p, '_icon_hover_color', None)
         from player import _svg_icon
         small_bold = f'font-size: {max(self.font_size - 3, 7)}pt; font-weight: bold;'
-        p.prev_track_button.setIcon(_svg_icon('fast_rewind', color))
+        p.prev_track_button.setIcon(_svg_icon('fast_rewind', color, hover_color=hover_color))
         p.prev_track_button.setText('30s')
         p.prev_track_button.setStyleSheet(small_bold)
         p.prev_track_button.setLayoutDirection(Qt.RightToLeft)
-        p.next_track_button.setIcon(_svg_icon('fast_forward', color))
+        p.next_track_button.setIcon(_svg_icon('fast_forward', color, hover_color=hover_color))
         p.next_track_button.setText('30s')
         p.next_track_button.setStyleSheet(small_bold)
         p.next_track_button.setLayoutDirection(Qt.LeftToRight)

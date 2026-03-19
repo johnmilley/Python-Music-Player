@@ -28,11 +28,10 @@ if getattr(sys, '_MEIPASS', None):
 else:
     ICONS_DIR = Path(__file__).parent / 'icons'
 
-def _svg_icon(name, color='black', size=32):
-    """Load an SVG icon from icons/ and render it with the given fill color."""
+def _render_svg(name, color, size):
+    """Render an SVG icon with the given fill color and return a QPixmap."""
     svg_path = ICONS_DIR / f'{name}.svg'
     svg_data = svg_path.read_text()
-    # Inject fill/stroke color into the SVG path
     svg_data = svg_data.replace('<path d=', f'<path fill="{color}" d=')
     svg_data = svg_data.replace('stroke="black"', f'stroke="{color}"')
     renderer = QSvgRenderer(QByteArray(svg_data.encode()))
@@ -41,7 +40,16 @@ def _svg_icon(name, color='black', size=32):
     painter = QPainter(pixmap)
     renderer.render(painter)
     painter.end()
-    return QIcon(pixmap)
+    return pixmap
+
+
+def _svg_icon(name, color='black', size=32, hover_color=None):
+    """Load an SVG icon with normal and optional hover/active color variants."""
+    icon = QIcon(_render_svg(name, color, size))
+    if hover_color:
+        hover_pixmap = _render_svg(name, hover_color, size)
+        icon.addPixmap(hover_pixmap, QIcon.Active)
+    return icon
 
 
 class Player(QWidget):
@@ -216,11 +224,14 @@ class Player(QWidget):
         self._show_remaining = not self._show_remaining
         self._update_time_label()
 
-    def update_button_icons(self, color='black'):
+    def update_button_icons(self, color=None, hover_color=None):
         """Refresh all button icons with the given color (for theme changes)."""
+        if color is None:
+            color = getattr(self, '_icon_color', 'black')
         self._icon_color = color
-        self.prev_track_button.setIcon(_svg_icon('skip_previous', color))
-        self.next_track_button.setIcon(_svg_icon('skip_next', color))
+        self._icon_hover_color = hover_color
+        self.prev_track_button.setIcon(_svg_icon('skip_previous', color, hover_color=hover_color))
+        self.next_track_button.setIcon(_svg_icon('skip_next', color, hover_color=hover_color))
         self._set_play_icon()
 
     def _set_play_icon(self, playing=None):
@@ -229,7 +240,8 @@ class Player(QWidget):
             self._is_playing = playing
         name = 'pause' if self._is_playing else 'play_arrow'
         color = getattr(self, '_icon_color', 'black')
-        self.play_button.setIcon(_svg_icon(name, color))
+        hover_color = getattr(self, '_icon_hover_color', None)
+        self.play_button.setIcon(_svg_icon(name, color, hover_color=hover_color))
 
     def _update_time_label(self, pos=None):
         if not self.current_track:
