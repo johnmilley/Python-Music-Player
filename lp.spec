@@ -25,6 +25,7 @@ a = Analysis(
         'mutagen.mp4',
         '_cffi_backend',
         'cffi',
+        'requests',
     ],
     hookspath=[],
     hooksconfig={},
