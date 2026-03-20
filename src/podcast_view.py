@@ -2,8 +2,8 @@
 # Shows subscribed feeds; selecting one loads episodes into AlbumView
 
 from PyQt5.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QListWidget, QListWidgetItem,
-    QPushButton, QLineEdit, QLabel, QMenu, QApplication
+    QWidget, QVBoxLayout, QListWidget, QListWidgetItem,
+    QLineEdit, QLabel, QMenu
 )
 from PyQt5.QtCore import Qt, QSettings, pyqtSignal
 
@@ -25,19 +25,12 @@ class PodcastView(QWidget):
         layout = QVBoxLayout()
         layout.setContentsMargins(4, 4, 4, 4)
 
-        # Add feed input
-        input_row = QHBoxLayout()
-        input_row.setSpacing(4)
+        # Add feed input — type a URL to add directly, or a name to search
         self.url_input = QLineEdit()
-        self.url_input.setPlaceholderText('Paste Apple Podcasts link...')
+        self.url_input.setPlaceholderText('Search or paste link...')
         self.url_input.setFocusPolicy(Qt.ClickFocus)
-        self.url_input.returnPressed.connect(self._add_feed)
-        self.add_btn = QPushButton('+')
-        self.add_btn.setFixedWidth(30)
-        self.add_btn.pressed.connect(self._add_feed)
-        input_row.addWidget(self.url_input)
-        input_row.addWidget(self.add_btn)
-        layout.addLayout(input_row)
+        self.url_input.returnPressed.connect(self._on_input_submitted)
+        layout.addWidget(self.url_input)
 
         # Feed list
         self.feed_list = QListWidget()
@@ -70,14 +63,39 @@ class PodcastView(QWidget):
         settings = QSettings('lp', 'music-player')
         settings.setValue('podcast/feeds', list(self._feeds.keys()))
 
-    def _add_feed(self):
-        url = self.url_input.text().strip()
-        if not url:
+    def _on_input_submitted(self):
+        text = self.url_input.text().strip()
+        if not text:
             return
+        if text.startswith('http'):
+            self._add_feed_url(text)
+        else:
+            self._open_search(text)
+
+    def _add_feed_url(self, url):
         if url in self._feeds:
             self.status_label.setText('Already subscribed')
             return
         self.url_input.clear()
+        self._fetch_feed(url)
+
+    def _open_search(self, query):
+        from podcast_search import PodcastSearchDialog
+        import theme as theme_mod
+        app = self.window()
+        t = dict(getattr(app, 'current_theme', theme_mod.LIGHT))
+        t['accent'] = getattr(app, 'accent_color', theme_mod.DEFAULT_ACCENT)
+        t['selection'] = t['accent']
+        dialog = PodcastSearchDialog(query, t, parent=self)
+        dialog.feed_subscribed.connect(self.add_feed_by_url)
+        dialog.exec_()
+
+    def add_feed_by_url(self, url):
+        """Public method to add a feed by URL (used by search dialog)."""
+        self.url_input.clear()
+        if url in self._feeds:
+            self.status_label.setText('Already subscribed')
+            return
         self._fetch_feed(url)
 
     def _fetch_feed(self, url):
@@ -115,7 +133,7 @@ class PodcastView(QWidget):
         item = self.feed_list.itemAt(pos)
         if not item:
             return
-        menu = QMenu()
+        menu = QMenu(self.feed_list)
         remove = menu.addAction('Remove')
         refresh = menu.addAction('Refresh')
         action = menu.exec_(self.feed_list.mapToGlobal(pos))

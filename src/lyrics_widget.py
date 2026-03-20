@@ -31,6 +31,9 @@ class LyricsWidget(QWidget):
         self.setObjectName('lyrics-widget')
         self._synced_lines = None  # list of (seconds, text) if synced
         self._current_line = -1
+        self._desc_segments = None
+        self._desc_preamble = None
+        self._full_description = None
         self._theme = None
         self._font_size = None
 
@@ -128,31 +131,49 @@ class LyricsWidget(QWidget):
         fs = self._font_size or 13
         line_pad = max(2, fs // 3)
 
-        html_lines = []
-        next_idx = active_idx + 1
-        for i, (_, text) in enumerate(self._synced_lines):
-            if not text.strip():
-                html_lines.append('<br>')
-                continue
-            # Place anchor at the next line after active
-            anchor = f'<a name="scroll-target"></a>' if i == next_idx else ''
-            if i == active_idx:
-                html_lines.append(
+        # Cache line HTML parts; only rebuild if theme/font changed or first render
+        cache_key = (accent, fg, dim, fs, len(self._synced_lines))
+        if getattr(self, '_synced_cache_key', None) != cache_key:
+            # Full rebuild — cache each line's normal and active HTML
+            self._synced_cache_key = cache_key
+            self._synced_normal = []
+            self._synced_active = []
+            self._synced_dim = []
+            for i, (_, text) in enumerate(self._synced_lines):
+                if not text.strip():
+                    self._synced_normal.append('<br>')
+                    self._synced_active.append('<br>')
+                    self._synced_dim.append('<br>')
+                    continue
+                self._synced_active.append(
                     f'<div style="color: {accent}; '
                     f'font-weight: bold; font-size: 105%; '
                     f'padding: {line_pad}px 0;">'
                     f'<a href="seek:{i}" style="color: {accent}; text-decoration: none;">{text}</a>'
                     f'</div>')
-            else:
-                color = fg if i > active_idx or active_idx < 0 else dim
-                html_lines.append(
-                    f'{anchor}<div style="color: {color}; padding: {line_pad}px 0;">'
-                    f'<a href="seek:{i}" style="color: {color}; text-decoration: none;">{text}</a>'
+                self._synced_normal.append(
+                    f'<div style="color: {fg}; padding: {line_pad}px 0;">'
+                    f'<a href="seek:{i}" style="color: {fg}; text-decoration: none;">{text}</a>'
                     f'</div>')
+                self._synced_dim.append(
+                    f'<div style="color: {dim}; padding: {line_pad}px 0;">'
+                    f'<a href="seek:{i}" style="color: {dim}; text-decoration: none;">{text}</a>'
+                    f'</div>')
+            self._synced_font = font
+
+        # Assemble from cache — pick the right variant per line
+        html_lines = []
+        for i in range(len(self._synced_lines)):
+            if i == active_idx:
+                html_lines.append(self._synced_active[i])
+            elif active_idx >= 0 and i < active_idx:
+                html_lines.append(self._synced_dim[i])
+            else:
+                html_lines.append(self._synced_normal[i])
 
         self.label.setTextFormat(Qt.RichText)
         self.label.setText(
-            f'<div style="font-family: {font};">'
+            f'<div style="font-family: {self._synced_font};">'
             + ''.join(html_lines)
             + '</div>'
         )

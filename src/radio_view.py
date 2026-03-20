@@ -2,8 +2,8 @@
 # Shows saved radio stations; selecting one starts streaming
 
 from PyQt5.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QListWidget, QListWidgetItem,
-    QPushButton, QLineEdit, QLabel, QMenu, QInputDialog
+    QWidget, QVBoxLayout, QListWidget, QListWidgetItem,
+    QLineEdit, QLabel, QMenu, QInputDialog
 )
 from PyQt5.QtCore import Qt, QSettings, pyqtSignal
 
@@ -25,19 +25,12 @@ class RadioView(QWidget):
         layout = QVBoxLayout()
         layout.setContentsMargins(4, 4, 4, 4)
 
-        # Add station input
-        input_row = QHBoxLayout()
-        input_row.setSpacing(4)
+        # Add station input — paste URL or type a name to search
         self.url_input = QLineEdit()
-        self.url_input.setPlaceholderText('Paste stream URL...')
+        self.url_input.setPlaceholderText('Search or paste stream URL...')
         self.url_input.setFocusPolicy(Qt.ClickFocus)
-        self.url_input.returnPressed.connect(self._add_station)
-        self.add_btn = QPushButton('+')
-        self.add_btn.setFixedWidth(30)
-        self.add_btn.pressed.connect(self._add_station)
-        input_row.addWidget(self.url_input)
-        input_row.addWidget(self.add_btn)
-        layout.addLayout(input_row)
+        self.url_input.returnPressed.connect(self._on_input_submitted)
+        layout.addWidget(self.url_input)
 
         # Station list
         self.station_list = QListWidget()
@@ -78,16 +71,42 @@ class RadioView(QWidget):
         settings.setValue('radio/station_names', [s.name for s in self._stations])
         settings.setValue('radio/station_urls', [s.stream_url for s in self._stations])
 
-    def _add_station(self):
-        url = self.url_input.text().strip()
-        if not url:
+    def _on_input_submitted(self):
+        text = self.url_input.text().strip()
+        if not text:
             return
-        # Ask for a name
+        if text.startswith('http'):
+            self._add_station_url(text)
+        else:
+            self._open_search(text)
+
+    def _add_station_url(self, url):
+        """Add a station by URL, prompting for a name."""
         name, ok = QInputDialog.getText(self, 'Station Name', 'Name:', text=url)
         if not ok or not name.strip():
             return
         name = name.strip()
         self.url_input.clear()
+        self._insert_station(name, url)
+
+    def _open_search(self, query):
+        from radio_search import RadioSearchDialog
+        import theme as theme_mod
+        app = self.window()
+        t = dict(getattr(app, 'current_theme', theme_mod.LIGHT))
+        t['accent'] = getattr(app, 'accent_color', theme_mod.DEFAULT_ACCENT)
+        t['selection'] = t['accent']
+        dialog = RadioSearchDialog(query, t, parent=self)
+        dialog.station_added.connect(self.add_station_external)
+        dialog.exec_()
+
+    def add_station_external(self, name, url):
+        """Public method to add a station (used by search dialog)."""
+        self.url_input.clear()
+        self._insert_station(name, url)
+
+    def _insert_station(self, name, url):
+        """Add a station to the list and save."""
         station = RadioStation(name, url)
         self._stations.append(station)
         item = QListWidgetItem(station.name)
@@ -104,7 +123,7 @@ class RadioView(QWidget):
         item = self.station_list.itemAt(pos)
         if not item:
             return
-        menu = QMenu()
+        menu = QMenu(self.station_list)
         find_art = menu.addAction('Find Station Art...')
         menu.addSeparator()
         remove = menu.addAction('Remove')

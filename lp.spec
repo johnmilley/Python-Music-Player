@@ -29,6 +29,8 @@ a = Analysis(
         'dbus_fast',
         'dbus_fast.aio',
         'dbus_fast.service',
+        'podcast_search',
+        'radio_search',
     ],
     hookspath=[],
     hooksconfig={},

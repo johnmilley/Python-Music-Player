@@ -8,12 +8,25 @@ from PyQt5.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QListWidgetItem,
     QStyledItemDelegate, QStyle
 )
-from PyQt5.QtCore import Qt, pyqtSignal, QSize, QRect
+from PyQt5.QtCore import Qt, pyqtSignal, QSize, QRect, QThread
 from PyQt5.QtGui import QColor, QFontMetrics, QTextOption
 
 # local
 from album import Album
 from vim_views import VimListWidget, SearchBar
+
+
+class AlbumLoadThread(QThread):
+    """Load album metadata in a background thread."""
+    finished = pyqtSignal(object)  # Album
+
+    def __init__(self, directory_path):
+        super().__init__()
+        self.directory_path = directory_path
+
+    def run(self):
+        album = Album(Path(self.directory_path))
+        self.finished.emit(album)
 
 
 class WrapIndentDelegate(QStyledItemDelegate):
@@ -119,7 +132,7 @@ class AlbumView(QWidget):
         self.track_list_widget.setObjectName('track-list')
         self._wrap_delegate = WrapIndentDelegate(self.track_list_widget)
         self.track_list_widget.setItemDelegate(self._wrap_delegate)
-        self.track_list_widget.itemDoubleClicked.connect(self.set_current_track)
+        self.track_list_widget.itemClicked.connect(self.set_current_track)
 
         # Search bar
         self.search_bar = SearchBar(self.track_list_widget)
@@ -133,11 +146,19 @@ class AlbumView(QWidget):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        # Recalculate item sizes when width changes so wrapping updates
+        # Debounce: only recalculate item sizes when width actually changes
+        new_w = self.width()
+        if new_w != getattr(self, '_last_width', -1):
+            self._last_width = new_w
+            self._update_item_sizes()
+
+    def _update_item_sizes(self):
+        """Recalculate item sizes for text wrapping."""
+        opts = self.track_list_widget.viewOptions()
+        delegate = self.track_list_widget.itemDelegate()
         for row in range(self.track_list_widget.count()):
             item = self.track_list_widget.item(row)
-            hint = self.track_list_widget.itemDelegate().sizeHint(
-                self.track_list_widget.viewOptions(), self.track_list_widget.indexFromItem(item))
+            hint = delegate.sizeHint(opts, self.track_list_widget.indexFromItem(item))
             item.setSizeHint(hint)
 
     def _on_search(self, text):
@@ -155,28 +176,30 @@ class AlbumView(QWidget):
                 break
 
     def load_album_listing(self, directory_path):
-        """
-            builds an Album object from any dir that contains music files (mp3, flac)
-        """
+        """Load album metadata in background, then populate the track list."""
         self.track_list_widget.clear()
+        self.track_list_widget.addItem("Loading...")
+        self._load_thread = AlbumLoadThread(directory_path)
+        self._load_thread.finished.connect(self._on_album_loaded)
+        self._load_thread.start()
 
-        self.album = Album(Path(directory_path))
+    def _on_album_loaded(self, album):
+        """Populate track list after background loading completes."""
+        self.track_list_widget.clear()
+        self.album = album
 
         if self.album.tracklist:
             for i, track in enumerate(self.album.tracklist):
                 item = QListWidgetItem(str(track))
                 item.setData(Qt.UserRole, i)
                 self.track_list_widget.addItem(item)
-            # Update album art display (does not affect playback playlist)
             if self.player:
                 self.player.album = self.album
                 self.player.load_album_art(self.player.album)
-            # Emit after player has the album so listeners can read album art
             if self.album.title and self.album.artist:
                 self.album_changed.emit(f"{self.album.title} - {self.album.artist}")
         else:
             self.track_list_widget.addItem("No music files found.")
-            self.setWindowTitle(f"Tracklist")
 
     def set_current_track(self, selected):
         track_pos = selected.data(Qt.UserRole)

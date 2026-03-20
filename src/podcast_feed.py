@@ -94,16 +94,19 @@ class PodcastFeed:
 
     @staticmethod
     def from_url(url):
-        """Fetch and parse a podcast from an Apple Podcasts link.
+        """Fetch and parse a podcast from a URL.
 
-        Resolves the link to an RSS feed URL via the iTunes Lookup API,
-        then parses the feed.
+        Accepts Apple Podcasts links (resolved via iTunes Lookup API)
+        or direct RSS feed URLs.
         """
-        feed_url = resolve_apple_url(url)
+        if 'podcasts.apple.com' in url or 'itunes.apple.com' in url:
+            feed_url = resolve_apple_url(url)
+        else:
+            feed_url = url
         resp = _session.get(feed_url, timeout=15)
         resp.raise_for_status()
         resp.encoding = 'utf-8'
-        return PodcastFeed.from_xml(resp.text, url)
+        return PodcastFeed.from_xml(resp.text, feed_url)
 
     @staticmethod
     def from_xml(xml_text, url=''):

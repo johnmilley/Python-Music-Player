@@ -9,7 +9,7 @@ from player import Player, _svg_icon
 from album_view import AlbumView
 from lyrics_widget import LyricsWidget
 from lyrics_fetcher import LyricsFetchThread, lyrics_path_for_track
-from color_extract import extract_palette, most_readable, text_color_for, ensure_contrast
+from color_extract import extract_palette, most_readable, text_color_for, ensure_contrast, PaletteExtractThread
 from podcast_view import PodcastView
 from podcast_feed import PodcastFeed, EpisodeDownloadThread, ImageDownloadThread
 from radio_view import RadioView
@@ -260,10 +260,7 @@ class App(QMainWindow):
         self.current_theme = theme.LIGHT
         self.apply_theme(self.current_theme)
 
-        self.album_view.album_changed.connect(self.setWindowTitle)
-        self.album_view.album_changed.connect(lambda _: self._update_accent_for_album())
-        self.album_view.album_changed.connect(lambda _: self._show_tracklist())
-        self.album_view.album_changed.connect(lambda _: QTimer.singleShot(0, self._fit_right_splitter))
+        self.album_view.album_changed.connect(self._on_album_changed)
 
         # Restore saved state
         self._restore_state()
@@ -431,13 +428,21 @@ class App(QMainWindow):
         if not force and getattr(self, '_last_palette_album', None) == album_path:
             return
         self._last_palette_album = album_path
-        colors = extract_palette(str(self.player.album.art))
-        if not colors:
-            return
-        # Restore saved accent for this album, or pick most readable
+        # If we have a saved accent, apply it immediately (no extraction needed)
         if album_path in self._album_accents:
             self.accent_color = self._album_accents[album_path]
-        else:
+            self.apply_theme(self.current_theme)
+        # Extract palette in background thread
+        self._palette_thread = PaletteExtractThread(str(self.player.album.art))
+        self._palette_thread.finished.connect(
+            lambda colors, p=album_path: self._on_palette_extracted(colors, p))
+        self._palette_thread.start()
+
+    def _on_palette_extracted(self, colors, album_path):
+        """Handle palette extraction results from background thread."""
+        if not colors:
+            return
+        if album_path not in self._album_accents:
             default = most_readable(colors) or colors[0]
             self.accent_color = default
             self._album_accents[album_path] = default
@@ -479,6 +484,12 @@ class App(QMainWindow):
         library_root = self.settings.value('library_root')
         if library_root:
             self.folder_view.set_root(library_root)
+            self.folder_view.model.directoryLoaded.connect(
+                lambda: QTimer.singleShot(100, self._auto_fit_folder_width))
+            self.folder_view.view.expanded.connect(
+                lambda: QTimer.singleShot(100, self._auto_fit_folder_width))
+            self.folder_view.view.collapsed.connect(
+                lambda: QTimer.singleShot(100, self._auto_fit_folder_width))
         geometry = self.settings.value('geometry')
         if geometry:
             self.restoreGeometry(geometry)
@@ -531,43 +542,40 @@ class App(QMainWindow):
             # Restore last music album
             last_album = self.settings.value('last_album')
             if last_album:
-                self.album_view.load_album_listing(last_album)
                 track_pos = self.settings.value('last_track_pos', 0, type=int)
                 seek_pos = self.settings.value('last_seek_pos', 0.0, type=float)
-                if self.album_view.album and track_pos < len(self.album_view.album.tracklist):
-                    self.player.load_track(self.album_view.album, track_pos, seek_pos)
-            if self.player.album and self.player.album.art:
-                self._update_accent_for_album()
+                self._pending_music_restore = {'track_pos': track_pos, 'seek_pos': seek_pos}
+                self.album_view.load_album_listing(last_album)
 
     def _shortcut_play_pause(self):
-        if self._mode == 'radio':
+        if self._playing_mode == 'radio':
             self._radio_toggle_play_pause()
         else:
             self.player.toggle_play_pause_button_text()
 
     def _shortcut_next(self):
-        if self._mode == 'radio':
+        if self._playing_mode == 'radio':
             return
-        if self._mode == 'podcast':
+        if self._playing_mode == 'podcast':
             self._seek_relative(30)
         else:
             self.player.next_track()
 
     def _shortcut_prev(self):
-        if self._mode == 'radio':
+        if self._playing_mode == 'radio':
             return
-        if self._mode == 'podcast':
+        if self._playing_mode == 'podcast':
             self._seek_relative(-30)
         else:
             self.player.prev_track()
 
     def _shortcut_seek_forward(self):
-        if self._mode == 'radio':
+        if self._playing_mode == 'radio':
             return
         self._seek_relative(5)
 
     def _shortcut_seek_back(self):
-        if self._mode == 'radio':
+        if self._playing_mode == 'radio':
             return
         self._seek_relative(-5)
 
@@ -829,6 +837,21 @@ class App(QMainWindow):
             vis = not self.folder_view.isVisible()
             self.folder_view.setVisible(vis)
 
+    def _on_album_changed(self, title):
+        """Single handler for album changes — batches all updates."""
+        self.setWindowTitle(title)
+        self._update_accent_for_album()
+        self._show_tracklist()
+        QTimer.singleShot(0, self._fit_right_splitter)
+        # Restore saved track position after startup album load
+        pending = getattr(self, '_pending_music_restore', None)
+        if pending:
+            del self._pending_music_restore
+            track_pos = pending['track_pos']
+            seek_pos = pending['seek_pos']
+            if self.album_view.album and track_pos < len(self.album_view.album.tracklist):
+                self.player.load_track(self.album_view.album, track_pos, seek_pos)
+
     def _show_tracklist(self):
         """Ensure the tracklist panel is visible."""
         if not self.album_view.isVisible():
@@ -862,6 +885,9 @@ class App(QMainWindow):
 
     def _on_track_changed(self, track):
         """Fetch lyrics when the track changes."""
+        # Stop radio if music/podcast playback starts
+        if self.radio_player.is_playing:
+            self.radio_player.stop()
         # Determine playing mode from the track type, not the UI mode
         if hasattr(track, 'audio_url'):
             track_mode = 'podcast'
@@ -984,16 +1010,13 @@ class App(QMainWindow):
         max_layout.setContentsMargins(0, 0, 0, 0)
         max_layout.setSpacing(0)
 
-        # Top bar: Artist - Album - Track
-        self._max_info = QLabel()
-        self._max_info.setObjectName('max-info')
-        self._max_info.setAlignment(Qt.AlignCenter)
-        self._max_info.setWordWrap(True)
-        self._max_info.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
-        self._update_max_info()
-        max_layout.addWidget(self._max_info)
+        # Accent divider line
+        self._max_divider = QWidget()
+        self._max_divider.setObjectName('max-divider')
+        self._max_divider.setFixedHeight(2)
+        max_layout.addWidget(self._max_divider)
 
-        # Content: art (2/3) + lyrics (1/3), lyrics height matches art
+        # Content: art (2/3) + lyrics (1/3)
         content = QWidget()
         content.setObjectName('max-content')
         content_layout = QHBoxLayout()
@@ -1017,14 +1040,33 @@ class App(QMainWindow):
             self._set_max_art(QPixmap(str(self.player.album.art)))
         content_layout.addWidget(self._max_art, stretch=2)
 
-        # Lyrics — constrained to art height, vertically centered
+        # Lyrics container — vertically centered, 80% of art height
+        lyrics_outer = QVBoxLayout()
+        lyrics_outer.setContentsMargins(0, 0, 0, 0)
+        lyrics_outer.setSpacing(0)
+        lyrics_outer.addStretch()
+
+        # Track info header (sticky above lyrics scroll)
+        self._max_track_label = QLabel()
+        self._max_track_label.setObjectName('max-track-label')
+        self._max_track_label.setWordWrap(True)
+        self._max_track_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        self._update_max_info()
+        lyrics_outer.addWidget(self._max_track_label)
+
         self._max_lyrics = LyricsWidget()
         self._max_lyrics.setObjectName('max-lyrics')
         self._max_lyrics.seek_requested.connect(self._on_lyrics_seek)
-        # Copy current lyrics/description content
         self._copy_lyrics_to_max()
         self._max_lyrics.setVisible(True)
-        content_layout.addWidget(self._max_lyrics, stretch=1)
+        lyrics_outer.addWidget(self._max_lyrics, stretch=1)
+
+        lyrics_outer.addStretch()
+
+        lyrics_wrapper = QWidget()
+        lyrics_wrapper.setObjectName('max-lyrics-wrapper')
+        lyrics_wrapper.setLayout(lyrics_outer)
+        content_layout.addWidget(lyrics_wrapper, stretch=1)
 
         content.setLayout(content_layout)
         self._max_content = content
@@ -1059,14 +1101,19 @@ class App(QMainWindow):
             #max-content {{
                 background-color: {t['bg']};
             }}
-            #max-info {{
+            #max-divider {{
+                background-color: {t['accent']};
+            }}
+            #max-lyrics-wrapper {{
+                background-color: {t['bg']};
+            }}
+            #max-track-label {{
                 background-color: {t['bg']};
                 color: {t['fg']};
                 font-family: {theme.FONT};
-                font-size: {fs + 6}pt;
+                font-size: {fs + 12}pt;
                 font-weight: bold;
-                padding: 15px;
-                border-bottom: 2px solid {t['accent']};
+                padding: 8px 20px;
             }}
         """)
         self._max_lyrics.setStyleSheet(f"""
@@ -1088,11 +1135,16 @@ class App(QMainWindow):
         self._max_lyrics.set_theme(t, fs + 8)
 
     def _set_max_art(self, pixmap):
-        """Set max mode art scaled to fit without stretching."""
+        """Set max mode art scaled to 75% of screen height, centered."""
         if pixmap.isNull():
             return
-        size = self._max_art.size()
-        scaled = pixmap.scaled(size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        screen_h = self.height()
+        max_side = int(screen_h * 0.85)
+        m = self._max_art.contentsMargins()
+        avail_w = min(self._max_art.width() - m.left() - m.right(), max_side)
+        avail_h = min(self._max_art.height() - m.top() - m.bottom(), max_side)
+        avail = QSize(max(avail_w, 100), max(avail_h, 100))
+        scaled = pixmap.scaled(avail, Qt.KeepAspectRatio, Qt.SmoothTransformation)
         self._max_art.setPixmap(scaled)
         self._max_art_pixmap = pixmap  # keep original for resize
 
@@ -1120,28 +1172,26 @@ class App(QMainWindow):
             self._max_lyrics.set_lyrics(plain)
 
     def _update_max_info(self):
-        if not hasattr(self, '_max_info'):
+        label = getattr(self, '_max_track_label', None)
+        if not label:
             return
         track = self.player.current_track
-        if track:
-            parts = [p for p in [track.artist, track.album, track.title] if p]
-            self._max_info.setText('      '.join(parts))
-        elif self.player.album:
-            self._max_info.setText(
-                f'{self.player.album.artist}      {self.player.album.title}')
+        if track and track.title:
+            label.setText(str(track.title))
         else:
-            self._max_info.setText('lp')
+            label.setText('')
 
     def _fit_right_splitter(self):
         """Size the right splitter so lyrics sit just below the tracklist."""
         if self.is_maxplayer or not self.lyrics_widget.isVisible():
             return
         tw = self.album_view.track_list_widget
-        # Calculate total height needed for all items
-        track_h = 0
-        for row in range(tw.count()):
-            track_h += tw.sizeHintForRow(row)
-        # Add search bar height if visible, plus layout margins
+        count = tw.count()
+        if count == 0:
+            return
+        # Estimate total height from first row's height instead of iterating all
+        avg_h = tw.sizeHintForRow(0) if count > 0 else 20
+        track_h = avg_h * count
         margins = self.album_view.layout().contentsMargins()
         track_h += margins.top() + margins.bottom()
         if self.album_view.search_bar.isVisible():
@@ -1155,20 +1205,37 @@ class App(QMainWindow):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
+        # Enforce fixed aspect ratio — only diagonal resizing allowed
+        if not self.is_maxplayer and event and hasattr(self, '_aspect_ratio'):
+            if getattr(self, '_resizing', False):
+                return
+            w, h = self.width(), self.height()
+            expected_h = int(w / self._aspect_ratio)
+            if abs(h - expected_h) > 2:
+                self._resizing = True
+                self.setUpdatesEnabled(False)
+                if event.oldSize().isValid():
+                    dw = abs(w - event.oldSize().width())
+                    dh = abs(h - event.oldSize().height())
+                    if dw >= dh:
+                        self.resize(w, expected_h)
+                    else:
+                        self.resize(int(h * self._aspect_ratio), h)
+                else:
+                    self.resize(w, expected_h)
+                self.setUpdatesEnabled(True)
+                self._resizing = False
+                return
         if not self.is_maxplayer:
             self._fit_right_splitter()
         if self.is_maxplayer and self._max_art:
             if hasattr(self, '_max_art_pixmap'):
-                size = self._max_art.size()
-                scaled = self._max_art_pixmap.scaled(
-                    size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-                self._max_art.setPixmap(scaled)
-            # Text takes 80% of content height, vertically centered
+                self._set_max_art(self._max_art_pixmap)
+            # Constrain lyrics+track label to 80% of art height, centered by stretches
             if self._max_lyrics and self._max_lyrics.isVisible():
-                content_h = self._max_content.height()
-                text_h = int(content_h * 0.80)
-                v_pad = max(0, (content_h - text_h) // 2)
-                self._max_lyrics.scroll.setContentsMargins(0, v_pad, 0, v_pad)
+                art_h = self._max_art.height()
+                max_lyrics_h = int(art_h * 0.80)
+                self._max_lyrics.setMaximumHeight(max_lyrics_h)
 
     def _update_max_mode(self):
         """Update max mode lyrics and info on timer tick."""
@@ -1189,7 +1256,7 @@ class App(QMainWindow):
             self._max_widget = None
             self._max_lyrics = None
             self._max_art = None
-            self._max_info = None
+            self._max_track_label = None
 
         # Restore normal UI
         self.splitter.setVisible(True)
@@ -1231,13 +1298,8 @@ class App(QMainWindow):
             return
         self._save_music_position()
         self._save_podcast_position()
-        leaving_radio = self._mode == 'radio' and mode != 'radio'
-        radio_was_playing = leaving_radio and self.radio_player.is_playing
-        # Stop radio when leaving radio mode
-        if leaving_radio:
-            self.radio_player.stop()
-            self._playing_mode = None
-            self._apply_controls_for_mode(mode)
+        if self._mode == 'music':
+            self._save_music_folder_position()
         self._mode = mode
         self.mode_music_btn.setChecked(mode == 'music')
         self.mode_podcast_btn.setChecked(mode == 'podcast')
@@ -1249,33 +1311,34 @@ class App(QMainWindow):
         self.podcast_view.setVisible(False)
         self.radio_view.setVisible(False)
 
+        # Restore tracklist if leaving radio
+        pre_radio = getattr(self, '_pre_radio_tracklist', None)
+        if pre_radio is not None and mode != 'radio':
+            self.album_view.setVisible(pre_radio)
+            self.toggle_tracklist_btn.setChecked(pre_radio)
+            self._pre_radio_tracklist = None
+
         if mode == 'podcast':
             self.podcast_view.setVisible(True)
             self.podcast_view.load_saved_feeds()
         elif mode == 'radio':
             self.radio_view.setVisible(True)
             self.radio_view.load_saved_stations()
+            # Save tracklist state and hide it — radio doesn't use tracklist
+            self._pre_radio_tracklist = self.album_view.isVisible()
+            self.album_view.setVisible(False)
+            self.toggle_tracklist_btn.setChecked(False)
         else:
             self.folder_view.setVisible(True)
-            # Reconnect album_view double-click to music handler
+            self._restore_music_folder_position()
+            # Reconnect album_view click to music handler
             try:
-                self.album_view.track_list_widget.itemDoubleClicked.disconnect()
+                self.album_view.track_list_widget.itemClicked.disconnect()
             except TypeError:
                 pass
-            self.album_view.track_list_widget.itemDoubleClicked.connect(
+            self.album_view.track_list_widget.itemClicked.connect(
                 self.album_view.set_current_track)
             self.album_view.track_list_widget.setContextMenuPolicy(Qt.NoContextMenu)
-
-        # Only clear display if radio was actually playing
-        if radio_was_playing:
-            self.player.album_widget.clear()
-            self.player.track_info.setText('')
-            self.player.progress_bar.setValue(0)
-            self.player.track_progress_label.setText('0:00')
-            self.player.track_length_label.setText('0:00')
-            self.player._set_play_icon(False)
-            self.album_view.track_list_widget.clear()
-            self.lyrics_widget.clear()
 
     def _restore_podcast_state(self):
         """Restore the last-played podcast feed and episode on startup."""
@@ -1551,13 +1614,13 @@ class App(QMainWindow):
         self._current_podcast_feed = feed
         self.album_view.track_list_widget.clear()
 
-        # Disconnect music double-click, connect podcast double-click
+        # Disconnect music click, connect podcast click
         try:
-            self.album_view.track_list_widget.itemDoubleClicked.disconnect()
+            self.album_view.track_list_widget.itemClicked.disconnect()
         except TypeError:
             pass
-        self.album_view.track_list_widget.itemDoubleClicked.connect(
-            self._on_episode_double_clicked)
+        self.album_view.track_list_widget.itemClicked.connect(
+            self._on_episode_clicked)
 
         for i, ep in enumerate(feed.tracklist):
             item = QListWidgetItem(self._episode_label(ep))
@@ -1623,7 +1686,7 @@ class App(QMainWindow):
         idx = item.data(Qt.UserRole)
         ep = self._current_podcast_feed.tracklist[idx]
 
-        menu = QMenu()
+        menu = QMenu(widget)
         guid = getattr(ep, 'guid', None) or str(idx)
         if ep.is_downloaded:
             delete_action = menu.addAction('Delete download')
@@ -1641,7 +1704,7 @@ class App(QMainWindow):
             if action == dl_action:
                 self._download_episode(self._current_podcast_feed, idx)
 
-    def _on_episode_double_clicked(self, item):
+    def _on_episode_clicked(self, item):
         """Download and play a podcast episode."""
         idx = item.data(Qt.UserRole)
         if idx is None or not self._current_podcast_feed:
@@ -1751,6 +1814,42 @@ class App(QMainWindow):
                 and self.player.playback.active):
             self._playing_seek_pos = self.player.playback.curr_pos
 
+    def _save_music_folder_position(self):
+        """Save the current folder_view scroll/selection for restore."""
+        self._music_folder_index = self.folder_view.view.currentIndex()
+        self._music_folder_scroll = self.folder_view.view.verticalScrollBar().value()
+
+    def _restore_music_folder_position(self):
+        """Restore saved folder_view scroll/selection."""
+        idx = getattr(self, '_music_folder_index', None)
+        if idx and idx.isValid():
+            self.folder_view.view.setCurrentIndex(idx)
+            self.folder_view.view.scrollTo(idx)
+        scroll = getattr(self, '_music_folder_scroll', None)
+        if scroll is not None:
+            self.folder_view.view.verticalScrollBar().setValue(scroll)
+
+    def _auto_fit_folder_width(self):
+        """Resize the folder_view splitter pane to fit content width."""
+        ideal = self.folder_view.ideal_width()
+        if ideal < 150:
+            return
+        sizes = self.splitter.sizes()
+        if len(sizes) < 5:
+            return
+        total = sum(sizes)
+        # Allow up to 40% of total width
+        ideal = min(ideal, int(total * 0.40))
+        remaining = total - ideal
+        # Distribute remaining proportionally to other panes
+        other = sum(sizes[1:])
+        if other > 0:
+            ratio = remaining / other
+            new_sizes = [ideal] + [int(s * ratio) for s in sizes[1:]]
+        else:
+            new_sizes = sizes
+        self.splitter.setSizes(new_sizes)
+
     def _play_episode(self, feed, idx):
         """Play a podcast episode through the player."""
         self._save_music_position()
@@ -1855,6 +1954,9 @@ def main():
     app.setDesktopFileName('lp')
     app_ui = App(media_signals=media_signals, media_backend=media_backend)
     app_ui.show()
+    # Lock aspect ratio after geometry is restored
+    QTimer.singleShot(0, lambda: setattr(app_ui, '_aspect_ratio',
+                                          app_ui.width() / max(app_ui.height(), 1)))
     sys.exit(app.exec_())
 
 if __name__ == '__main__':

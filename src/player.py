@@ -99,11 +99,17 @@ class Player(QWidget):
 
         self.layout_player = QVBoxLayout()
         self.layout_player.setContentsMargins(0, 0, 0, 2)
+        self.layout_player.setSpacing(0)
         self.player = QWidget()
         self.player.setObjectName('player')
 
+        # Inner container holds art + controls as a single centered unit
+        self._inner = QWidget()
+        self._inner_layout = QVBoxLayout()
+        self._inner_layout.setContentsMargins(0, 0, 0, 0)
+        self._inner_layout.setSpacing(0)
+
         # ALBUM ART
-        self.layout_album_display = QVBoxLayout()
         self.album_widget = QLabel()
         self.album_widget.setMinimumSize(80, 80)
         self.album_widget.setObjectName('album-art')
@@ -116,13 +122,13 @@ class Player(QWidget):
         shadow.setOffset(2, 2)
         shadow.setColor(QColor(0, 0, 0, 200))
         self.album_widget.setGraphicsEffect(shadow)
-        self.layout_player.addWidget(self.album_widget, stretch=1, alignment=Qt.AlignCenter)
+        self._inner_layout.addWidget(self.album_widget, alignment=Qt.AlignHCenter)
 
         # Controls container — matches album art width
         self.controls_container = QWidget()
         controls_layout = QVBoxLayout()
-        controls_layout.setContentsMargins(0, 2, 0, 0)
-        controls_layout.setSpacing(4)
+        controls_layout.setContentsMargins(0, 6, 0, 0)
+        controls_layout.setSpacing(6)
 
         # SONG TITLE - ARTIST
         self.track_info = MarqueeLabel('')
@@ -207,16 +213,14 @@ class Player(QWidget):
         controls_layout.addLayout(self.layout_player_buttons)
 
         self.controls_container.setLayout(controls_layout)
+        self._inner_layout.addWidget(self.controls_container, alignment=Qt.AlignHCenter)
 
-        # Center controls horizontally using stretch spacers instead of
-        # alignment flags — alignment flags constrain the widget to its
-        # sizeHint, which breaks word-wrapped QLabel height calculation.
-        controls_row = QHBoxLayout()
-        controls_row.setContentsMargins(0, 0, 0, 0)
-        controls_row.addStretch()
-        controls_row.addWidget(self.controls_container)
-        controls_row.addStretch()
-        self.layout_player.addLayout(controls_row)
+        self._inner.setLayout(self._inner_layout)
+
+        # Center the entire art+controls unit vertically and horizontally
+        self.layout_player.addStretch()
+        self.layout_player.addWidget(self._inner, alignment=Qt.AlignHCenter)
+        self.layout_player.addStretch()
 
         self.setLayout(self.layout_player)
 
@@ -283,7 +287,6 @@ class Player(QWidget):
         if total > 0:
             progress = int((pos / total) * 1000)
             self.progress_bar.setValue(progress)
-            self.progress_bar.repaint()
 
         # Update progress label
         if int(pos) != int(self._time_elapsed):
@@ -391,15 +394,10 @@ class Player(QWidget):
         """
         self.album = album
 
-        # Update TRACK TITLE - ARTIST
+        # Update TRACK TITLE
         title = str(self.current_track.title or '')
-        artist = str(self.current_track.artist or '')
-        if title and artist:
-            self.track_info.setText(f"{title} - {artist}")
-        elif title:
+        if title:
             self.track_info.setText(title)
-        elif self.album.artist and self.album.title:
-            self.track_info.setText(f"{self.album.artist} - {self.album.title}")
         else:
             self.track_info.setText(self.current_track.filename)
 
@@ -474,30 +472,48 @@ class Player(QWidget):
         margins = self.layout_player.contentsMargins()
         controls_height = line_h + bar_h + btn_h + margins.top() + margins.bottom() + 20
 
-        # Keep album art square, filling available width with minimal margin
+        # Size album art to fit available space, preserving aspect ratio
         margin = min(10, int(self.width() * 0.02))
-        available = self.width() - margin * 2
-        size = min(available, self.height() - controls_height)
-        size = max(size, 80)
-        self.album_widget.setFixedSize(size, size)
-        self.controls_container.setFixedWidth(size)
+        avail_w = self.width() - margin * 2
+        avail_h = self.height() - controls_height
+        avail_w = max(avail_w, 80)
+        avail_h = max(avail_h, 80)
+
+        pixmap = self.album_widget.pixmap()
+        if pixmap and not pixmap.isNull() and pixmap.width() > 0 and pixmap.height() > 0:
+            pw, ph = pixmap.width(), pixmap.height()
+            ratio = pw / ph
+            # Fit within available space
+            if avail_w / avail_h > ratio:
+                art_h = avail_h
+                art_w = int(art_h * ratio)
+            else:
+                art_w = avail_w
+                art_h = int(art_w / ratio)
+        else:
+            art_w = art_h = min(avail_w, avail_h)
+
+        self.album_widget.setFixedSize(art_w, art_h)
+        controls_w = min(art_w, avail_w)
+        self.controls_container.setFixedWidth(controls_w)
+
 
         # Scale controls to fit available width
-        compact = size < 250
-        icon_dim = max(16, min(24, size // 12))
+        compact = controls_w < 250
+        icon_dim = max(16, min(24, controls_w // 12))
         icon_size = QSize(icon_dim, icon_dim)
         btn_spacing = self._btn_container.layout().spacing()
         visible = [b for b in (self.prev_track_button, self.play_button, self.next_track_button) if b.isVisible()]
-        btn_w = max(24, (size - btn_spacing * (len(visible) + 1)) // max(len(visible), 1))
+        btn_w = max(24, (controls_w - btn_spacing * (len(visible) + 1)) // max(len(visible), 1))
         for btn in (self.prev_track_button, self.play_button, self.next_track_button):
             btn.setIconSize(icon_size)
             btn.setFixedWidth(btn_w)
 
         # Constrain button container so buttons shrink together
-        self._btn_container.setMaximumWidth(size)
+        self._btn_container.setMaximumWidth(controls_w)
 
         # Adapt time label widths — use fraction of controls width
-        time_w = max(30, size // 5)
+        time_w = max(30, controls_w // 5)
         self.track_progress_label.setFixedWidth(time_w)
         self.track_length_label.setFixedWidth(time_w)
 

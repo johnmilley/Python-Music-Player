@@ -83,6 +83,10 @@ class FolderView(QWidget):
         self.model.setRootPath(path)
         self.view.setRootIndex(self.model.index(path))
 
+    def ideal_width(self):
+        """Return the ideal width based on visible content."""
+        return self.view.sizeHintForColumn(0) + 40
+
     @staticmethod
     def _has_music(path):
         try:
@@ -108,15 +112,23 @@ class FolderView(QWidget):
             return
 
         path = self.model.filePath(index)
-        menu = QMenu()
-        open_action = menu.addAction("Open folder.")
+        menu = QMenu(self.view)
+        open_action = menu.addAction("Open folder")
         action = menu.exec_(self.view.mapToGlobal(pos))
 
         if action == open_action:
             if sys.platform == 'darwin':  # macOS
                 subprocess.Popen(['open', path])
             elif sys.platform == 'linux': # Linux
-                subprocess.Popen(['xdg-open', path])
+                env = dict(os.environ)
+                meipass = getattr(sys, '_MEIPASS', '')
+                ld_path = env.get('LD_LIBRARY_PATH', '')
+                paths = [p for p in ld_path.split(':') if p and p != meipass]
+                if paths:
+                    env['LD_LIBRARY_PATH'] = ':'.join(paths)
+                else:
+                    env.pop('LD_LIBRARY_PATH', None)
+                subprocess.Popen(['xdg-open', path], env=env)
             elif sys.platform == 'win32': # Windows
                 os.startfile(path)
 

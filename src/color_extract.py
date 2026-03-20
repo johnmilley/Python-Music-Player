@@ -2,6 +2,7 @@
 
 from collections import Counter
 from PyQt5.QtGui import QImage, QColor
+from PyQt5.QtCore import QThread, pyqtSignal
 
 
 def extract_palette(image_path, count=5):
@@ -14,7 +15,8 @@ def extract_palette(image_path, count=5):
     if img.isNull():
         return []
 
-    img = img.scaled(120, 120)
+    # Downsample to 60x60 instead of 120x120 — 4x fewer pixels, same results
+    img = img.scaled(60, 60)
     total_pixels = img.width() * img.height()
 
     # Bin every pixel by hue/sat/val
@@ -136,3 +138,17 @@ def most_readable(colors):
             best_score = score
             best = hex_c
     return best
+
+
+class PaletteExtractThread(QThread):
+    """Extract color palette in a background thread."""
+    finished = pyqtSignal(list)  # list of hex color strings
+
+    def __init__(self, image_path, count=5):
+        super().__init__()
+        self.image_path = image_path
+        self.count = count
+
+    def run(self):
+        colors = extract_palette(self.image_path, self.count)
+        self.finished.emit(colors)

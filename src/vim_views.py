@@ -51,7 +51,7 @@ class VimTreeView(QTreeView):
         elif key in (Qt.Key_Return, Qt.Key_Enter):
             idx = self.currentIndex()
             if idx.isValid():
-                self.doubleClicked.emit(idx)
+                self.clicked.emit(idx)
         elif event.text() and event.text().isprintable() and len(event.text()) == 1:
             # Consume printable keys to prevent type-to-search
             return
@@ -86,7 +86,7 @@ class VimListWidget(QListWidget):
         elif key in (Qt.Key_Return, Qt.Key_Enter):
             item = self.currentItem()
             if item:
-                self.itemDoubleClicked.emit(item)
+                self.itemClicked.emit(item)
         elif event.text() and event.text().isprintable() and len(event.text()) == 1:
             # Consume printable keys to prevent type-to-search
             # (h/l are intercepted by App's eventFilter before reaching here)
