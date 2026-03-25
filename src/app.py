@@ -541,7 +541,7 @@ class App(QMainWindow):
             self.folder_view.setVisible(self.settings.value('library_visible') != 'false')
             # Restore last music album
             last_album = self.settings.value('last_album')
-            if last_album:
+            if last_album and Path(last_album).is_dir():
                 track_pos = self.settings.value('last_track_pos', 0, type=int)
                 seek_pos = self.settings.value('last_seek_pos', 0.0, type=float)
                 self._pending_music_restore = {'track_pos': track_pos, 'seek_pos': seek_pos}
