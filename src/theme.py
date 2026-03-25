@@ -45,7 +45,7 @@ def resolve_font():
     FONT = "'monospace'"
 
 DEFAULT_FONT_SIZE = 13
-FONT_SIZES = [8, 9, 10, 11, 12, 13, 14, 16, 18, 20, 24, 28, 32, 36, 40, 44, 48, 54]
+FONT_SIZES = [8, 9, 10, 11, 12, 13, 14, 16, 18, 20, 24]
 
 DEFAULT_ACCENT = 'orange'
 ACCENT_PRESETS = {
@@ -93,10 +93,8 @@ def app_qss(t, fs=DEFAULT_FONT_SIZE):
     """
 
 def player_qss(t, fs=DEFAULT_FONT_SIZE):
-    btn_h = 42
     art_margin = '4px'
     info_fs = fs
-    btn_fs = fs + 4
     return f"""
         #player {{
             background-color: {t['bg']};
@@ -132,23 +130,17 @@ def player_qss(t, fs=DEFAULT_FONT_SIZE):
             background-color: {t['accent']};
         }}
         .QPushButton {{
-            background-color: {t['btn_bg']};
+            background: transparent;
             border: none;
             border-radius: 0;
-            margin: 0 2px;
-            color: {t['fg']};
-            height: {btn_h}px;
-            padding: 0 6px;
-            font-family: {FONT};
-            font-size: {btn_fs}pt;
+            margin: 0;
+            padding: 0;
         }}
         .QPushButton:hover, .QPushButton:focus {{
-            background-color: {t['accent']};
-            color: {t['selection_text']};
+            background: transparent;
         }}
         .QPushButton:pressed {{
-            background-color: {t['accent']};
-            color: {t['selection_text']};
+            background: transparent;
         }}
     """
 
@@ -189,7 +181,7 @@ def hover_menu_qss(t, fs=DEFAULT_FONT_SIZE):
             background-color: transparent;
             border: none;
             font-family: {FONT};
-            font-size: {fs}pt;
+            font-size: 9pt;
             padding: 1px 6px 0px 6px;
             margin: 0px;
         }}

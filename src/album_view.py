@@ -151,6 +151,10 @@ class AlbumView(QWidget):
     def _update_item_sizes(self):
         """Recalculate item sizes for text wrapping."""
         opts = self.track_list_widget.viewOptions()
+        # Use actual viewport width so sizeHint gets the current geometry
+        vp_w = self.track_list_widget.viewport().width()
+        if vp_w > 0:
+            opts.rect.setWidth(vp_w)
         delegate = self.track_list_widget.itemDelegate()
         for row in range(self.track_list_widget.count()):
             item = self.track_list_widget.item(row)

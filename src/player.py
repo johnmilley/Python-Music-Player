@@ -98,7 +98,7 @@ class Player(QWidget):
         self.setMinimumSize(200, 250)
 
         self.layout_player = QVBoxLayout()
-        self.layout_player.setContentsMargins(0, 0, 0, 2)
+        self.layout_player.setContentsMargins(12, 0, 0, 2)
         self.layout_player.setSpacing(0)
         self.player = QWidget()
         self.player.setObjectName('player')
@@ -167,8 +167,8 @@ class Player(QWidget):
         # TRACK CONTROL BUTTONS
         self._icon_size = QSize(24, 24)
         self.layout_player_buttons = QHBoxLayout()
-        self.layout_player_buttons.setSpacing(4)
-        self.layout_player_buttons.setContentsMargins(0, 0, 0, 0)
+        self.layout_player_buttons.setSpacing(0)
+        self.layout_player_buttons.setContentsMargins(0, 8, 0, 0)
 
         self.prev_track_button = QPushButton()
         self.prev_track_button.pressed.connect(self.prev_track)
@@ -193,15 +193,11 @@ class Player(QWidget):
 
         for btn in (self.prev_track_button, self.play_button, self.next_track_button):
             btn.setMinimumWidth(20)
-            shadow = QGraphicsDropShadowEffect(btn)
-            shadow.setBlurRadius(6)
-            shadow.setOffset(0, 2)
-            shadow.setColor(QColor(0, 0, 0, 50))
-            btn.setGraphicsEffect(shadow)
+            btn.setCursor(Qt.PointingHandCursor)
 
         self._btn_container = QWidget()
         btn_layout = QHBoxLayout()
-        btn_layout.setSpacing(4)
+        btn_layout.setSpacing(0)
         btn_layout.setContentsMargins(0, 0, 0, 0)
         btn_layout.addWidget(self.prev_track_button)
         btn_layout.addWidget(self.play_button)
@@ -234,9 +230,17 @@ class Player(QWidget):
             color = getattr(self, '_icon_color', 'black')
         self._icon_color = color
         self._icon_hover_color = hover_color
-        self.prev_track_button.setIcon(_svg_icon('skip_previous', color, hover_color=hover_color))
-        self.next_track_button.setIcon(_svg_icon('skip_next', color, hover_color=hover_color))
+        self._set_btn_hover_icons(self.prev_track_button, 'skip_previous', color, hover_color)
+        self._set_btn_hover_icons(self.next_track_button, 'skip_next', color, hover_color)
         self._set_play_icon()
+
+    def _set_btn_hover_icons(self, btn, icon_name, color, hover_color):
+        """Set normal icon and install enter/leave handlers for hover color."""
+        btn.setIcon(_svg_icon(icon_name, color))
+        btn._normal_icon = _svg_icon(icon_name, color)
+        btn._hover_icon = _svg_icon(icon_name, hover_color or color)
+        btn.enterEvent = lambda e, b=btn: b.setIcon(b._hover_icon)
+        btn.leaveEvent = lambda e, b=btn: b.setIcon(b._normal_icon)
 
     def _set_play_icon(self, playing=None):
         """Update play button icon to play or pause."""
@@ -245,7 +249,7 @@ class Player(QWidget):
         name = 'pause' if self._is_playing else 'play_arrow'
         color = getattr(self, '_icon_color', 'black')
         hover_color = getattr(self, '_icon_hover_color', None)
-        self.play_button.setIcon(_svg_icon(name, color, hover_color=hover_color))
+        self._set_btn_hover_icons(self.play_button, name, color, hover_color)
 
     def _update_time_label(self, pos=None):
         if not self.current_track:
@@ -465,17 +469,36 @@ class Player(QWidget):
     def resizeEvent(self, event):
         if event:
             super().resizeEvent(event)
-        # Calculate controls height from actual child sizes
-        line_h = self.track_info.fontMetrics().lineSpacing()
-        bar_h = self.progress_bar.height()
-        btn_h = self.play_button.sizeHint().height()
-        margins = self.layout_player.contentsMargins()
-        controls_height = line_h + bar_h + btn_h + margins.top() + margins.bottom() + 20
 
-        # Size album art to fit available space, preserving aspect ratio
+        outer_m = self.layout_player.contentsMargins()
+
+        # Determine spacing first (used in controls height calc)
+        avail_w_est = self.width() - outer_m.left() - outer_m.right()
+        compact = avail_w_est < 250
+        sp = 2 if compact else 4
+
+        # Apply spacing/margins to controls container
+        self.controls_container.layout().setSpacing(sp)
+        self.controls_container.layout().setContentsMargins(0, sp, 0, 0)
+        self._btn_container.layout().setSpacing(0)
+
+        # Calculate exact controls height from components + layout gaps
+        info_h = self.track_info.sizeHint().height()
+        progress_h = max(self.progress_bar.maximumHeight(),
+                         self.track_progress_label.sizeHint().height())
+        btn_m = self.layout_player_buttons.contentsMargins()
+        icon_dim = max(16, min(24, avail_w_est // 12))
+        btn_h = icon_dim + 12 + btn_m.top() + btn_m.bottom()
+        ctrl_m = self.controls_container.layout().contentsMargins()
+        controls_height = (ctrl_m.top() + info_h + sp
+                           + progress_h + sp
+                           + btn_h + ctrl_m.bottom())
+
+        # Available space for album art
+        total_reserved = controls_height + outer_m.top() + outer_m.bottom()
         margin = min(10, int(self.width() * 0.02))
-        avail_w = self.width() - margin * 2
-        avail_h = self.height() - controls_height
+        avail_w = self.width() - outer_m.left() - outer_m.right() - margin * 2
+        avail_h = self.height() - total_reserved
         avail_w = max(avail_w, 80)
         avail_h = max(avail_h, 80)
 
@@ -483,7 +506,6 @@ class Player(QWidget):
         if pixmap and not pixmap.isNull() and pixmap.width() > 0 and pixmap.height() > 0:
             pw, ph = pixmap.width(), pixmap.height()
             ratio = pw / ph
-            # Fit within available space
             if avail_w / avail_h > ratio:
                 art_h = avail_h
                 art_w = int(art_h * ratio)
@@ -497,31 +519,21 @@ class Player(QWidget):
         controls_w = min(art_w, avail_w)
         self.controls_container.setFixedWidth(controls_w)
 
-
-        # Scale controls to fit available width
-        compact = controls_w < 250
-        icon_dim = max(16, min(24, controls_w // 12))
+        # Scale button icons to fit available width
         icon_size = QSize(icon_dim, icon_dim)
-        btn_spacing = self._btn_container.layout().spacing()
-        visible = [b for b in (self.prev_track_button, self.play_button, self.next_track_button) if b.isVisible()]
-        btn_w = max(24, (controls_w - btn_spacing * (len(visible) + 1)) // max(len(visible), 1))
+        btn_w = icon_dim + 12
         for btn in (self.prev_track_button, self.play_button, self.next_track_button):
             btn.setIconSize(icon_size)
             btn.setFixedWidth(btn_w)
 
-        # Constrain button container so buttons shrink together
-        self._btn_container.setMaximumWidth(controls_w)
+        # Keep buttons clustered in the center
+        visible = [b for b in (self.prev_track_button, self.play_button, self.next_track_button) if b.isVisible()]
+        self._btn_container.setFixedWidth(btn_w * len(visible))
 
-        # Adapt time label widths — use fraction of controls width
+        # Adapt time label widths
         time_w = max(30, controls_w // 5)
         self.track_progress_label.setFixedWidth(time_w)
         self.track_length_label.setFixedWidth(time_w)
-
-        # Tighten spacing when compact
-        sp = 2 if compact else 4
-        self.controls_container.layout().setSpacing(sp)
-        self.controls_container.layout().setContentsMargins(0, sp, 0, 0)
-        self._btn_container.layout().setSpacing(2 if compact else 4)
         
 def main():
 

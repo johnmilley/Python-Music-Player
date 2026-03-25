@@ -5,7 +5,7 @@ from pathlib import Path
 
 # local
 from folder_view import FolderView
-from player import Player, _svg_icon
+from player import Player
 from album_view import AlbumView
 from lyrics_widget import LyricsWidget
 from lyrics_fetcher import LyricsFetchThread, lyrics_path_for_track
@@ -77,12 +77,6 @@ class ToolBar(QWidget):
         outer.setSpacing(0)
         self.setLayout(outer)
 
-        # Top accent bar
-        self._top_accent_bar = QWidget()
-        self._top_accent_bar.setObjectName('accent-bar')
-        self._top_accent_bar.setFixedHeight(2)
-        outer.addWidget(self._top_accent_bar)
-
         # Top row: menu buttons — solid accent, text revealed on hover
         self._menu_bar = _HoverRevealBar()
         self._menu_bar.setObjectName('menu-bar')
@@ -111,11 +105,11 @@ class ToolBar(QWidget):
 
     def update_heights(self, fs):
         """Resize bars to fit the given font size."""
-        menu_h = fs + 6
+        menu_h = 15  # fixed small height, independent of font size
         toggle_h = fs + 14
         self._menu_bar.setFixedHeight(menu_h)
         self._toggle_bar.setFixedHeight(toggle_h)
-        self.setFixedHeight(2 + menu_h + 2 + toggle_h)
+        self.setFixedHeight(menu_h + 2 + toggle_h)
 
     def addWidget(self, widget):
         self._toggle_layout.addWidget(widget)
@@ -380,7 +374,7 @@ class App(QMainWindow):
         fs = self.font_size
         self.setStyleSheet(theme.app_qss(t, fs))
         self.player.setStyleSheet(theme.player_qss(t, fs))
-        self.player.update_button_icons(t['fg'], hover_color=t['selection_text'])
+        self.player.update_button_icons(t['fg'], hover_color=t['accent'])
         folder_focused = self.folder_view.view.hasFocus()
         album_focused = self.album_view.track_list_widget.hasFocus()
         self.folder_view.setStyleSheet(theme.folder_view_qss(t, fs, focused=folder_focused))
@@ -915,11 +909,54 @@ class App(QMainWindow):
 
     def _on_toggle_library(self, checked):
         if self._mode == 'podcast':
-            self.podcast_view.setVisible(checked)
+            lib = self.podcast_view
         elif self._mode == 'radio':
-            self.radio_view.setVisible(checked)
+            lib = self.radio_view
         else:
-            self.folder_view.setVisible(checked)
+            lib = self.folder_view
+        self._toggle_library_panel(lib, checked)
+
+    def _toggle_library_panel(self, lib_widget, show):
+        """Toggle library panel, taking/giving space from right panels."""
+        sizes = self.splitter.sizes()
+        lib_idx = self.splitter.indexOf(lib_widget)
+        # Collect visible right panels to steal from / give to
+        right_indices = []
+        for w in (self.album_view, self.lyrics_widget):
+            if w.isVisible():
+                right_indices.append(self.splitter.indexOf(w))
+        if show:
+            if right_indices:
+                # Take space proportionally from visible right panels
+                total_right = sum(sizes[i] for i in right_indices)
+                take = total_right // 2
+                # Distribute the reduction proportionally
+                for i in right_indices:
+                    share = int(take * sizes[i] / total_right) if total_right else 0
+                    sizes[i] -= share
+                sizes[lib_idx] = take
+            else:
+                # Fall back: take from player
+                player_idx = self.splitter.indexOf(self.player)
+                player_min = self.player.minimumSizeHint().width() or 200
+                available = max(0, sizes[player_idx] - player_min)
+                sizes[player_idx] -= available
+                sizes[lib_idx] = available
+            lib_widget.setVisible(True)
+            self.splitter.setSizes(sizes)
+        else:
+            freed = sizes[lib_idx]
+            if right_indices:
+                # Give space back to right panels proportionally
+                total_right = sum(sizes[i] for i in right_indices)
+                for i in right_indices:
+                    share = int(freed * sizes[i] / total_right) if total_right else freed // len(right_indices)
+                    sizes[i] += share
+            else:
+                sizes[self.splitter.indexOf(self.player)] += freed
+            sizes[lib_idx] = 0
+            lib_widget.setVisible(False)
+            self.splitter.setSizes(sizes)
 
     def _on_toggle_tracklist(self, checked):
         self._toggle_panel(self.album_view, checked)
@@ -936,30 +973,48 @@ class App(QMainWindow):
         idx = self.splitter.indexOf(widget)
         player_idx = self.splitter.indexOf(self.player)
         player_min = self.player.minimumSizeHint().width() or 200
+
+        # Determine if this is a right-side panel (tracklist or lyrics)
+        right_panels = {self.album_view, self.lyrics_widget}
+        is_right = widget in right_panels
+        other = (right_panels - {widget}).pop() if is_right else None
+        other_idx = self.splitter.indexOf(other) if other else None
+        other_visible = other.isVisible() if other else False
+
         if show:
-            # Give the panel as much space as possible from the player
-            available = max(0, sizes[player_idx] - player_min)
-            sizes[player_idx] -= available
-            sizes[idx] = available
+            if is_right and other_visible:
+                # Split the other right panel's space equally
+                total = sizes[other_idx]
+                half = total // 2
+                sizes[other_idx] = total - half
+                sizes[idx] = half
+            else:
+                # Take space from the player
+                available = max(0, sizes[player_idx] - player_min)
+                sizes[player_idx] -= available
+                sizes[idx] = available
             widget.setVisible(True)
             self.splitter.setSizes(sizes)
         else:
-            # Return the panel's space to the player
-            sizes[player_idx] += sizes[idx]
+            if is_right and other_visible:
+                # Give this panel's space to the other right panel
+                sizes[other_idx] += sizes[idx]
+            else:
+                # Return the panel's space to the player
+                sizes[player_idx] += sizes[idx]
             sizes[idx] = 0
             widget.setVisible(False)
             self.splitter.setSizes(sizes)
 
     def toggle_library(self):
         if self._mode == 'podcast':
-            vis = not self.podcast_view.isVisible()
-            self.podcast_view.setVisible(vis)
+            lib = self.podcast_view
         elif self._mode == 'radio':
-            vis = not self.radio_view.isVisible()
-            self.radio_view.setVisible(vis)
+            lib = self.radio_view
         else:
-            vis = not self.folder_view.isVisible()
-            self.folder_view.setVisible(vis)
+            lib = self.folder_view
+        vis = not lib.isVisible()
+        self._toggle_library_panel(lib, vis)
 
     def _on_album_changed(self, title):
         """Single handler for album changes — batches all updates."""
@@ -978,7 +1033,7 @@ class App(QMainWindow):
     def _show_tracklist(self):
         """Ensure the tracklist panel is visible."""
         if not self.album_view.isVisible():
-            self.album_view.setVisible(True)
+            self._toggle_panel(self.album_view, True)
             self.toggle_tracklist_btn.setChecked(True)
 
     def toggle_tracklist(self):
@@ -1239,7 +1294,7 @@ class App(QMainWindow):
                 font-family: {theme.FONT};
                 font-size: {fs + 12}pt;
                 font-weight: bold;
-                padding: 8px 20px;
+                padding: 8px 20px 20px 20px;
             }}
         """)
         if not self._max_lyrics:
@@ -1519,13 +1574,12 @@ class App(QMainWindow):
         p.next_track_button.pressed.connect(lambda: self._seek_relative(30))
         color = getattr(p, '_icon_color', 'black')
         hover_color = getattr(p, '_icon_hover_color', None)
-        from player import _svg_icon
         small_bold = f'font-size: {max(self.font_size - 3, 7)}pt; font-weight: bold;'
-        p.prev_track_button.setIcon(_svg_icon('fast_rewind', color, hover_color=hover_color))
+        p._set_btn_hover_icons(p.prev_track_button, 'fast_rewind', color, hover_color)
         p.prev_track_button.setText('30s')
         p.prev_track_button.setStyleSheet(small_bold)
         p.prev_track_button.setLayoutDirection(Qt.RightToLeft)
-        p.next_track_button.setIcon(_svg_icon('fast_forward', color, hover_color=hover_color))
+        p._set_btn_hover_icons(p.next_track_button, 'fast_forward', color, hover_color)
         p.next_track_button.setText('30s')
         p.next_track_button.setStyleSheet(small_bold)
         p.next_track_button.setLayoutDirection(Qt.LeftToRight)
