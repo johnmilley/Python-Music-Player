@@ -1,12 +1,15 @@
-certifi==2025.11.12
-idna==3.11
-just_playback==0.1.8
-mutagen==1.47.0
+# Core dependencies
 PyQt5==5.15.*
 PyQt5-Qt5==5.15.*
 PyQt5_sip==12.17.2
-requests==2.32.5
-tinytag==2.1.2
-urllib3==2.6.2
-dbus-fast==4.0.0; sys_platform == "linux"
+just_playback==0.1.8
+mutagen==1.47.0
+requests>=2.28.0
+certifi>=2023.0.0
+
+# Platform-specific
+dbus-fast>=4.0.0; sys_platform == "linux"
 pyobjc-framework-Cocoa>=10.0; sys_platform == "darwin"
+
+# Build
+pyinstaller>=6.0

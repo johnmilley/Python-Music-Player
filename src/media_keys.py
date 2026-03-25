@@ -261,12 +261,19 @@ class _MacMediaKeys:
     NX_KEYTYPE_PLAY = 16
     NX_KEYTYPE_NEXT = 17
     NX_KEYTYPE_PREVIOUS = 18
+    NX_KEYTYPE_FAST = 19
+    NX_KEYTYPE_REWIND = 20
 
     def __init__(self, signals):
         self.signals = signals
         from AppKit import NSEvent
-        self._monitor = NSEvent.addGlobalMonitorForEventsMatchingMask_handler_(
-            1 << 14, self._handle_event)
+        mask = 1 << 14  # NSEventMaskSystemDefined
+        # Global monitor: catches media keys when app is in background
+        self._global_monitor = NSEvent.addGlobalMonitorForEventsMatchingMask_handler_(
+            mask, self._handle_event)
+        # Local monitor: catches media keys when app has focus
+        self._local_monitor = NSEvent.addLocalMonitorForEventsMatchingMask_handler_(
+            mask, self._handle_local_event)
 
     def _handle_event(self, event):
         try:
@@ -279,21 +286,28 @@ class _MacMediaKeys:
                 return
             if key_code == self.NX_KEYTYPE_PLAY:
                 self.signals.play_pause.emit()
-            elif key_code == self.NX_KEYTYPE_NEXT:
+            elif key_code in (self.NX_KEYTYPE_NEXT, self.NX_KEYTYPE_FAST):
                 self.signals.next_track.emit()
-            elif key_code == self.NX_KEYTYPE_PREVIOUS:
+            elif key_code in (self.NX_KEYTYPE_PREVIOUS, self.NX_KEYTYPE_REWIND):
                 self.signals.prev_track.emit()
         except Exception:
             pass
 
+    def _handle_local_event(self, event):
+        """Local monitor handler — must return the event or None."""
+        self._handle_event(event)
+        return None  # consume the event so it doesn't also trigger other handlers
+
     def cleanup(self):
-        if self._monitor:
-            try:
-                from AppKit import NSEvent
-                NSEvent.removeMonitor_(self._monitor)
-            except Exception:
-                pass
-            self._monitor = None
+        from AppKit import NSEvent
+        for monitor in (self._global_monitor, self._local_monitor):
+            if monitor:
+                try:
+                    NSEvent.removeMonitor_(monitor)
+                except Exception:
+                    pass
+        self._global_monitor = None
+        self._local_monitor = None
 
 
 # ── Windows: low-level keyboard hook ────────────────────────────

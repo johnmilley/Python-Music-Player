@@ -13,7 +13,7 @@ python src/app.py
 ## Building
 
 ```bash
-pip install -r requirements-build.txt
+pip install -r requirements.txt
 pyinstaller lp.spec
 ```
 

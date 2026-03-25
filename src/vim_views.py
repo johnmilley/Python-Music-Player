@@ -3,7 +3,14 @@
 # Consumes letter keys to prevent default type-to-search
 
 from PyQt5.QtWidgets import QTreeView, QListWidget, QLineEdit
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QEvent
+
+# Keys that vim views handle directly — all others should pass through
+# to QShortcut via ShortcutOverride
+_VIM_TREE_KEYS = {Qt.Key_J, Qt.Key_K, Qt.Key_H, Qt.Key_L,
+                  Qt.Key_Escape, Qt.Key_Return, Qt.Key_Enter}
+_VIM_LIST_KEYS = {Qt.Key_J, Qt.Key_K,
+                  Qt.Key_Escape, Qt.Key_Return, Qt.Key_Enter}
 
 
 class VimTreeView(QTreeView):
@@ -15,6 +22,13 @@ class VimTreeView(QTreeView):
 
     def set_search_bar(self, search_bar):
         self._search_bar = search_bar
+
+    def event(self, event):
+        if event.type() == QEvent.ShortcutOverride:
+            if event.key() not in _VIM_TREE_KEYS:
+                event.ignore()
+                return False
+        return super().event(event)
 
     def keyPressEvent(self, event):
         key = event.key()
@@ -68,6 +82,13 @@ class VimListWidget(QListWidget):
 
     def set_search_bar(self, search_bar):
         self._search_bar = search_bar
+
+    def event(self, event):
+        if event.type() == QEvent.ShortcutOverride:
+            if event.key() not in _VIM_LIST_KEYS:
+                event.ignore()
+                return False
+        return super().event(event)
 
     def keyPressEvent(self, event):
         key = event.key()
