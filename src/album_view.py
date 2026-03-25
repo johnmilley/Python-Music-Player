@@ -146,11 +146,7 @@ class AlbumView(QWidget):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        # Debounce: only recalculate item sizes when width actually changes
-        new_w = self.width()
-        if new_w != getattr(self, '_last_width', -1):
-            self._last_width = new_w
-            self._update_item_sizes()
+        self._update_item_sizes()
 
     def _update_item_sizes(self):
         """Recalculate item sizes for text wrapping."""

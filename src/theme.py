@@ -160,7 +160,15 @@ def hover_menu_qss(t, fs=DEFAULT_FONT_SIZE):
     return f"""
         #toolbar {{
             background-color: {t['bg']};
-            border-top: 3px solid {t['accent']};
+        }}
+        #menu-bar {{
+            background-color: {t['accent']};
+        }}
+        #accent-bar {{
+            background-color: {t['accent']};
+        }}
+        #toggle-bar {{
+            background-color: {t['bg']};
         }}
         #panel-toggle, #mode-toggle {{
             background-color: transparent;
@@ -179,14 +187,11 @@ def hover_menu_qss(t, fs=DEFAULT_FONT_SIZE):
         }}
         #menu-button {{
             background-color: transparent;
-            color: {t['fg']};
             border: none;
             font-family: {FONT};
             font-size: {fs}pt;
-            padding: 4px 8px;
-        }}
-        #menu-button:hover {{
-            color: {t['accent']};
+            padding: 1px 6px 0px 6px;
+            margin: 0px;
         }}
         #menu-button::menu-indicator {{
             image: none;
