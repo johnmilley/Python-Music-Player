@@ -1,4 +1,10 @@
-# App contains Player, Album View, and FolderView widgets
+# App — main window orchestrator
+# Creates all widgets, wires signals between them, and manages:
+#   - Three display modes: music, podcast, radio (see _set_mode)
+#   - Two view modes: normal (splitter layout) and max (fullscreen art + lyrics)
+#   - Theming: light/dark with per-album accent colors
+#   - Keyboard shortcuts and media key handling
+#   - Session persistence (window state, playback position, settings)
 
 import sys
 from pathlib import Path
@@ -134,6 +140,16 @@ class ToolBar(QWidget):
 
 
 class App(QMainWindow):
+    """Main application window — owns all widgets and wires them together.
+
+    Layout (normal mode):
+        ToolBar
+        QSplitter: [left_panel | player | album_view | lyrics_widget]
+
+    Left panel swaps by mode: folder_view (music), podcast_view, radio_view.
+    Max mode replaces everything with fullscreen art + lyrics.
+    """
+
     def __init__(self, media_signals=None, media_backend=None):
         super().__init__()
         self._media_signals = media_signals
@@ -364,6 +380,8 @@ class App(QMainWindow):
         self._media_keys.signals.stop.connect(
             lambda: self.player.playback.stop() if self.player.playback.active else None)
 
+    # ── Theme & Styling ────────────────────────────────────────────
+
     def apply_theme(self, t):
         self.current_theme = t
         # Override accent/selection with user's chosen color
@@ -546,6 +564,8 @@ class App(QMainWindow):
         pixmap.fill(QColor(color))
         return QIcon(pixmap)
 
+    # ── Session Persistence ─────────────────────────────────────────
+
     def _restore_state(self):
         library_root = self.settings.value('library_root')
         if library_root:
@@ -609,6 +629,8 @@ class App(QMainWindow):
                 seek_pos = self.settings.value('last_seek_pos', 0.0, type=float)
                 self._pending_music_restore = {'track_pos': track_pos, 'seek_pos': seek_pos}
                 self.album_view.load_album_listing(last_album)
+
+    # ── Keyboard Shortcuts & Input ───────────────────────────────────
 
     def _shortcut_play_pause(self):
         if self._playing_mode == 'radio':
@@ -907,6 +929,8 @@ class App(QMainWindow):
         dialog.setLayout(layout)
         dialog.exec_()
 
+    # ── Panel Visibility & Layout ────────────────────────────────────
+
     def _on_toggle_library(self, checked):
         if self._mode == 'podcast':
             lib = self.podcast_view
@@ -1061,6 +1085,8 @@ class App(QMainWindow):
         QT.singleShot(0, lambda: self._set_max_art(self._max_art_pixmap)
                        if self._max_art and hasattr(self, '_max_art_pixmap') else None)
 
+    # ── Lyrics & Track Change Handling ─────────────────────────────
+
     def _on_track_changed(self, track):
         """Fetch lyrics when the track changes."""
         # Stop radio if music/podcast playback starts
@@ -1157,6 +1183,8 @@ class App(QMainWindow):
             self._pick_station_art()
         else:
             self.toggle_maxplayer()
+
+    # ── Max Mode (Fullscreen Art + Lyrics) ─────────────────────────
 
     def toggle_maxplayer(self):
         try:
@@ -1446,7 +1474,16 @@ class App(QMainWindow):
     def _update_radio_icon(self):
         pass
 
+    # ── Mode Switching (Music / Podcast / Radio) ────────────────────
+
     def _set_mode(self, mode):
+        """Switch between music, podcast, and radio modes.
+
+        Each mode swaps the left panel and adjusts player controls:
+        - music:   folder_view, prev/next track buttons
+        - podcast: podcast_view, ±30s seek buttons, episode download
+        - radio:   radio_view, play/pause only (no seek/skip)
+        """
         if mode == self._mode:
             # Same mode clicked again — toggle the library panel
             self.toggle_library()
