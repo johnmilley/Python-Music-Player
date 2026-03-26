@@ -1,0 +1,1139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>lp Music Player — Developer Guide</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<style>
+  :root {
+    --bg: #fafafa;
+    --fg: #1a1a1a;
+    --accent: #e8871e;
+    --border: #ddd;
+    --code-bg: #f0f0f0;
+    --sidebar-bg: #fff;
+    --sidebar-w: 260px;
+    --header-h: 60px;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1e1e1e;
+      --fg: #e0e0e0;
+      --accent: #e8871e;
+      --border: #444;
+      --code-bg: #2a2a2a;
+      --sidebar-bg: #252525;
+    }
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: var(--bg);
+    color: var(--fg);
+    line-height: 1.7;
+    font-size: 15px;
+  }
+
+  /* Header */
+  header {
+    position: fixed; top: 0; left: 0; right: 0;
+    height: var(--header-h);
+    background: var(--fg);
+    color: var(--bg);
+    display: flex; align-items: center;
+    padding: 0 24px;
+    z-index: 100;
+    border-bottom: 3px solid var(--accent);
+  }
+  header h1 { font-size: 20px; font-weight: 600; }
+  header h1 span { color: var(--accent); }
+  header .subtitle { margin-left: 16px; opacity: 0.6; font-size: 14px; }
+
+  /* Sidebar navigation */
+  nav {
+    position: fixed; top: var(--header-h); left: 0;
+    width: var(--sidebar-w);
+    height: calc(100vh - var(--header-h));
+    overflow-y: auto;
+    background: var(--sidebar-bg);
+    border-right: 1px solid var(--border);
+    padding: 20px 0;
+    z-index: 90;
+  }
+  nav a {
+    display: block;
+    padding: 6px 20px;
+    color: var(--fg);
+    text-decoration: none;
+    font-size: 14px;
+    border-left: 3px solid transparent;
+    transition: all 0.15s;
+  }
+  nav a:hover, nav a.active {
+    color: var(--accent);
+    border-left-color: var(--accent);
+    background: var(--code-bg);
+  }
+  nav .nav-section {
+    padding: 12px 20px 4px;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--accent);
+    font-weight: 700;
+  }
+
+  /* Main content */
+  main {
+    margin-left: var(--sidebar-w);
+    margin-top: var(--header-h);
+    max-width: 900px;
+    padding: 40px 48px 80px;
+  }
+
+  h2 {
+    font-size: 28px; font-weight: 700;
+    margin: 48px 0 16px;
+    padding-bottom: 8px;
+    border-bottom: 2px solid var(--accent);
+    scroll-margin-top: 80px;
+  }
+  h3 {
+    font-size: 20px; font-weight: 600;
+    margin: 32px 0 12px;
+    color: var(--accent);
+    scroll-margin-top: 80px;
+  }
+  h4 {
+    font-size: 16px; font-weight: 600;
+    margin: 24px 0 8px;
+    scroll-margin-top: 80px;
+  }
+
+  p { margin: 12px 0; }
+
+  code {
+    font-family: 'Consolas', 'Cascadia Mono', 'DejaVu Sans Mono', monospace;
+    background: var(--code-bg);
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-size: 13px;
+  }
+
+  pre {
+    background: var(--code-bg);
+    padding: 16px 20px;
+    border-radius: 6px;
+    overflow-x: auto;
+    margin: 16px 0;
+    border-left: 3px solid var(--accent);
+  }
+  pre code { background: none; padding: 0; font-size: 13px; }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 16px 0;
+    font-size: 14px;
+  }
+  th, td {
+    padding: 10px 14px;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+  }
+  th {
+    background: var(--code-bg);
+    font-weight: 600;
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  /* Mermaid diagrams */
+  .mermaid {
+    margin: 24px 0;
+    text-align: center;
+  }
+
+  /* Callout boxes */
+  .callout {
+    border-left: 4px solid var(--accent);
+    background: var(--code-bg);
+    padding: 16px 20px;
+    margin: 20px 0;
+    border-radius: 0 6px 6px 0;
+  }
+  .callout strong { color: var(--accent); }
+
+  .file-ref {
+    color: var(--accent);
+    font-family: monospace;
+    font-size: 13px;
+  }
+
+  ul, ol { margin: 12px 0; padding-left: 24px; }
+  li { margin: 4px 0; }
+
+  /* Responsive */
+  @media (max-width: 900px) {
+    nav { display: none; }
+    main { margin-left: 0; padding: 24px; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1><span>lp</span> Music Player</h1>
+  <span class="subtitle">Developer Guide &amp; Architecture Reference</span>
+</header>
+
+<nav>
+  <div class="nav-section">Overview</div>
+  <a href="#introduction">Introduction</a>
+  <a href="#quick-start">Quick Start</a>
+  <a href="#project-structure">Project Structure</a>
+
+  <div class="nav-section">Architecture</div>
+  <a href="#high-level-architecture">High-Level Architecture</a>
+  <a href="#widget-ownership">Widget Ownership</a>
+  <a href="#signal-map">Signal & Event Map</a>
+  <a href="#data-flow">Data Flow</a>
+
+  <div class="nav-section">How-To Guides</div>
+  <a href="#changing-the-ui">Changing the UI</a>
+  <a href="#modifying-pane-behavior">Modifying Pane Behavior</a>
+  <a href="#display-modes">Display Modes</a>
+  <a href="#theming-system">Theming System</a>
+  <a href="#adding-a-new-mode">Adding a New Mode</a>
+  <a href="#keyboard-shortcuts">Keyboard Shortcuts</a>
+
+  <div class="nav-section">Reference</div>
+  <a href="#file-reference">File-by-File Reference</a>
+  <a href="#external-apis">External APIs</a>
+  <a href="#threading-model">Threading Model</a>
+  <a href="#settings-persistence">Settings & Persistence</a>
+</nav>
+
+<main>
+
+<!-- ============================================================ -->
+<h2 id="introduction">Introduction</h2>
+
+<p>
+  <strong>lp</strong> is a PyQt5 desktop music player that also supports podcasts and internet radio.
+  It is designed as a teaching example for a Python II course — the codebase is intentionally
+  flat (all source in <code>src/</code>, no subpackages) and favors explicit wiring over
+  abstraction layers.
+</p>
+
+<p>This guide is written for a software development instructor or experienced developer who needs
+to quickly understand <em>where things are</em> and <em>how they connect</em>. It follows
+the principles from UC Berkeley's guide on writing good documentation: lead with purpose,
+use visuals to explain structure, provide concrete "how-to" paths, and keep reference material
+scannable.</p>
+
+<div class="callout">
+  <strong>Audience:</strong> You already know Python and Qt basics.
+  This doc focuses on <em>this codebase's</em> specific patterns, not general Qt tutorials.
+</div>
+
+<!-- ============================================================ -->
+<h2 id="quick-start">Quick Start</h2>
+
+<pre><code># Activate venv and run
+source venv/bin/activate
+python src/app.py
+
+# Build a standalone binary
+pip install -r requirements.txt
+pyinstaller lp.spec</code></pre>
+
+<p>CI builds are triggered by pushing a <code>v*</code> tag. Builds run on Linux (ubuntu-22.04), macOS, and Windows using Python 3.12.</p>
+
+<!-- ============================================================ -->
+<h2 id="project-structure">Project Structure</h2>
+
+<pre><code>src/
+  app.py              # Main window orchestrator (2000+ lines)
+  player.py           # Playback controls + album art display
+  album_view.py       # Tracklist panel (QListWidget)
+  folder_view.py      # Filesystem browser (QTreeView)
+  album.py            # Folder → Track[] parser (mutagen)
+  track.py            # Track data class
+  theme.py            # Color tokens + QSS generators
+  lyrics_widget.py    # Lyrics display with synced scrolling
+  lyrics_fetcher.py   # LRCLIB API background fetcher
+  vim_views.py        # j/k/h/l navigation for tree + list
+  progress_bar.py     # Click-to-seek progress bar
+  marquee_label.py    # Scrolling text label (Winamp-style)
+  color_extract.py    # Album art → accent color
+  artwork_finder.py   # iTunes artwork search dialog
+  music_icon_provider.py  # Hides folder icons
+  media_keys.py       # Cross-platform media key support
+  podcast_view.py     # Podcast feed browser
+  podcast_feed.py     # RSS parser + download threads
+  podcast_search.py   # iTunes podcast search dialog
+  radio_view.py       # Radio station browser
+  radio_player.py     # QMediaPlayer / subprocess streaming
+  radio_search.py     # Radio Browser API search
+  radio_station.py    # RadioStation data class</code></pre>
+
+<!-- ============================================================ -->
+<h2 id="high-level-architecture">High-Level Architecture</h2>
+
+<p>The application follows a <strong>hub-and-spoke</strong> pattern: <code>App</code> (the hub)
+creates every widget and wires them together. Widgets don't know about each other except
+through references that <code>App</code> assigns.</p>
+
+<div class="mermaid">
+graph TB
+    subgraph "App (QMainWindow)"
+        direction TB
+        TOOLBAR["ToolBar<br/><small>mode buttons + menus</small>"]
+        SPLITTER["QSplitter (horizontal)"]
+    end
+
+    subgraph "Left Panel (swaps by mode)"
+        FV["FolderView<br/><small>music mode</small>"]
+        PV["PodcastView<br/><small>podcast mode</small>"]
+        RV["RadioView<br/><small>radio mode</small>"]
+    end
+
+    subgraph "Center"
+        PLAYER["Player<br/><small>art + controls</small>"]
+    end
+
+    subgraph "Right Panels"
+        AV["AlbumView<br/><small>tracklist</small>"]
+        LW["LyricsWidget<br/><small>synced lyrics</small>"]
+    end
+
+    SPLITTER --> FV
+    SPLITTER --> PV
+    SPLITTER --> RV
+    SPLITTER --> PLAYER
+    SPLITTER --> AV
+    SPLITTER --> LW
+
+    style TOOLBAR fill:#e8871e,color:#000,stroke:none
+    style SPLITTER fill:#2a2a2a,color:#e0e0e0,stroke:#555
+    style PLAYER fill:#1e1e1e,color:#e0e0e0,stroke:#555
+</div>
+
+<h3>Normal Mode Layout</h3>
+<pre><code>┌─ ToolBar ──────────────────────────────────────────────────────────┐
+│ [Preferences] [Theme] [Help]     [MUSIC] [PODCASTS] [RADIO]  [4][5] │
+├──────────────┬──────────────┬──────────────┬──────────────────────┤
+│ left panel   │   Player     │  AlbumView   │  LyricsWidget        │
+│ (folder_view │   (album art │  (tracklist) │  (synced lyrics      │
+│  or podcast  │   + controls)│              │   or description)    │
+│  or radio)   │              │              │                      │
+└──────────────┴──────────────┴──────────────┴──────────────────────┘</code></pre>
+
+<h3>Max Mode Layout (Shift+M)</h3>
+<pre><code>┌─ accent divider ──────────────────────────────────────────────────┐
+│                          │                                        │
+│     Large Album Art      │   Track Title                          │
+│     (click to exit)      │   ────────────                         │
+│                          │   Synced lyrics (large font)           │
+│                          │   with highlighted current line        │
+│                          │                                        │
+└──────────────────────────┴────────────────────────────────────────┘</code></pre>
+
+<!-- ============================================================ -->
+<h2 id="widget-ownership">Widget Ownership</h2>
+
+<p><code>App.__init__</code> creates every widget and assigns cross-references. This is the single place
+to understand "who owns what":</p>
+
+<div class="mermaid">
+graph LR
+    APP["App<br/><small>app.py:148</small>"]
+
+    APP -->|creates| PLAYER["Player<br/><small>app.py:158</small>"]
+    APP -->|creates| AV["AlbumView<br/><small>app.py:159</small>"]
+    APP -->|creates| LW["LyricsWidget<br/><small>app.py:160</small>"]
+    APP -->|creates| FV["FolderView<br/><small>app.py:161</small>"]
+    APP -->|creates| PV["PodcastView<br/><small>app.py:162</small>"]
+    APP -->|creates| RV["RadioView<br/><small>app.py:163</small>"]
+    APP -->|creates| RP["RadioPlayer<br/><small>app.py:164</small>"]
+
+    APP -.->|"player.album_view = album_view"| PLAYER
+    APP -.->|"player.folder_view = folder_view"| PLAYER
+    APP -.->|"album_view.player = player"| AV
+    APP -.->|"folder_view(album_view)"| FV
+
+    style APP fill:#e8871e,color:#000
+</div>
+
+<div class="callout">
+  <strong>Key coupling pattern:</strong> Widgets reference each other directly (not just through signals).
+  For example, <code>Player.album_view</code> is set by App so Player can update the tracklist
+  highlight. This is intentional — it keeps the code simple at the cost of tight coupling.
+  See <span class="file-ref">app.py:180-183</span>.
+</div>
+
+<!-- ============================================================ -->
+<h2 id="signal-map">Signal & Event Map</h2>
+
+<p>This diagram shows the major signal connections. Solid arrows are Qt signals;
+dashed arrows are direct method calls.</p>
+
+<div class="mermaid">
+graph TD
+    subgraph "User Actions"
+        CLICK_FOLDER["Click folder"]
+        CLICK_TRACK["Click track"]
+        CLICK_ART["Click album art"]
+        MEDIA_KEY["Media key press"]
+    end
+
+    subgraph "Signals"
+        FV_CLICK["FolderView.on_item_clicked"]
+        AV_CLICK["AlbumView.set_current_track"]
+        P_TRACK_CHANGED["Player.track_changed"]
+        P_TRACK_FINISHED["Player.track_finished"]
+        P_ART_CLICKED["Player.art_clicked"]
+        AV_ALBUM_CHANGED["AlbumView.album_changed"]
+    end
+
+    subgraph "App Handlers"
+        ON_TRACK["App._on_track_changed<br/><small>fetch lyrics, update accent</small>"]
+        ON_ALBUM["App._on_album_changed<br/><small>update title, show tracklist</small>"]
+        ON_ART["App._on_art_clicked<br/><small>max mode or art picker</small>"]
+        MK_HANDLER["MediaKeyHandler"]
+    end
+
+    CLICK_FOLDER --> FV_CLICK
+    FV_CLICK -.->|"album_view.load_album_listing()"| AV_ALBUM_CHANGED
+    CLICK_TRACK --> AV_CLICK
+    AV_CLICK -.->|"player.play()"| P_TRACK_CHANGED
+    P_TRACK_CHANGED --> ON_TRACK
+    AV_ALBUM_CHANGED --> ON_ALBUM
+    CLICK_ART --> P_ART_CLICKED
+    P_ART_CLICKED --> ON_ART
+    MEDIA_KEY --> MK_HANDLER
+    P_TRACK_FINISHED -.->|"player.next_track()"| P_TRACK_CHANGED
+</div>
+
+<h3>Complete Signal Connection List</h3>
+
+<table>
+  <tr><th>Signal</th><th>Connected To</th><th>Location</th></tr>
+  <tr>
+    <td><code>player.track_changed</code></td>
+    <td><code>App._on_track_changed</code></td>
+    <td><span class="file-ref">app.py:198</span></td>
+  </tr>
+  <tr>
+    <td><code>player.timer.timeout</code></td>
+    <td><code>App._update_lyrics_position</code></td>
+    <td><span class="file-ref">app.py:199</span></td>
+  </tr>
+  <tr>
+    <td><code>player.art_clicked</code></td>
+    <td><code>App._on_art_clicked</code></td>
+    <td><span class="file-ref">app.py:200</span></td>
+  </tr>
+  <tr>
+    <td><code>album_view.album_changed</code></td>
+    <td><code>App._on_album_changed</code></td>
+    <td><span class="file-ref">app.py:345</span></td>
+  </tr>
+  <tr>
+    <td><code>podcast_view.feed_selected</code></td>
+    <td><code>App._on_podcast_feed_selected</code></td>
+    <td><span class="file-ref">app.py:186</span></td>
+  </tr>
+  <tr>
+    <td><code>radio_view.station_selected</code></td>
+    <td><code>App._on_station_selected</code></td>
+    <td><span class="file-ref">app.py:189</span></td>
+  </tr>
+  <tr>
+    <td><code>radio_player.metadata_changed</code></td>
+    <td><code>App._on_radio_metadata</code></td>
+    <td><span class="file-ref">app.py:192</span></td>
+  </tr>
+  <tr>
+    <td><code>lyrics_widget.seek_requested</code></td>
+    <td><code>App._on_lyrics_seek</code></td>
+    <td><span class="file-ref">app.py:359</span></td>
+  </tr>
+  <tr>
+    <td><code>progress_bar.seek_requested</code></td>
+    <td><code>Player.seek_to</code></td>
+    <td><span class="file-ref">player.py:150</span></td>
+  </tr>
+  <tr>
+    <td><code>progress_bar.start_playback</code></td>
+    <td><code>Player.resume</code></td>
+    <td><span class="file-ref">player.py:151</span></td>
+  </tr>
+  <tr>
+    <td><code>media_keys.play_pause</code></td>
+    <td><code>App._shortcut_play_pause</code></td>
+    <td><span class="file-ref">app.py:373</span></td>
+  </tr>
+  <tr>
+    <td><code>QApplication.focusChanged</code></td>
+    <td><code>App._on_focus_changed</code></td>
+    <td><span class="file-ref">app.py:362</span></td>
+  </tr>
+</table>
+
+<!-- ============================================================ -->
+<h2 id="data-flow">Data Flow</h2>
+
+<h3>Playing a Local Album</h3>
+
+<div class="mermaid">
+sequenceDiagram
+    participant User
+    participant FolderView
+    participant AlbumView
+    participant Album
+    participant Player
+    participant Playback as just_playback
+    participant LyricsFetcher
+    participant LyricsWidget
+
+    User->>FolderView: Click folder
+    FolderView->>AlbumView: load_album_listing(path)
+    AlbumView->>Album: Album(path) [in QThread]
+    Album-->>AlbumView: tracklist[]
+    AlbumView-->>AlbumView: Populate list items
+    AlbumView->>Player: player.album = album
+    AlbumView->>Player: player.load_album_art()
+    User->>AlbumView: Click track
+    AlbumView->>Player: player.play(album, track_pos)
+    Player->>Playback: load_file() → play()
+    Player-->>App: track_changed signal
+    App->>LyricsFetcher: fetch(artist, title)
+    LyricsFetcher-->>App: lyrics_ready signal
+    App->>LyricsWidget: set_lyrics(text)
+</div>
+
+<h3>Playing a Podcast Episode</h3>
+
+<div class="mermaid">
+sequenceDiagram
+    participant User
+    participant PodcastView
+    participant App
+    participant AlbumView
+    participant Player
+    participant DownloadThread
+
+    User->>PodcastView: Click feed
+    PodcastView-->>App: feed_selected signal
+    App->>AlbumView: Populate episode list
+    User->>AlbumView: Click episode
+    AlbumView-->>App: _on_episode_clicked
+    alt Episode not downloaded
+        App->>DownloadThread: Download audio
+        DownloadThread-->>App: finished(path)
+    end
+    App->>Player: Direct play (load_file + play)
+    App->>App: _apply_controls_for_mode('podcast')
+    Note over Player: Prev/Next become -30s/+30s
+</div>
+
+<h3>Streaming Radio</h3>
+
+<div class="mermaid">
+sequenceDiagram
+    participant User
+    participant RadioView
+    participant App
+    participant RadioPlayer
+    participant Player as Player (UI only)
+
+    User->>RadioView: Click station
+    RadioView-->>App: station_selected signal
+    App->>App: Stop music/podcast playback
+    App->>RadioPlayer: play_stream(url)
+    App->>Player: Update art + title display
+    App->>App: _apply_controls_for_mode('radio')
+    Note over Player: Only play/pause button visible
+    RadioPlayer-->>App: metadata_changed (now playing)
+    App->>Player: Update track_info label
+</div>
+
+<!-- ============================================================ -->
+<h2 id="changing-the-ui">Changing the UI</h2>
+
+<p>Here's exactly where to go for each kind of UI change:</p>
+
+<h3>Layout & Panel Structure</h3>
+
+<table>
+  <tr><th>What to Change</th><th>Where</th><th>Key Lines</th></tr>
+  <tr>
+    <td>Main splitter layout (add/remove/reorder panels)</td>
+    <td><span class="file-ref">app.py</span></td>
+    <td>Lines 211-232: splitter setup, addWidget calls, stretch factors</td>
+  </tr>
+  <tr>
+    <td>Toolbar buttons and menus</td>
+    <td><span class="file-ref">app.py</span></td>
+    <td>Lines 248-333: ToolBar setup, mode buttons, toggle buttons</td>
+  </tr>
+  <tr>
+    <td>Player controls layout (buttons, progress bar)</td>
+    <td><span class="file-ref">player.py</span></td>
+    <td>Lines 87-225: <code>build_gui()</code> — creates all sub-widgets</td>
+  </tr>
+  <tr>
+    <td>Album art sizing and aspect ratio</td>
+    <td><span class="file-ref">player.py</span></td>
+    <td>Lines 465-524: <code>resizeEvent()</code> — calculates art + controls sizing</td>
+  </tr>
+  <tr>
+    <td>Tracklist item appearance (wrapping, padding)</td>
+    <td><span class="file-ref">album_view.py</span></td>
+    <td>Lines 32-109: <code>WrapIndentDelegate</code></td>
+  </tr>
+  <tr>
+    <td>Folder tree appearance (icons, indentation)</td>
+    <td><span class="file-ref">folder_view.py</span></td>
+    <td>Lines 32-64: tree model, columns, indentation</td>
+  </tr>
+  <tr>
+    <td>Lyrics text layout and scroll behavior</td>
+    <td><span class="file-ref">lyrics_widget.py</span></td>
+    <td>Lines 123-206: <code>_render_synced()</code> + <code>_scroll_to_line()</code></td>
+  </tr>
+  <tr>
+    <td>Max mode layout (fullscreen art + lyrics)</td>
+    <td><span class="file-ref">app.py</span></td>
+    <td>Lines 1123-1216: <code>enter_maxplayer()</code></td>
+  </tr>
+</table>
+
+<h3>Adding a New Widget to the Main Layout</h3>
+
+<ol>
+  <li>Create the widget class in a new <code>src/your_widget.py</code></li>
+  <li>Import and instantiate it in <code>App.__init__</code> (around line 158)</li>
+  <li>Add it to the splitter: <code>self.splitter.addWidget(self.your_widget)</code> (around line 214)</li>
+  <li>Set stretch factor and collapsible: <code>self.splitter.setStretchFactor(N, weight)</code></li>
+  <li>Add a toggle button if needed (follow the pattern at lines 309-327)</li>
+  <li>Add QSS styling in <code>theme.py</code> — add a new <code>your_widget_qss(t, fs)</code> function</li>
+  <li>Call your QSS function from <code>App.apply_theme()</code></li>
+</ol>
+
+<!-- ============================================================ -->
+<h2 id="modifying-pane-behavior">Modifying Pane Behavior</h2>
+
+<h3>How Panes Connect to Modes</h3>
+
+<div class="mermaid">
+stateDiagram-v2
+    [*] --> Music
+    Music --> Podcast: _set_mode('podcast')
+    Music --> Radio: _set_mode('radio')
+    Podcast --> Music: _set_mode('music')
+    Podcast --> Radio: _set_mode('radio')
+    Radio --> Music: _set_mode('music')
+    Radio --> Podcast: _set_mode('podcast')
+
+    state Music {
+        [*] --> FolderView_visible
+        note right of FolderView_visible: Left panel: FolderView\nControls: prev/next track
+    }
+
+    state Podcast {
+        [*] --> PodcastView_visible
+        note right of PodcastView_visible: Left panel: PodcastView\nControls: -30s/+30s\nTracklist: episodes
+    }
+
+    state Radio {
+        [*] --> RadioView_visible
+        note right of RadioView_visible: Left panel: RadioView\nControls: play/pause only\nNo tracklist
+    }
+</div>
+
+<h3>Panel Toggle System</h3>
+
+<p>Each panel's visibility is managed through a consistent pattern:</p>
+
+<ol>
+  <li><strong>Toggle button</strong> in the toolbar (e.g., <code>toggle_tracklist_btn</code>)</li>
+  <li><strong>Toggle method</strong> that calls <code>_toggle_panel(widget, show)</code> — see <span class="file-ref">app.py:939-957</span></li>
+  <li><strong>Space redistribution</strong>: when hiding a panel, its space goes to the Player;
+      when showing, space is taken from the Player. This prevents jarring layout jumps.</li>
+</ol>
+
+<div class="callout">
+  <strong>Important:</strong> <code>_toggle_panel()</code> manipulates splitter sizes directly,
+  not just visibility. If you just call <code>widget.setVisible(False)</code>, the panel
+  collapses but leaves dead space. Always use <code>_toggle_panel()</code> or follow its pattern.
+</div>
+
+<h3>Changing Pane Behavior by Mode</h3>
+
+<p>When a mode switch happens (<code>_set_mode</code> at <span class="file-ref">app.py:1404</span>), three things change:</p>
+
+<table>
+  <tr><th>Aspect</th><th>What Changes</th><th>Where</th></tr>
+  <tr>
+    <td>Left panel</td>
+    <td>Hide all three left panels, show the one for the new mode</td>
+    <td><span class="file-ref">app.py:1424-1465</span></td>
+  </tr>
+  <tr>
+    <td>Player controls</td>
+    <td><code>_apply_controls_for_mode()</code> swaps prev/next button behavior</td>
+    <td><span class="file-ref">app.py:1508-1608</span></td>
+  </tr>
+  <tr>
+    <td>Tracklist content</td>
+    <td>Podcast: disconnect music click, connect episode click handler</td>
+    <td><span class="file-ref">app.py:1749-1770</span></td>
+  </tr>
+</table>
+
+<h3>Focus and Selection Highlighting</h3>
+
+<p>The folder view and tracklist use <strong>focus-aware styling</strong>: the selection highlight
+color changes depending on which pane has keyboard focus. This is implemented by:</p>
+
+<ol>
+  <li><code>QApplication.focusChanged</code> signal → <code>App._on_focus_changed</code></li>
+  <li>Which calls <code>_apply_pane_styles()</code> — regenerates QSS with <code>focused=True/False</code></li>
+  <li>The QSS functions <code>folder_view_qss()</code> and <code>album_view_qss()</code> accept a <code>focused</code> parameter</li>
+</ol>
+
+<p>See <span class="file-ref">theme.py:317-379</span> for the focused/unfocused QSS differences.</p>
+
+<!-- ============================================================ -->
+<h2 id="display-modes">Display Modes</h2>
+
+<h3>Normal Mode</h3>
+<p>The default three-panel splitter layout. All panels are resizable by dragging splitter handles.
+Panel visibility is toggled with toolbar buttons or keyboard shortcuts (4/5).</p>
+
+<h3>Max Mode (Fullscreen)</h3>
+
+<p>Activated by <code>Shift+M</code> or clicking album art. Implemented in:</p>
+
+<ul>
+  <li><code>enter_maxplayer()</code> — <span class="file-ref">app.py:1123</span>: saves state, hides splitter/toolbar, builds fullscreen widget</li>
+  <li><code>exit_maxplayer()</code> — <span class="file-ref">app.py:1350</span>: destroys max widget, restores saved state</li>
+  <li><code>_style_max_mode()</code> — <span class="file-ref">app.py:1223</span>: applies theme with larger font sizes</li>
+</ul>
+
+<div class="mermaid">
+graph LR
+    NORMAL["Normal Mode<br/><small>splitter layout</small>"]
+    MAX["Max Mode<br/><small>fullscreen art + lyrics</small>"]
+
+    NORMAL -->|"Shift+M / click art"| MAX
+    MAX -->|"Shift+M / click art / Escape"| NORMAL
+
+    subgraph "State Saved on Enter"
+        G["window geometry"]
+        S["splitter sizes"]
+        P["panel visibility"]
+    end
+</div>
+
+<p><strong>Max mode creates a separate LyricsWidget instance</strong> (<code>self._max_lyrics</code>) with
+larger font sizes. When lyrics change in normal mode, they're copied to the max widget via
+<code>_copy_lyrics_to_max()</code>. The max lyrics widget also receives position updates for
+synced scrolling via the player timer.</p>
+
+<!-- ============================================================ -->
+<h2 id="theming-system">Theming System</h2>
+
+<h3>How Themes Work</h3>
+
+<div class="mermaid">
+graph LR
+    TOKENS["Theme Dict<br/><small>bg, fg, accent, ...</small>"]
+    QSS_FN["QSS Generator<br/><small>theme.player_qss(t, fs)</small>"]
+    STYLESHEET["Qt Stylesheet<br/><small>CSS-like string</small>"]
+    WIDGET["Widget.setStyleSheet()"]
+
+    TOKENS --> QSS_FN --> STYLESHEET --> WIDGET
+</div>
+
+<p>Themes are plain Python dicts with color tokens. See <span class="file-ref">theme.py:6-32</span>.</p>
+
+<table>
+  <tr><th>Token</th><th>Purpose</th></tr>
+  <tr><td><code>bg</code></td><td>Main background</td></tr>
+  <tr><td><code>bg_alt</code></td><td>Alternate background (search bars, inputs)</td></tr>
+  <tr><td><code>fg</code></td><td>Primary text color</td></tr>
+  <tr><td><code>border</code></td><td>Border color</td></tr>
+  <tr><td><code>accent</code></td><td>Accent / highlight color (overridden per-album)</td></tr>
+  <tr><td><code>selection</code></td><td>Selection background (= accent)</td></tr>
+  <tr><td><code>selection_text</code></td><td>Text color on selections (auto: black or white)</td></tr>
+  <tr><td><code>btn_bg</code></td><td>Button background</td></tr>
+  <tr><td><code>btn_hover</code></td><td>Button hover background</td></tr>
+  <tr><td><code>grip</code></td><td>Dim elements, scrollbar grip</td></tr>
+</table>
+
+<h3>QSS Generator Functions</h3>
+
+<p>Each widget area has its own QSS function in <code>theme.py</code>:</p>
+
+<table>
+  <tr><th>Function</th><th>Styles</th><th>Line</th></tr>
+  <tr><td><code>app_qss(t, fs)</code></td><td>Main window, splitter handles, scrollbars</td><td>63</td></tr>
+  <tr><td><code>player_qss(t, fs)</code></td><td>Player container, buttons, progress bar</td><td>95</td></tr>
+  <tr><td><code>folder_view_qss(t, fs, focused)</code></td><td>Tree view, items, search bar</td><td>317</td></tr>
+  <tr><td><code>album_view_qss(t, fs, focused)</code></td><td>Track list, items, search bar</td><td>352</td></tr>
+  <tr><td><code>lyrics_qss(t, fs)</code></td><td>Lyrics scroll area and text</td><td>381</td></tr>
+  <tr><td><code>hover_menu_qss(t, fs)</code></td><td>Toolbar, menus, toggle buttons</td><td>159</td></tr>
+  <tr><td><code>podcast_view_qss(t, fs)</code></td><td>Podcast list and inputs</td><td>231</td></tr>
+  <tr><td><code>radio_view_qss(t, fs)</code></td><td>Radio station list and inputs</td><td>274</td></tr>
+</table>
+
+<h3>Accent Color Pipeline</h3>
+
+<div class="mermaid">
+graph TD
+    ART["Album art loaded"]
+    EXTRACT["PaletteExtractThread<br/><small>color_extract.py</small>"]
+    PALETTE["Color palette (5 colors)"]
+    READABLE["most_readable()<br/><small>WCAG contrast check</small>"]
+    ACCENT["accent_color"]
+    CONTRAST["ensure_contrast()<br/><small>adjust if needed</small>"]
+    THEME["apply_theme()"]
+
+    ART --> EXTRACT --> PALETTE --> READABLE --> ACCENT
+    ACCENT --> CONTRAST --> THEME
+
+    style EXTRACT fill:#2a2a2a,color:#e0e0e0,stroke:#555
+</div>
+
+<p>When "Accent Match" is enabled (Theme menu), the accent color automatically
+adapts to each album's cover art. The pipeline:</p>
+
+<ol>
+  <li>Album art loaded → <code>_update_accent_for_album()</code></li>
+  <li>Background thread extracts palette from cover image</li>
+  <li><code>most_readable()</code> picks the color with best contrast against both light and dark backgrounds</li>
+  <li><code>ensure_contrast()</code> adjusts if the chosen color fails WCAG 3:1 against the current theme background</li>
+  <li>Per-album accent choices are saved in <code>_album_accents</code> dict and persisted to QSettings</li>
+</ol>
+
+<h3>How to Change Theme Colors</h3>
+
+<ol>
+  <li>Edit the <code>LIGHT</code> or <code>DARK</code> dict in <span class="file-ref">theme.py:6-32</span></li>
+  <li>If adding a new token, use it in the relevant QSS function(s)</li>
+  <li>The QSS functions are called from <code>App.apply_theme()</code> — see <span class="file-ref">app.py:379-402</span></li>
+  <li>Font is resolved at startup (<code>resolve_font()</code>) and stored as <code>theme.FONT</code></li>
+</ol>
+
+<!-- ============================================================ -->
+<h2 id="adding-a-new-mode">Adding a New Mode</h2>
+
+<p>To add a fourth mode (e.g., "audiobook"):</p>
+
+<ol>
+  <li><strong>Create the left panel widget</strong> — follow <code>radio_view.py</code> as a template. Emit a signal when the user selects something.</li>
+  <li><strong>Create a data class</strong> — mimic <code>Album</code>/<code>Track</code> interface: needs <code>tracklist</code>, <code>path</code>, <code>art</code>, <code>title</code>, <code>artist</code>. Each item needs <code>title</code>, <code>length</code>, <code>path</code>, <code>length_to_string()</code>.</li>
+  <li><strong>Register in App.__init__:</strong>
+    <ul>
+      <li>Create the widget and add to splitter (hidden by default)</li>
+      <li>Connect its selection signal</li>
+      <li>Add a mode toggle button</li>
+    </ul>
+  </li>
+  <li><strong>Add to <code>_set_mode()</code>:</strong> handle showing/hiding the new panel</li>
+  <li><strong>Add to <code>_apply_controls_for_mode()</code>:</strong> configure player buttons for the new mode</li>
+  <li><strong>Add QSS function in theme.py</strong> and call from <code>apply_theme()</code></li>
+  <li><strong>Add save/restore</strong> in <code>closeEvent()</code> and <code>_restore_state()</code></li>
+</ol>
+
+<!-- ============================================================ -->
+<h2 id="keyboard-shortcuts">Keyboard Shortcuts</h2>
+
+<p>All shortcuts are defined in <code>_setup_shortcuts()</code> at <span class="file-ref">app.py:657-691</span>.</p>
+
+<table>
+  <tr><th>Key</th><th>Action</th><th>Handler</th></tr>
+  <tr><td><code>p</code></td><td>Play/Pause</td><td><code>_shortcut_play_pause</code></td></tr>
+  <tr><td><code>&gt;</code> / <code>&lt;</code></td><td>Next/Prev track (or +/-30s in podcast)</td><td><code>_shortcut_next/_prev</code></td></tr>
+  <tr><td><code>f</code> / <code>b</code></td><td>Seek forward/back 5s</td><td><code>_shortcut_seek_forward/_back</code></td></tr>
+  <tr><td><code>.</code> / <code>,</code></td><td>Volume up/down 5%</td><td><code>_adjust_volume</code></td></tr>
+  <tr><td><code>1</code> / <code>2</code> / <code>3</code></td><td>Music / Podcast / Radio mode</td><td><code>_set_mode</code></td></tr>
+  <tr><td><code>4</code> / <code>5</code></td><td>Toggle tracklist / lyrics</td><td><code>_toggle_and_focus_tracklist</code> / <code>toggle_lyrics</code></td></tr>
+  <tr><td><code>/</code></td><td>Open search bar in focused pane</td><td><code>_open_search</code></td></tr>
+  <tr><td><code>Tab</code></td><td>Cycle focus between panes</td><td><code>_cycle_pane_focus</code> (via eventFilter)</td></tr>
+  <tr><td><code>j/k</code></td><td>Navigate down/up</td><td>VimTreeView / VimListWidget</td></tr>
+  <tr><td><code>h/l</code></td><td>Collapse/expand (tree) or switch pane (list)</td><td>VimTreeView + App.eventFilter</td></tr>
+  <tr><td><code>Shift+M</code></td><td>Toggle max mode</td><td><code>toggle_maxplayer</code></td></tr>
+  <tr><td><code>Shift+D</code></td><td>Toggle dark/light</td><td><code>toggle_theme</code></td></tr>
+  <tr><td><code>Ctrl++/-</code></td><td>Font size up/down</td><td><code>_step_font_size</code></td></tr>
+  <tr><td><code>q</code></td><td>Quit</td><td><code>close</code></td></tr>
+  <tr><td><code>?</code></td><td>Show shortcuts dialog</td><td><code>show_help</code></td></tr>
+</table>
+
+<div class="callout">
+  <strong>Shortcut suppression:</strong> All QShortcuts are suppressed when a <code>QLineEdit</code>
+  has focus (search bars, URL inputs). This is handled by the lambda wrapper in
+  <span class="file-ref">app.py:688-691</span>. Vim keys (j/k/h/l) are handled by the view
+  widgets themselves, using <code>ShortcutOverride</code> events — see <span class="file-ref">vim_views.py:26-31</span>.
+</div>
+
+<h3>Max Mode Shortcuts</h3>
+<p>Max mode uses its own key dispatch in <code>App.keyPressEvent()</code>
+(<span class="file-ref">app.py:726-756</span>) because QShortcuts on hidden widgets don't fire.
+Only a subset of shortcuts work in max mode — add to the <code>_max_keys</code> dict to enable more.</p>
+
+<!-- ============================================================ -->
+<h2 id="file-reference">File-by-File Reference</h2>
+
+<h3>Core</h3>
+
+<h4><code>app.py</code> — Main Window Orchestrator</h4>
+<p><strong>Classes:</strong> <code>_HoverRevealBar</code>, <code>ToolBar</code>, <code>App</code></p>
+<p>Sections (marked with <code># ── Section ──</code> comments):</p>
+<ul>
+  <li><strong>Theme & Styling</strong> — <code>apply_theme()</code>, <code>toggle_theme()</code>, accent color management</li>
+  <li><strong>Session Persistence</strong> — <code>_restore_state()</code>, <code>closeEvent()</code></li>
+  <li><strong>Keyboard Shortcuts & Input</strong> — <code>_setup_shortcuts()</code>, <code>eventFilter()</code>, <code>keyPressEvent()</code></li>
+  <li><strong>Panel Visibility & Layout</strong> — toggle methods, <code>_toggle_panel()</code></li>
+  <li><strong>Lyrics & Track Change Handling</strong> — <code>_on_track_changed()</code>, lyrics fetch/display</li>
+  <li><strong>Max Mode</strong> — <code>enter_maxplayer()</code>, <code>exit_maxplayer()</code></li>
+  <li><strong>Mode Switching</strong> — <code>_set_mode()</code>, control mode adaptation</li>
+  <li><strong>Podcast Mode</strong> — episode download, feed loading, podcast playback</li>
+  <li><strong>Radio Mode</strong> — station streaming, metadata display, art picker</li>
+</ul>
+
+<h4><code>player.py</code> — Playback Engine + UI</h4>
+<p><strong>Key class:</strong> <code>Player(QWidget)</code></p>
+<p>Owns the <code>just_playback.Playback</code> instance and a 20ms <code>QTimer</code> for progress updates.
+Emits <code>track_changed</code>, <code>track_finished</code>, and <code>art_clicked</code> signals.</p>
+<p>Important: <code>just_playback</code> requires <code>play()</code> before <code>pause()</code>/<code>seek()</code> will work.</p>
+
+<h4><code>album_view.py</code> — Tracklist Panel</h4>
+<p><strong>Classes:</strong> <code>AlbumLoadThread</code>, <code>WrapIndentDelegate</code>, <code>AlbumView</code></p>
+<p>Uses <code>VimListWidget</code> for the track list. Loading runs in a <code>QThread</code>.
+In podcast mode, the click handler is disconnected and replaced by App.</p>
+
+<h4><code>folder_view.py</code> — Library Browser</h4>
+<p><strong>Key class:</strong> <code>FolderView(QWidget)</code></p>
+<p>Uses <code>QFileSystemModel</code> filtered to directories. Double-click on a folder with
+music files loads it into AlbumView. Context menu opens the folder in the system file manager.</p>
+
+<h3>Data</h3>
+
+<h4><code>track.py</code> — Track Data Class</h4>
+<p>Plain data class. All string fields are <code>str()</code>-converted in <code>__init__</code> to avoid
+mutagen lazy-evaluation objects persisting beyond the file handle.</p>
+
+<h4><code>album.py</code> — Folder Parser</h4>
+<p>Scans a directory for .mp3/.flac/.m4a files, extracts metadata with <code>mutagen</code>,
+falls back to filename parsing. Filters out full-disc rips (single huge file).</p>
+
+<h4><code>podcast_feed.py</code> — RSS Parser + Data Classes</h4>
+<p><code>PodcastFeed</code> mimics <code>Album</code>, <code>PodcastEpisode</code> mimics <code>Track</code> — so
+the Player widget can handle them identically. Includes download threads with progress reporting.</p>
+
+<h4><code>radio_station.py</code> — Station Data Class</h4>
+<p>Minimal Track-compatible data class: just <code>name</code> and <code>stream_url</code>.</p>
+
+<h3>Playback</h3>
+
+<h4><code>radio_player.py</code> — Radio Streaming</h4>
+<p>Factory function <code>_make_radio_player()</code> returns either <code>_QtRadioPlayer</code>
+(QMediaPlayer) or <code>_SubprocessRadioPlayer</code> (ffplay/mpv subprocess for frozen Linux builds).
+Also contains <code>StationArtDialog</code> for searching station logos via DuckDuckGo Images.</p>
+
+<h4><code>media_keys.py</code> — Cross-Platform Media Keys</h4>
+<p>Two layers: (1) Qt event filter for focused-window keys, (2) native global hooks
+(MPRIS2/D-Bus on Linux, NSEvent on macOS, low-level keyboard hook on Windows).</p>
+
+<h3>UI Components</h3>
+
+<h4><code>theme.py</code> — Theme Definitions + QSS</h4>
+<p>Two theme dicts (LIGHT/DARK) plus QSS generator functions. Font is resolved at startup.
+Accent presets are also defined here.</p>
+
+<h4><code>vim_views.py</code> — Vim Navigation</h4>
+<p><code>VimTreeView</code> and <code>VimListWidget</code> with j/k/h/l/Enter navigation.
+Uses <code>ShortcutOverride</code> to let non-vim keys pass through to QShortcut handlers.
+<code>SearchBar</code> is a <code>QLineEdit</code> that returns focus on Escape/Enter.</p>
+
+<h4><code>progress_bar.py</code> — Clickable Progress Bar</h4>
+<p>Click-to-seek and drag-to-scrub. Emits <code>seek_requested</code> during drag (pauses playback)
+and <code>start_playback</code> on release (resumes).</p>
+
+<h4><code>marquee_label.py</code> — Scrolling Text</h4>
+<p>Winamp-style horizontal text scroller for long track titles. Auto-detects overflow
+and starts scrolling with a configurable pause at the start.</p>
+
+<h4><code>lyrics_widget.py</code> — Lyrics Display</h4>
+<p>Renders plain text, synced LRC lyrics (with highlight + auto-scroll), or podcast
+descriptions with clickable timestamps. Click on a synced line seeks to that position.</p>
+
+<h3>Network</h3>
+
+<h4><code>lyrics_fetcher.py</code> — LRCLIB API</h4>
+<p>Three-stage search: exact match, cleaned album name, then search fallback.
+Caches results in <code>album/lyrics/</code> directory.</p>
+
+<h4><code>artwork_finder.py</code> — iTunes Artwork Search</h4>
+<p>Dialog that searches iTunes for album art, shows thumbnails, and downloads
+high-res cover.jpg to the album folder.</p>
+
+<h4><code>color_extract.py</code> — Palette Extraction</h4>
+<p>Downsamples album art to 60x60, bins pixels by HSV, scores by area coverage
+and visual prominence. <code>most_readable()</code> picks best WCAG contrast ratio.</p>
+
+<!-- ============================================================ -->
+<h2 id="external-apis">External APIs</h2>
+
+<table>
+  <tr><th>API</th><th>Used For</th><th>File</th></tr>
+  <tr>
+    <td>LRCLIB (<code>lrclib.net</code>)</td>
+    <td>Synced + plain lyrics</td>
+    <td><span class="file-ref">lyrics_fetcher.py</span></td>
+  </tr>
+  <tr>
+    <td>iTunes Search API</td>
+    <td>Album artwork, podcast search</td>
+    <td><span class="file-ref">artwork_finder.py</span>, <span class="file-ref">podcast_search.py</span></td>
+  </tr>
+  <tr>
+    <td>iTunes Lookup API</td>
+    <td>Apple Podcast URL → RSS feed</td>
+    <td><span class="file-ref">podcast_feed.py</span></td>
+  </tr>
+  <tr>
+    <td>Radio Browser API (<code>de1.api.radio-browser.info</code>)</td>
+    <td>Radio station search</td>
+    <td><span class="file-ref">radio_search.py</span></td>
+  </tr>
+  <tr>
+    <td>DuckDuckGo Images</td>
+    <td>Radio station logo search</td>
+    <td><span class="file-ref">radio_player.py</span></td>
+  </tr>
+</table>
+
+<!-- ============================================================ -->
+<h2 id="threading-model">Threading Model</h2>
+
+<p>All network I/O and heavy computation runs in <code>QThread</code> subclasses.
+Results are delivered back to the main thread via signals.</p>
+
+<div class="mermaid">
+graph TD
+    subgraph "Main Thread (Qt Event Loop)"
+        APP["App"]
+        PLAYER["Player"]
+        WIDGETS["UI Widgets"]
+    end
+
+    subgraph "Background Threads"
+        ALT["AlbumLoadThread<br/><small>album_view.py</small>"]
+        LFT["LyricsFetchThread<br/><small>lyrics_fetcher.py</small>"]
+        PET["PaletteExtractThread<br/><small>color_extract.py</small>"]
+        FFT["FeedFetchThread<br/><small>podcast_feed.py</small>"]
+        EDT["EpisodeDownloadThread<br/><small>podcast_feed.py</small>"]
+        IDT["ImageDownloadThread<br/><small>podcast_feed.py</small>"]
+        ST["SearchThread<br/><small>artwork_finder.py</small>"]
+        IL["ImageLoader<br/><small>artwork_finder.py</small>"]
+        RST["RadioSearchThread<br/><small>radio_search.py</small>"]
+    end
+
+    ALT -->|"finished(Album)"| APP
+    LFT -->|"lyrics_ready(path, text)"| APP
+    PET -->|"finished(colors)"| APP
+    FFT -->|"finished(PodcastFeed)"| APP
+    EDT -->|"progress(%) / finished(path)"| APP
+    IDT -->|"finished(path)"| APP
+    ST -->|"finished(results)"| WIDGETS
+    IL -->|"finished(idx, QPixmap)"| WIDGETS
+    RST -->|"finished(results)"| WIDGETS
+
+    style APP fill:#e8871e,color:#000
+</div>
+
+<div class="callout">
+  <strong>Thread lifecycle:</strong> Threads are stored as instance attributes
+  (e.g., <code>self._lyrics_thread</code>) to prevent garbage collection while running.
+  For lyrics, in-progress fetches are disconnected and stopped before starting a new one.
+</div>
+
+<!-- ============================================================ -->
+<h2 id="settings-persistence">Settings & Persistence</h2>
+
+<p>Uses <code>QSettings('lp', 'music-player')</code> — stored in the platform-native location
+(macOS: <code>~/Library/Preferences</code>, Linux: <code>~/.config/lp/</code>, Windows: Registry).</p>
+
+<h3>What's Persisted</h3>
+
+<table>
+  <tr><th>Key</th><th>Type</th><th>Purpose</th></tr>
+  <tr><td><code>geometry</code></td><td>QByteArray</td><td>Window position and size</td></tr>
+  <tr><td><code>splitter</code></td><td>QByteArray</td><td>Panel sizes</td></tr>
+  <tr><td><code>dark_mode</code></td><td>string</td><td>'true' or 'false'</td></tr>
+  <tr><td><code>font_size</code></td><td>int</td><td>Current font size</td></tr>
+  <tr><td><code>font_family</code></td><td>string</td><td>Selected font name</td></tr>
+  <tr><td><code>accent_color</code></td><td>string</td><td>Current accent hex</td></tr>
+  <tr><td><code>accent_match</code></td><td>string</td><td>'true' if auto-accent enabled</td></tr>
+  <tr><td><code>album_accents</code></td><td>dict</td><td>Per-album accent color overrides</td></tr>
+  <tr><td><code>library_root</code></td><td>string</td><td>Music library folder path</td></tr>
+  <tr><td><code>library_visible</code></td><td>string</td><td>Left panel visibility</td></tr>
+  <tr><td><code>tracklist_visible</code></td><td>string</td><td>Tracklist panel visibility</td></tr>
+  <tr><td><code>lyrics_visible</code></td><td>string</td><td>Lyrics panel visibility</td></tr>
+  <tr><td><code>last_album</code></td><td>string</td><td>Last played album path</td></tr>
+  <tr><td><code>last_track_pos</code></td><td>int</td><td>Track index in last album</td></tr>
+  <tr><td><code>last_seek_pos</code></td><td>float</td><td>Playback position in seconds</td></tr>
+  <tr><td><code>app_mode</code></td><td>string</td><td>'music', 'podcast', or 'radio'</td></tr>
+  <tr><td><code>podcast/feeds</code></td><td>list</td><td>Subscribed podcast URLs</td></tr>
+  <tr><td><code>podcast/last_feed</code></td><td>string</td><td>Last played feed URL</td></tr>
+  <tr><td><code>podcast/last_episode</code></td><td>int</td><td>Episode index</td></tr>
+  <tr><td><code>podcast/last_seek</code></td><td>float</td><td>Episode seek position</td></tr>
+  <tr><td><code>podcast/episode_positions</code></td><td>dict</td><td>Per-episode resume positions</td></tr>
+  <tr><td><code>radio/station_names</code></td><td>list</td><td>Saved station names</td></tr>
+  <tr><td><code>radio/station_urls</code></td><td>list</td><td>Saved station stream URLs</td></tr>
+  <tr><td><code>radio/last_station_url</code></td><td>string</td><td>Last selected station</td></tr>
+</table>
+
+<p>Save happens in <code>closeEvent()</code> (<span class="file-ref">app.py:2031</span>).
+Restore happens in <code>_restore_state()</code> (<span class="file-ref">app.py:561</span>).</p>
+
+</main>
+
+<script>
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'default',
+    flowchart: { curve: 'basis', padding: 20 },
+    sequence: { mirrorActors: false }
+  });
+
+  // Highlight active nav link on scroll
+  const sections = document.querySelectorAll('h2[id], h3[id]');
+  const navLinks = document.querySelectorAll('nav a');
+
+  function updateNav() {
+    let current = '';
+    sections.forEach(s => {
+      if (s.getBoundingClientRect().top < 120) current = s.id;
+    });
+    navLinks.forEach(a => {
+      a.classList.toggle('active', a.getAttribute('href') === '#' + current);
+    });
+  }
+  window.addEventListener('scroll', updateNav);
+  updateNav();
+</script>
+
+</body>
+</html>

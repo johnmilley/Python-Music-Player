@@ -1,0 +1,8 @@
+# Bugs
+
+## Unresolved
+- resizing is still a little wonky. need to spend time learning how to tie in all the right sizes to the various "states of toggle"
+- spacing issue in tracklist (multi-line + spacing shenanagins)
+
+
+## Resolved
