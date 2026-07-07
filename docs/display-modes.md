@@ -4,88 +4,106 @@ lp has three playback modes, two display modes, and panel toggle controls.
 
 ## Playback modes
 
-Switch modes via the toolbar buttons or keyboard shortcuts `1`/`2`/`3`:
+Switch modes via the toolbar buttons or keyboard shortcuts `1`/`2`/`3`. The
+three mode views (folders, podcast feeds, radio stations) live in one stacked
+widget in the left pane — switching modes swaps the stack page and never
+disturbs the splitter layout. Pressing the current mode's key again toggles
+the library panel.
 
 ### Music mode (default)
 
-Standard three-panel layout with filesystem browser on the left. Navigate folders, load albums, play tracks with full controls (prev/next, seek, progress bar).
+Standard layout with filesystem browser on the left. Navigate folders, load
+albums, play tracks with full controls (prev/next, seek, progress bar).
 
 ### Podcast mode
 
-Left panel shows subscribed podcast feeds. Click a feed to load its episodes into the tracklist. Prev/next buttons become ±30s seek. Episodes are downloaded to `~/.cache/lp/podcasts/` before playback. Episode playback positions are saved and restored.
+Left panel shows subscribed podcast feeds. Click a feed to load its episodes
+into the tracklist. Prev/next buttons become ±30s seek. Episodes are
+downloaded to `~/.cache/lp/podcasts/` before playback. Episode playback
+positions are saved and restored. The tracklist/lyrics visibility you had in
+music mode is snapshotted and restored when you switch back.
 
 ### Radio mode
 
-Left panel shows saved radio stations (stream URLs). Click a station to start streaming via `QMediaPlayer`. The player shows:
-- A themed radio SVG graphic (concentric signal rings with the station icon)
+Left panel shows saved radio stations (stream URLs). Click a station to start
+streaming via `QMediaPlayer`. The player shows:
+- A themed radio SVG graphic
 - Station name and now-playing metadata in the marquee label (scrolls if too long)
 - Now-playing info in the lyrics panel when stream metadata is available
 
-Only the play/pause button is shown — prev/next, progress bar, and time labels are hidden since streams have no duration.
+Only the play/pause button is shown — prev/next, progress bar, and time labels
+are hidden since streams have no duration.
 
 Switching away from radio mode stops the stream.
 
 ## Normal mode
 
-The default three-panel layout:
+The nested-splitter layout — tracklist over lyrics in the right column:
 
 ```
- Library  |  Player  |  Tracklist
- (folders)|  (art +  |  ---------
-          | controls)|  Lyrics
+ Library  |  Player   |  Tracklist
+ (folders)|  (art +   |------------
+          | controls) |  Lyrics
 ```
 
-Each side panel can be toggled independently:
-- `1` — toggle library panel
-- `2` — toggle tracklist panel
-- `3` — toggle lyrics panel
+Panel toggles:
+- `1` — toggle library panel (when already in music mode; `1`/`2`/`3` otherwise switch modes)
+- `4` — toggle tracklist panel (+ focus)
+- `5` — toggle lyrics panel
 
-The right splitter auto-sizes so lyrics sit just below the tracklist (capped at 50% of the right panel height).
+Panel sizing is owned by `PanelManager`: hiding a panel remembers its exact
+extent, showing it restores that extent, and dragging a splitter handle updates
+the remembered size — so toggles always round-trip and never rearrange the
+panes you didn't touch. When both tracklist and lyrics are hidden the whole
+right column collapses.
 
 ## Max mode (`Shift+M`)
 
-A fullscreen mode focused on the album art and lyrics:
+A fullscreen page focused on the album art and lyrics:
 
 ```
- ┌──────────────────────────────────────┐
- │     Artist      Album      Track     │  <- info bar
- ├────────────────────┬─────────────────┤
- │                    │                 │
- │    Album Art       │    Lyrics       │
- │    (2/3 width)     │   (1/3 width)   │
- │                    │                 │
+ ┌──────────────────────────────────────┐  <- accent divider
+ │                    │   Track title   │
+ │    Album Art       │                 │
+ │    (2/3 width)     │    Lyrics       │
+ │                    │   (1/3 width)   │
  └────────────────────┴─────────────────┘
 ```
 
-- The info bar shows artist, album, and current track name
 - Album art is scaled to fill available space while keeping aspect ratio
-- Lyrics display in a larger font size (+8pt)
-- Lyrics scroll position is aligned vertically with the album art edges
+- The app's single lyrics widget is *borrowed* into the max page (larger font,
+  +8pt) — the synced highlight continues seamlessly
 - Clicking the art exits max mode
-- `3` toggles lyrics visibility within max mode
+- `5` toggles the lyrics column within max mode
 - `Shift+M` or `Escape` exits back to normal mode
 
 ### State preservation
 
-Entering max mode saves the current window geometry, splitter positions, and panel visibility. Exiting restores everything to its previous state.
+The normal layout stays untouched behind the view stack while max mode is
+active — exiting simply switches back and restores the window geometry.
 
 ## Toolbar
 
-A custom hover-accessible toolbar at the top of the window (replaces the native menu bar):
+A slim, always-visible top bar of icon toggles (replaces the native menu
+bar), underlined by a thin accent-colored strip. The active mode and open
+panels are marked by the icon glyph itself turning the accent color — no
+underline.
 
 ```
- [♫] [◎] [📶]      Preferences  Theme  Help      [1] [2] [3]
-  mode toggles              menus               panel toggles
+ [♪] [🎙] [〰]                    [▤] [≡] [☰] [⚙]
+   mode toggles           panel toggles + settings menu
+ ──────────────────────────────────────────────────────  <- accent strip
 ```
 
-- **Left**: Mode toggle buttons (Music, Podcast, Radio) — checkable, mutually exclusive
-- **Center**: Drop-down menus (Preferences, Theme, Help)
-- **Right**: Panel toggle buttons (Library, Tracklist, Lyrics)
+- **Left**: Mode toggle icons (Music, Podcast, Radio) — checkable, mutually exclusive
+- **Right**: Panel toggle icons (Library, Tracklist, Lyrics) and the gear menu (Theme, Preferences, Help)
 
 ## Panel toggles
 
-Panel visibility uses the `isVisible()` check as the source of truth. When toggling a panel:
+Panel visibility is owned by `PanelManager` — the toolbar buttons and keyboard
+shortcuts both call into it, and the buttons just mirror its
+`visibility_changed` signal. When toggling a panel:
 
 - If shown, focus moves to it
 - If the toggled panel is hidden, focus falls back to the next visible panel
-- In max mode, library and tracklist toggles are disabled (only lyrics can toggle)
+- In max mode, panel toggles are locked (only the max lyrics column can toggle)

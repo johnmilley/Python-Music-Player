@@ -1,15 +1,16 @@
 # AlbumView widget displays the tracks of an album.
 
 import sys
+import urllib.parse
+import webbrowser
 from pathlib import Path
 
 # pyqt5
 from PyQt5.QtWidgets import (
-    QApplication, QWidget, QVBoxLayout, QListWidgetItem,
-    QStyledItemDelegate, QStyle
+    QApplication, QWidget, QVBoxLayout, QListWidgetItem, QMenu
 )
-from PyQt5.QtCore import Qt, pyqtSignal, QSize, QRect, QThread
-from PyQt5.QtGui import QColor, QFontMetrics, QTextOption
+from PyQt5.QtCore import Qt, QUrl, pyqtSignal, QThread
+from PyQt5.QtGui import QDesktopServices
 
 # local
 from album import Album
@@ -27,86 +28,6 @@ class AlbumLoadThread(QThread):
     def run(self):
         album = Album(Path(self.directory_path))
         self.finished.emit(album)
-
-
-class WrapIndentDelegate(QStyledItemDelegate):
-    """Wraps track text to a second indented line when it doesn't fit."""
-
-    INDENT = 20  # pixels for continuation indent
-
-    def _split_text(self, text, fm, width):
-        """Return (first_line, remainder) splitting at the last word that fits."""
-        if fm.horizontalAdvance(text) <= width:
-            return text, ''
-        # Find the last space that fits on the first line
-        last_space = -1
-        for i, ch in enumerate(text):
-            if ch == ' ':
-                if fm.horizontalAdvance(text[:i]) <= width:
-                    last_space = i
-                else:
-                    break
-        if last_space > 0:
-            return text[:last_space], text[last_space + 1:]
-        # No good break point — hard break
-        for i in range(len(text)):
-            if fm.horizontalAdvance(text[:i + 1]) > width:
-                return text[:i], text[i:]
-        return text, ''
-
-    def paint(self, painter, option, index):
-        self.initStyleOption(option, index)
-        text = option.text
-        fm = QFontMetrics(option.font)
-        padding = 4
-        avail = option.rect.width() - 2 * padding
-
-        # Draw background / selection
-        option.text = ''
-        style = option.widget.style() if option.widget else QApplication.style()
-        style.drawControl(QStyle.CE_ItemViewItem, option, painter, option.widget)
-
-        # Use the selection text color stored on the widget when focused+selected,
-        # otherwise use normal text color
-        if option.state & QStyle.State_Selected and option.widget and option.widget.hasFocus():
-            sel_color = getattr(option.widget, '_selection_text_color', None)
-            pen_color = QColor(sel_color) if sel_color else option.palette.color(option.palette.HighlightedText)
-        else:
-            pen_color = option.palette.color(option.palette.Text)
-
-        if fm.horizontalAdvance(text) <= avail:
-            # Single line — draw normally
-            text_rect = option.rect.adjusted(padding, 0, -padding, 0)
-            painter.setPen(pen_color)
-            painter.setFont(option.font)
-            painter.drawText(text_rect, Qt.AlignVCenter | Qt.AlignLeft, text)
-        else:
-            # Two lines with indent on continuation
-            first, rest = self._split_text(text, fm, avail)
-            line_h = fm.height()
-            painter.setPen(pen_color)
-            painter.setFont(option.font)
-            r1 = QRect(option.rect.x() + padding, option.rect.y() + 1,
-                        avail, line_h)
-            painter.drawText(r1, Qt.AlignVCenter | Qt.AlignLeft, first)
-            if rest:
-                r2 = QRect(option.rect.x() + padding + self.INDENT,
-                           option.rect.y() + 1 + line_h,
-                           avail - self.INDENT, line_h)
-                painter.drawText(r2, Qt.AlignVCenter | Qt.AlignLeft, rest)
-
-    def sizeHint(self, option, index):
-        self.initStyleOption(option, index)
-        text = option.text
-        fm = QFontMetrics(option.font)
-        padding = 4
-        avail = option.rect.width() - 2 * padding if option.rect.width() > 0 else 200
-        line_h = fm.height()
-        vpad = 4
-
-        if avail > 0 and fm.horizontalAdvance(text) > avail:
-            return QSize(option.rect.width(), line_h * 2 + vpad)
-        return QSize(option.rect.width(), line_h + vpad)
 
 
 class AlbumView(QWidget):
@@ -130,9 +51,13 @@ class AlbumView(QWidget):
         self.track_list_widget = VimListWidget()
         self.track_list_widget.addItem("No album loaded")
         self.track_list_widget.setObjectName('track-list')
-        self._wrap_delegate = WrapIndentDelegate(self.track_list_widget)
-        self.track_list_widget.setItemDelegate(self._wrap_delegate)
+        # Wrap long titles onto extra lines so as much text fits as reasonable;
+        # a single unbreakable run still elides. Full text is in the tooltip.
+        self.track_list_widget.setWordWrap(True)
+        self.track_list_widget.setTextElideMode(Qt.ElideRight)
         self.track_list_widget.itemClicked.connect(self.set_current_track)
+        self.track_list_widget.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.track_list_widget.customContextMenuRequested.connect(self._open_context_menu)
 
         # Search bar
         self.search_bar = SearchBar(self.track_list_widget)
@@ -143,23 +68,6 @@ class AlbumView(QWidget):
         layout_main.addWidget(self.track_list_widget)
 
         self.setLayout(layout_main)
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        self._update_item_sizes()
-
-    def _update_item_sizes(self):
-        """Recalculate item sizes for text wrapping."""
-        opts = self.track_list_widget.viewOptions()
-        # Use actual viewport width so sizeHint gets the current geometry
-        vp_w = self.track_list_widget.viewport().width()
-        if vp_w > 0:
-            opts.rect.setWidth(vp_w)
-        delegate = self.track_list_widget.itemDelegate()
-        for row in range(self.track_list_widget.count()):
-            item = self.track_list_widget.item(row)
-            hint = delegate.sizeHint(opts, self.track_list_widget.indexFromItem(item))
-            item.setSizeHint(hint)
 
     def _on_search(self, text):
         """Jump to first track where any word starts with the search text."""
@@ -192,6 +100,7 @@ class AlbumView(QWidget):
             for i, track in enumerate(self.album.tracklist):
                 item = QListWidgetItem(str(track))
                 item.setData(Qt.UserRole, i)
+                item.setToolTip(str(track))
                 self.track_list_widget.addItem(item)
             if self.player:
                 self.player.album = self.album
@@ -200,6 +109,35 @@ class AlbumView(QWidget):
                 self.album_changed.emit(f"{self.album.title} - {self.album.artist}")
         else:
             self.track_list_widget.addItem("No music files found.")
+
+    def _open_context_menu(self, pos):
+        item = self.track_list_widget.itemAt(pos)
+        if item is None or not self.album or not self.album.tracklist:
+            return
+        track_pos = item.data(Qt.UserRole)
+        if track_pos is None:
+            return
+        track = self.album.tracklist[track_pos]
+        menu = QMenu(self.track_list_widget)
+        chords_action = menu.addAction("Look Up Chords / Tab")
+        # pos is in viewport coordinates for item views
+        action = menu.exec_(self.track_list_widget.viewport().mapToGlobal(pos))
+        if action == chords_action:
+            self._lookup_chords(track)
+
+    def _lookup_chords(self, track):
+        """Open a new browser window with a chords/tab search for this track."""
+        query = ' '.join(part for part in (track.artist, track.title, 'chords') if part)
+        url = 'https://www.google.com/search?q=' + urllib.parse.quote(query)
+        # webbrowser.open_new() asks for a fresh window (not a reused tab);
+        # fall back to the desktop's URL handler if no browser controller
+        # is registered for it.
+        try:
+            opened = webbrowser.open_new(url)
+        except webbrowser.Error:
+            opened = False
+        if not opened:
+            QDesktopServices.openUrl(QUrl(url))
 
     def set_current_track(self, selected):
         track_pos = selected.data(Qt.UserRole)

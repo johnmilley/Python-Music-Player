@@ -33,6 +33,8 @@ All global shortcuts are `QShortcut` instances that are suppressed when a `QLine
 | `1` | Music mode (or toggle library panel if already in music mode) |
 | `2` | Podcast mode (or toggle library panel if already in podcast mode) |
 | `3` | Radio mode (or toggle library panel if already in radio mode) |
+| `4` | Toggle tracklist panel (+ focus) |
+| `5` | Toggle lyrics panel (also toggles the lyrics column in max mode) |
 | `Shift+M` | Toggle max mode |
 | `Shift+D` | Toggle dark / light theme |
 | `Ctrl++` / `Ctrl+=` | Increase font size |

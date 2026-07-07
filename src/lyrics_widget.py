@@ -1,9 +1,18 @@
-# Lyrics display widget - scrollable text area for song lyrics
-# Supports both plain text and synced (LRC) lyrics with line highlighting
+# Lyrics display widget — QTextBrowser-based with measured auto-scroll.
+# Supports plain text, synced (LRC) lyrics, and podcast descriptions with
+# clickable timestamps.
+#
+# Each lyric line / description segment is one QTextBlock. The active-line
+# highlight is applied with QTextCharFormat on just the affected blocks (no
+# document rebuild per line), and auto-scroll uses the block's real measured
+# y-position — wrapped long lines no longer cause drift.
 
+import html as html_mod
 import re
-from PyQt5.QtWidgets import QWidget, QVBoxLayout, QScrollArea, QLabel
-from PyQt5.QtCore import Qt, QTimer, pyqtSignal
+
+from PyQt5.QtWidgets import QWidget, QVBoxLayout, QTextBrowser
+from PyQt5.QtCore import Qt, pyqtSignal
+from PyQt5.QtGui import QColor, QFont, QTextCharFormat, QTextCursor
 
 import theme
 
@@ -29,34 +38,62 @@ class LyricsWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName('lyrics-widget')
-        self._synced_lines = None  # list of (seconds, text) if synced
+        self._synced_lines = None   # list of (seconds, text) if synced
         self._current_line = -1
-        self._desc_segments = None
+        self._desc_segments = None  # list of (seconds, text) for descriptions
         self._desc_preamble = None
         self._full_description = None
         self._theme = None
         self._font_size = None
+        self._line_blocks = []      # block number per synced line / segment
 
         layout = QVBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
 
-        self.scroll = QScrollArea()
-        self.scroll.setWidgetResizable(True)
-        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.scroll.setObjectName('lyrics-scroll')
+        self.view = QTextBrowser()
+        self.view.setObjectName('lyrics-text')
+        self.view.setFrameShape(QTextBrowser.NoFrame)
+        self.view.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.view.setOpenLinks(False)
+        self.view.setOpenExternalLinks(False)
+        self.view.setFocusPolicy(Qt.NoFocus)
+        self.view.anchorClicked.connect(
+            lambda url: self._on_link_clicked(url.toString()))
+        self.view.document().setDocumentMargin(12)
 
-        self.label = QLabel('No lyrics loaded')
-        self.label.setObjectName('lyrics-text')
-        self.label.setWordWrap(True)
-        self.label.setAlignment(Qt.AlignLeft | Qt.AlignTop)
-        self.label.setTextInteractionFlags(Qt.TextBrowserInteraction)
-        self.label.setOpenExternalLinks(False)
-        self.label.linkActivated.connect(self._on_link_clicked)
-        self.label.setContentsMargins(9, 9, 9, 9)
-
-        self.scroll.setWidget(self.label)
-        layout.addWidget(self.scroll)
+        layout.addWidget(self.view)
         self.setLayout(layout)
+
+    # ── Colors / theme ──────────────────────────────────────────────
+
+    def _colors(self):
+        """Active-line/timestamp color, body text color, dim (past-line) color.
+
+        The first value is 'accent_text' (not 'accent') — a stricter,
+        readability-checked variant of the accent color so the highlighted
+        line always stays legible against the page background, regardless of
+        which accent the user (or the album art palette) picked.
+        """
+        t = self._theme or {}
+        accent_text = t.get('accent_text', t.get('accent', 'orange'))
+        return (accent_text,
+                t.get('fg', 'white'),
+                t.get('grip', '#888888'))  # grip → fg_dim alias
+
+    def set_theme(self, t, fs=None):
+        """Store theme dict and font size, then re-render with new colors."""
+        self._theme = t
+        self._font_size = fs
+        family = theme.FONT_LYRICS.strip("'\"")
+        font = QFont(family)
+        font.setPointSize(fs or 13)
+        self.view.document().setDefaultFont(font)
+        if self._synced_lines:
+            self._render_synced()
+        elif self._desc_segments:
+            self._render_description()
+
+    # ── Link handling ───────────────────────────────────────────────
 
     def _on_link_clicked(self, url):
         """Handle click on a lyrics line or timestamp — seek to position."""
@@ -74,153 +111,161 @@ class LyricsWidget(QWidget):
             except (ValueError, IndexError):
                 pass
 
-    def set_theme(self, t, fs=None):
-        """Store theme dict and font size, then re-render lyrics with new colors."""
-        self._theme = t
-        self._font_size = fs
-        # Re-render synced lyrics so inline colors update
-        if self._synced_lines:
-            self._render_synced(self._current_line)
+    # ── Content setters ─────────────────────────────────────────────
 
     def set_lyrics(self, text):
         """Set lyrics text. Detects LRC format automatically."""
         self._current_line = -1
+        self._desc_segments = None
+        self._full_description = None
         if not text:
             self._synced_lines = None
-            self.label.setTextFormat(Qt.PlainText)
-            self.label.setText('No lyrics found')
-            self.scroll.verticalScrollBar().setValue(0)
+            self._line_blocks = []
+            self.view.setPlainText('No lyrics found')
+            self.view.verticalScrollBar().setValue(0)
             return
 
-        # Try to parse as synced LRC
         parsed = parse_lrc(text)
         if parsed:
             self._synced_lines = parsed
-            self._render_synced(-1)
+            self._render_synced()
         else:
-            self.label.setTextFormat(Qt.PlainText)
             self._synced_lines = None
-            self.label.setText(text)
-        self.scroll.verticalScrollBar().setValue(0)
+            self._line_blocks = []
+            self.view.setPlainText(text)
+        self.view.verticalScrollBar().setValue(0)
+
+    def set_status_html(self, html):
+        """Show one-off status HTML (e.g. radio now-playing)."""
+        self._synced_lines = None
+        self._desc_segments = None
+        self._current_line = -1
+        self._line_blocks = []
+        self.view.setHtml(html)
+
+    def clear(self):
+        self._synced_lines = None
+        self._desc_segments = None
+        self._current_line = -1
+        self._line_blocks = []
+        self.view.setPlainText('No lyrics loaded')
+
+    # ── Position sync ───────────────────────────────────────────────
 
     def update_position(self, seconds):
-        """Update the highlighted line based on playback position."""
-        if not self._synced_lines:
+        """Update the highlighted line/segment from the playback position."""
+        entries = self._synced_lines or self._desc_segments
+        if not entries:
             return
-
-        # Find the current line
         line_idx = -1
-        for i, (ts, _) in enumerate(self._synced_lines):
+        for i, (ts, _) in enumerate(entries):
             if seconds >= ts:
                 line_idx = i
             else:
                 break
-
         if line_idx != self._current_line:
+            old = self._current_line
             self._current_line = line_idx
-            self._render_synced(line_idx)
+            self._update_block_formats(old, line_idx)
+            if line_idx >= 0:
+                self._scroll_to_block(line_idx)
 
-    def _render_synced(self, active_idx):
-        """Render synced lyrics as HTML with the active line highlighted."""
-        t = self._theme or {}
-        accent = t.get('accent', 'orange')
-        fg = t.get('fg', 'white')
-        dim = t.get('grip', '#888888')
-        font = theme.FONT
+    # ── Rendering (one QTextBlock per line/segment) ─────────────────
 
+    def _line_pad(self):
         fs = self._font_size or 13
-        line_pad = max(2, fs // 3)
+        return max(2, fs // 3)
 
-        # Cache line HTML parts; only rebuild if theme/font changed or first render
-        cache_key = (accent, fg, dim, fs, len(self._synced_lines))
-        if getattr(self, '_synced_cache_key', None) != cache_key:
-            # Full rebuild — cache each line's normal and active HTML
-            self._synced_cache_key = cache_key
-            self._synced_normal = []
-            self._synced_active = []
-            self._synced_dim = []
-            for i, (_, text) in enumerate(self._synced_lines):
-                if not text.strip():
-                    self._synced_normal.append('<br>')
-                    self._synced_active.append('<br>')
-                    self._synced_dim.append('<br>')
-                    continue
-                self._synced_active.append(
-                    f'<div style="color: {accent}; '
-                    f'font-weight: bold; font-size: 105%; '
-                    f'padding: {line_pad}px 0;">'
-                    f'<a href="seek:{i}" style="color: {accent}; text-decoration: none;">{text}</a>'
-                    f'</div>')
-                self._synced_normal.append(
-                    f'<div style="color: {fg}; padding: {line_pad}px 0;">'
-                    f'<a href="seek:{i}" style="color: {fg}; text-decoration: none;">{text}</a>'
-                    f'</div>')
-                self._synced_dim.append(
-                    f'<div style="color: {dim}; padding: {line_pad}px 0;">'
-                    f'<a href="seek:{i}" style="color: {dim}; text-decoration: none;">{text}</a>'
-                    f'</div>')
-            self._synced_font = font
+    def _render_synced(self):
+        """Full render of synced lyrics — runs on load and theme change only."""
+        accent, fg, dim = self._colors()
+        pad = self._line_pad()
+        parts = []
+        for i, (_, text) in enumerate(self._synced_lines):
+            content = (f'<a href="seek:{i}" style="color: {fg}; '
+                       f'text-decoration: none;">{html_mod.escape(text)}</a>'
+                       if text.strip() else ' ')
+            parts.append(f'<p style="margin: {pad}px 0;">{content}</p>')
+        self.view.setHtml(''.join(parts))
+        self._index_blocks(len(self._synced_lines))
+        if self._current_line >= 0:
+            self._update_block_formats(-1, self._current_line)
+            self._scroll_to_block(self._current_line)
 
-        # Assemble from cache — pick the right variant per line
-        html_lines = []
-        for i in range(len(self._synced_lines)):
-            if i == active_idx:
-                html_lines.append(self._synced_active[i])
-            elif active_idx >= 0 and i < active_idx:
-                html_lines.append(self._synced_dim[i])
+    def _index_blocks(self, count):
+        """Record the block number of each rendered line/segment."""
+        doc = self.view.document()
+        # Blocks map 1:1 to the <p> elements, in order
+        self._line_blocks = list(range(min(count, doc.blockCount())))
+
+    def _block_format(self, category):
+        accent, fg, dim = self._colors()
+        fmt = QTextCharFormat()
+        if category == 'active':
+            fmt.setForeground(QColor(accent))
+            fmt.setFontWeight(QFont.Bold)
+        elif category == 'dim':
+            fmt.setForeground(QColor(dim))
+            fmt.setFontWeight(QFont.Normal)
+        else:
+            fmt.setForeground(QColor(fg))
+            fmt.setFontWeight(QFont.Normal)
+        return fmt
+
+    def _update_block_formats(self, old_idx, new_idx):
+        """Recolor only the blocks whose category changed."""
+        if not self._line_blocks:
+            return
+        doc = self.view.document()
+        lo = 0 if old_idx < 0 or new_idx < 0 else min(old_idx, new_idx)
+        hi = max(old_idx, new_idx)
+        for i in range(lo, hi + 1):
+            if i >= len(self._line_blocks):
+                break
+            block = doc.findBlockByNumber(self._line_blocks[i])
+            if not block.isValid():
+                continue
+            if i == new_idx:
+                category = 'active'
+            elif new_idx >= 0 and i < new_idx:
+                category = 'dim'
             else:
-                html_lines.append(self._synced_normal[i])
+                category = 'normal'
+            cursor = QTextCursor(block)
+            cursor.setPosition(block.position())
+            cursor.setPosition(block.position() + max(block.length() - 1, 0),
+                               QTextCursor.KeepAnchor)
+            cursor.mergeCharFormat(self._block_format(category))
 
-        self.label.setTextFormat(Qt.RichText)
-        self.label.setText(
-            f'<div style="font-family: {self._synced_font};">'
-            + ''.join(html_lines)
-            + '</div>'
-        )
-
-        # Auto-scroll after layout updates
-        if active_idx >= 0:
-            QTimer.singleShot(0, lambda: self._scroll_to_line(active_idx))
-
-    def _scroll_to_line(self, idx):
-        """Scroll so the active line sits roughly in the top third of the viewport."""
-        if not self._synced_lines:
+    def _scroll_to_block(self, idx):
+        """Scroll so the active block sits ~30% down the viewport, using the
+        block's real measured position (accurate with wrapped lines)."""
+        if idx < 0 or idx >= len(self._line_blocks):
             return
-        total = len(self._synced_lines)
-        if total == 0:
+        doc = self.view.document()
+        block = doc.findBlockByNumber(self._line_blocks[idx])
+        if not block.isValid():
             return
-        scrollbar = self.scroll.verticalScrollBar()
-        max_val = scrollbar.maximum()
-        viewport_h = self.scroll.viewport().height()
-        if max_val == 0:
-            return
+        y = doc.documentLayout().blockBoundingRect(block).y()
+        viewport_h = self.view.viewport().height()
+        scrollbar = self.view.verticalScrollBar()
+        target = int(y - viewport_h * 0.30)
+        scrollbar.setValue(max(0, min(target, scrollbar.maximum())))
 
-        # Ratio-based scroll: estimate position from line index
-        content_h = max_val + viewport_h
-        next_idx = min(idx + 1, total - 1)
-        line_y = (next_idx / max(1, total)) * content_h
-
-        # Place it at ~30% from the top
-        target = int(line_y - viewport_h * 0.30)
-        target = max(0, min(target, max_val))
-        scrollbar.setValue(target)
+    # ── Podcast descriptions with timestamp seek links ──────────────
 
     def set_description(self, text):
-        """Display text with timestamps (e.g. 12:34, 1:02:30) as clickable seek links.
-
-        Segments between timestamps are tracked so update_position() can
-        highlight the currently-playing section, just like synced lyrics.
-        """
+        """Display text with timestamps (e.g. 12:34, 1:02:30) as clickable
+        seek links. Segments between timestamps highlight like synced lyrics."""
         self._synced_lines = None
         self._desc_segments = None
         self._current_line = -1
+        self._line_blocks = []
         self._full_description = text
         if not text:
-            self.label.setTextFormat(Qt.PlainText)
-            self.label.setText('')
+            self.view.setPlainText('')
             return
 
-        # Find timestamps in the text so we can make them clickable seek links.
         ts_pattern = re.compile(r'\b((\d{1,2}):)?(\d{1,2}):(\d{2})\b')
         segments = []  # list of (seconds, segment_text)
         last_end = 0
@@ -243,90 +288,47 @@ class LyricsWidget(QWidget):
 
         if not segments:
             # No timestamps found — render as rich text (preserving UTF-8)
-            import html as html_mod
+            _, fg, _ = self._colors()
             display = html_mod.escape(text).replace('\n', '<br>')
-            t = self._theme or {}
-            font = theme.FONT
-            self.label.setTextFormat(Qt.RichText)
-            self.label.setText(f'<div style="font-family: {font};">{display}</div>')
-            self.scroll.verticalScrollBar().setValue(0)
+            self.view.setHtml(f'<div style="color: {fg};">{display}</div>')
+            self.view.verticalScrollBar().setValue(0)
             return
 
         self._desc_segments = segments
         self._desc_preamble = preamble
-        self._render_description(-1)
-        self.scroll.verticalScrollBar().setValue(0)
+        self._render_description()
+        self.view.verticalScrollBar().setValue(0)
 
-    def _render_description(self, active_idx):
-        """Render description segments with the active one highlighted."""
+    def _render_description(self):
+        """Full render of description segments — one block per segment."""
         if not self._desc_segments:
             return
-        t = self._theme or {}
-        accent = t.get('accent', 'orange')
-        fg = t.get('fg', 'white')
-        dim = t.get('grip', '#888888')
-        font = theme.FONT
-        fs = self._font_size or 13
-        line_pad = max(2, fs // 3)
-
-        html_parts = []
-
-        import html as html_mod
-
-        # Preamble (text before first timestamp)
+        accent, fg, dim = self._colors()
+        pad = self._line_pad()
+        ts_re = re.compile(r'\b((\d{1,2}):)?(\d{1,2}):(\d{2})\b')
+        parts = []
+        preamble_blocks = 0
         if self._desc_preamble:
-            pre = html_mod.escape(self._desc_preamble).replace('\n', '<br>')
-            html_parts.append(
-                f'<div style="color: {fg}; padding: {line_pad}px 0;">{pre}</div>')
+            pre = html_mod.escape(self._desc_preamble.strip('\n')).replace('\n', '<br>')
+            parts.append(f'<p style="margin: {pad}px 0; color: {fg};">{pre}</p>')
+            preamble_blocks = 1
 
         for i, (secs, segment_text) in enumerate(self._desc_segments):
-            segment_html = html_mod.escape(segment_text).replace('\n', '<br>')
-            # Make the timestamp itself a seek link
-            ts_re = re.compile(r'\b((\d{1,2}):)?(\d{1,2}):(\d{2})\b')
-            segment_html = ts_re.sub(
+            # <br> keeps multi-line segments inside a single block
+            seg = html_mod.escape(segment_text.strip('\n')).replace('\n', '<br>')
+            seg = ts_re.sub(
                 lambda m: (f'<a href="seekto:{secs}" style="color: {accent}; '
                            f'text-decoration: none; font-weight: bold;">'
                            f'{m.group(0)}</a>'),
-                segment_html,
+                seg,
                 count=1,
             )
+            parts.append(
+                f'<p style="margin: {pad}px 0; color: {fg};">{seg or "&nbsp;"}</p>')
 
-            if i == active_idx:
-                html_parts.append(
-                    f'<div style="color: {accent}; font-weight: bold; '
-                    f'padding: {line_pad}px 0;">{segment_html}</div>')
-            else:
-                color = fg if i > active_idx or active_idx < 0 else dim
-                html_parts.append(
-                    f'<div style="color: {color}; '
-                    f'padding: {line_pad}px 0;">{segment_html}</div>')
-
-        self.label.setTextFormat(Qt.RichText)
-        self.label.setText(
-            f'<div style="font-family: {font};">'
-            + ''.join(html_parts)
-            + '</div>'
-        )
-
-        if active_idx >= 0:
-            total = len(self._desc_segments)
-            QTimer.singleShot(0, lambda: self._scroll_to_desc(active_idx, total))
-
-    def _scroll_to_desc(self, idx, total):
-        """Scroll so the active description segment is visible."""
-        scrollbar = self.scroll.verticalScrollBar()
-        max_val = scrollbar.maximum()
-        viewport_h = self.scroll.viewport().height()
-        if max_val == 0:
-            return
-        content_h = max_val + viewport_h
-        line_y = ((idx + 1) / max(1, total)) * content_h
-        target = int(line_y - viewport_h * 0.30)
-        target = max(0, min(target, max_val))
-        scrollbar.setValue(target)
-
-    def clear(self):
-        self._synced_lines = None
-        self._current_line = -1
-        self.label.setTextFormat(Qt.PlainText)
-        self.label.setText('No lyrics loaded')
+        self.view.setHtml(''.join(parts))
+        # Segment i lives at block preamble_blocks + i
+        self._line_blocks = [preamble_blocks + i
+                             for i in range(len(self._desc_segments))]
+        if self._current_line >= 0:
+            self._update_block_formats(-1, self._current_line)

@@ -401,15 +401,16 @@ class DownloadThread(QThread):
             })
             resp = urllib.request.urlopen(req, timeout=30, context=_ssl_ctx)
             total = int(resp.headers.get('Content-Length', 0))
-            data = b''
-            while True:
-                chunk = resp.read(65536)
-                if not chunk:
-                    break
-                data += chunk
-                if total > 0:
-                    self.progress.emit(int(len(data) / total * 100))
-            dest.write_bytes(data)
+            downloaded = 0
+            with open(dest, 'wb') as f:
+                while True:
+                    chunk = resp.read(65536)
+                    if not chunk:
+                        break
+                    f.write(chunk)
+                    downloaded += len(chunk)
+                    if total > 0:
+                        self.progress.emit(int(downloaded / total * 100))
             self.finished.emit(str(dest))
         except Exception as e:
             print(f'Artwork download error: {e}')

@@ -9,17 +9,20 @@ sys.path.append('./tracklist') # clean this up
 from track import Track
 from album import Album
 from album_view import AlbumView
+from art_label import AlbumArtLabel
 from progress_bar import ClickableProgressBar
 from artwork_finder import ArtworkFinderDialog
+from color_extract import text_color_for
 from marquee_label import MarqueeLabel
 
 # media playback - find one that uses crossplat mediakeys out of the box
 from just_playback import Playback
 
 # pyqt5
-from PyQt5.QtWidgets import (QMainWindow, QApplication, QWidget, QHBoxLayout, QPushButton, QLabel, QVBoxLayout, QSizePolicy, QGraphicsDropShadowEffect)
+from PyQt5.QtWidgets import (QMainWindow, QApplication, QWidget, QHBoxLayout,
+    QPushButton, QLabel, QVBoxLayout, QSizePolicy)
 from PyQt5.QtCore import Qt, QTimer, QSize, pyqtSignal, QByteArray
-from PyQt5.QtGui import QPixmap, QColor, QIcon, QPainter
+from PyQt5.QtGui import QPixmap, QColor, QIcon, QPainter, QFontMetrics
 from PyQt5.QtSvg import QSvgRenderer
 
 
@@ -28,8 +31,19 @@ if getattr(sys, '_MEIPASS', None):
 else:
     ICONS_DIR = Path(__file__).parent / 'icons'
 
+_ICON_CACHE = {}  # (name, color, size) -> QPixmap
+
 def _render_svg(name, color, size):
-    """Render an SVG icon with the given fill color and return a QPixmap."""
+    """Render an SVG icon with the given fill color and return a QPixmap.
+
+    Rendered pixmaps are memoized — theme/accent changes and mode-control
+    swaps request the same handful of (name, color, size) combinations over
+    and over, so this avoids repeated disk reads and rasterization.
+    """
+    key = (name, color, size)
+    cached = _ICON_CACHE.get(key)
+    if cached is not None:
+        return cached
     svg_path = ICONS_DIR / f'{name}.svg'
     svg_data = svg_path.read_text()
     svg_data = svg_data.replace('<path d=', f'<path fill="{color}" d=')
@@ -40,6 +54,7 @@ def _render_svg(name, color, size):
     painter = QPainter(pixmap)
     renderer.render(painter)
     painter.end()
+    _ICON_CACHE[key] = pixmap
     return pixmap
 
 
@@ -53,11 +68,15 @@ def _svg_icon(name, color='black', size=32, hover_color=None):
 
 
 class Player(QWidget):
-    APP_UPDATE_TIME = 20 # ms
+    # Progress/lyrics tick interval. 200ms is plenty: the progress bar has
+    # 1000 steps, time labels change once per second, and LRC lyrics lines
+    # are second-granularity.
+    APP_UPDATE_TIME = 200 # ms
 
     track_finished = pyqtSignal()
     track_changed = pyqtSignal(object)
     art_clicked = pyqtSignal()
+    art_changed = pyqtSignal(QPixmap)
 
     def __init__(self, album=None, folder_view=None, album_view=None):
         super().__init__()
@@ -66,6 +85,12 @@ class Player(QWidget):
         self.album = album
         self.album_view = album_view # attached at the App level
         self.folder_view = folder_view
+
+        # Compactness: 1.0 = roomy chrome, 0.0 = tightest. Recomputed from
+        # available height in resizeEvent so the controls block shrinks
+        # before it ever eats into the album art's space.
+        self._compact_t = 1.0
+        self._last_font_size = None
 
         self.build_gui()
 
@@ -85,50 +110,39 @@ class Player(QWidget):
         self.playlist_pos = 0
 
     def build_gui(self):
-        """
-            Builds the Player inferface
+        """Build the player column: art on top, controls block below.
 
-            General code steps:
-                Create X Layout
-                Create Widgets (style and attach events)
-                Add Widgets to X Layout
-                Add X Layout to PARENT layout (player)
-
+        Sizing is left entirely to Qt layouts — the art expands into the
+        remaining space (AlbumArtLabel letterboxes and caches its own
+        scaling) and the controls block keeps a fixed height, capped width,
+        and stays horizontally centered.
         """
-        self.setMinimumSize(200, 250)
+        self.setMinimumSize(180, 220)
+        self.setObjectName('player')
+        # Custom QWidget subclasses only paint QSS backgrounds with this set —
+        # the player column sits on the elevated background tone
+        self.setAttribute(Qt.WA_StyledBackground, True)
 
         self.layout_player = QVBoxLayout()
-        self.layout_player.setContentsMargins(12, 0, 0, 2)
-        self.layout_player.setSpacing(0)
-        self.player = QWidget()
-        self.player.setObjectName('player')
+        self.layout_player.setContentsMargins(12, 12, 12, 12)
+        self.layout_player.setSpacing(10)
 
-        # Inner container holds art + controls as a single centered unit
-        self._inner = QWidget()
-        self._inner_layout = QVBoxLayout()
-        self._inner_layout.setContentsMargins(0, 0, 0, 0)
-        self._inner_layout.setSpacing(0)
+        # ALBUM ART — square footprint, cached scaling. Centered as a tight
+        # unit with the controls (stretches above/below share the slack).
+        self.layout_player.addStretch(1)
+        self.album_widget = AlbumArtLabel()
+        self.album_widget.clicked.connect(self.art_clicked.emit)
+        self.layout_player.addWidget(self.album_widget)
 
-        # ALBUM ART
-        self.album_widget = QLabel()
-        self.album_widget.setMinimumSize(80, 80)
-        self.album_widget.setObjectName('album-art')
-        self.album_widget.setAlignment(Qt.AlignCenter)
-        self.album_widget.setScaledContents(True)
-        self.album_widget.setCursor(Qt.PointingHandCursor)
-        self.album_widget.mousePressEvent = lambda e: self.art_clicked.emit() if e.button() == Qt.LeftButton else None
-        shadow = QGraphicsDropShadowEffect(self)
-        shadow.setBlurRadius(6)
-        shadow.setOffset(2, 2)
-        shadow.setColor(QColor(0, 0, 0, 200))
-        self.album_widget.setGraphicsEffect(shadow)
-        self._inner_layout.addWidget(self.album_widget, alignment=Qt.AlignHCenter)
-
-        # Controls container — matches album art width
+        # Controls container — fixed height, capped width, centered
         self.controls_container = QWidget()
+        self.controls_container.setObjectName('player-controls')
+        self.controls_container.setMaximumWidth(420)
+        self.controls_container.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         controls_layout = QVBoxLayout()
         controls_layout.setContentsMargins(0, 6, 0, 0)
         controls_layout.setSpacing(6)
+        self.controls_layout = controls_layout
 
         # SONG TITLE - ARTIST
         self.track_info = MarqueeLabel('')
@@ -151,7 +165,7 @@ class Player(QWidget):
         self.progress_bar.start_playback.connect(self.resume)
         self.progress_bar.setRange(0, 1000)
         self.progress_bar.setTextVisible(False)
-        self.progress_bar.setFixedHeight(10)
+        self.progress_bar.setFixedHeight(8)
 
         self.track_length_label = QLabel('0:00')
         self.track_length_label.setObjectName('track-length')
@@ -165,10 +179,10 @@ class Player(QWidget):
         controls_layout.addLayout(self.layout_track_progress)
 
         # TRACK CONTROL BUTTONS
-        self._icon_size = QSize(24, 24)
+        self._icon_size = QSize(40, 40)
         self.layout_player_buttons = QHBoxLayout()
         self.layout_player_buttons.setSpacing(0)
-        self.layout_player_buttons.setContentsMargins(0, 8, 0, 0)
+        self.layout_player_buttons.setContentsMargins(0, 2, 0, 0)
 
         self.prev_track_button = QPushButton()
         self.prev_track_button.pressed.connect(self.prev_track)
@@ -197,7 +211,7 @@ class Player(QWidget):
 
         self._btn_container = QWidget()
         btn_layout = QHBoxLayout()
-        btn_layout.setSpacing(0)
+        btn_layout.setSpacing(4)
         btn_layout.setContentsMargins(0, 0, 0, 0)
         btn_layout.addWidget(self.prev_track_button)
         btn_layout.addWidget(self.play_button)
@@ -209,16 +223,38 @@ class Player(QWidget):
         controls_layout.addLayout(self.layout_player_buttons)
 
         self.controls_container.setLayout(controls_layout)
-        self._inner_layout.addWidget(self.controls_container, alignment=Qt.AlignHCenter)
 
-        self._inner.setLayout(self._inner_layout)
-
-        # Center the entire art+controls unit vertically and horizontally
-        self.layout_player.addStretch()
-        self.layout_player.addWidget(self._inner, alignment=Qt.AlignHCenter)
-        self.layout_player.addStretch()
+        # Center the controls block; it caps at 420px wide
+        controls_row = QHBoxLayout()
+        controls_row.setContentsMargins(0, 0, 0, 0)
+        controls_row.addStretch(1)
+        controls_row.addWidget(self.controls_container, stretch=8)
+        controls_row.addStretch(1)
+        self.layout_player.addLayout(controls_row)
+        self.layout_player.addStretch(1)
 
         self.setLayout(self.layout_player)
+        self.set_control_scale()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._update_compactness()
+
+    def _update_compactness(self):
+        """Shrink the controls block's chrome (margins, spacing, icon size,
+        progress bar thickness) as the column gets short — the album art
+        keeps first claim on vertical space instead of being squeezed."""
+        lo, hi = 240, 480
+        t = max(0.0, min(1.0, (self.height() - lo) / (hi - lo)))
+        if abs(t - self._compact_t) < 0.02:
+            return
+        self._compact_t = t
+        margin = round(4 + 8 * t)
+        self.layout_player.setContentsMargins(margin, margin, margin, margin)
+        self.layout_player.setSpacing(round(4 + 6 * t))
+        self.controls_layout.setSpacing(round(2 + 4 * t))
+        self.progress_bar.setFixedHeight(round(5 + 3 * t))
+        self.set_control_scale(self._last_font_size)
 
     def _toggle_time_display(self):
         self._show_remaining = not self._show_remaining
@@ -230,15 +266,19 @@ class Player(QWidget):
             color = getattr(self, '_icon_color', 'black')
         self._icon_color = color
         self._icon_hover_color = hover_color
+        if hover_color:
+            self._accent_color = hover_color
         self._set_btn_hover_icons(self.prev_track_button, 'skip_previous', color, hover_color)
         self._set_btn_hover_icons(self.next_track_button, 'skip_next', color, hover_color)
         self._set_play_icon()
 
     def _set_btn_hover_icons(self, btn, icon_name, color, hover_color):
-        """Set normal icon and install enter/leave handlers for hover color."""
+        """Set normal icon and install enter/leave handlers for accent-contrast hover."""
+        accent = getattr(self, '_accent_color', None)
+        contrast = text_color_for(accent) if accent else color
         btn.setIcon(_svg_icon(icon_name, color))
         btn._normal_icon = _svg_icon(icon_name, color)
-        btn._hover_icon = _svg_icon(icon_name, hover_color or color)
+        btn._hover_icon = _svg_icon(icon_name, contrast)
         btn.enterEvent = lambda e, b=btn: b.setIcon(b._hover_icon)
         btn.leaveEvent = lambda e, b=btn: b.setIcon(b._normal_icon)
 
@@ -299,8 +339,8 @@ class Player(QWidget):
                 self.current_track.length_to_string(pos))
             self._update_time_label(pos)
 
-        # Check if Track finished playing
-        if pos >= total - 0.1:
+        # Check if Track finished playing (margin covers one timer tick)
+        if pos >= total - 0.3:
             self.track_progress_label.setText(
                 self.current_track.length_to_string(self.current_track.length)
                 )
@@ -411,15 +451,23 @@ class Player(QWidget):
         if self.current_track:
             self._update_time_label(0)
 
+    def set_art(self, pixmap):
+        """Route all artwork through here so listeners (max mode) stay in sync."""
+        if pixmap is None or pixmap.isNull():
+            self.album_widget.clear()
+            self.art_changed.emit(QPixmap())
+        else:
+            self.album_widget.set_source(pixmap)
+            # Emit the display copy (already downscaled) for reuse elsewhere
+            self.art_changed.emit(self.album_widget.pixmap())
+
     def load_album_art(self, album):
         """Load cover.jpg from album folder, or offer to search iTunes."""
         if self.album.art:
-            pixmap = QPixmap(str(self.album.art))
-            self.album_widget.setPixmap(pixmap)
+            self.set_art(QPixmap(str(self.album.art)))
         else:
-            self.album_widget.clear()
+            self.set_art(None)
             self._offer_artwork_search()
-        self.update_layout()
 
     def _offer_artwork_search(self):
         """Open the artwork finder dialog to search iTunes for cover art."""
@@ -444,8 +492,7 @@ class Player(QWidget):
         """Called when artwork is downloaded and saved."""
         from pathlib import Path as P
         self.album.art = P(path)
-        pixmap = QPixmap(path)
-        self.album_widget.setPixmap(pixmap)
+        self.set_art(QPixmap(path))
         # Notify app to update accent palette
         app = self.window()
         if hasattr(app, '_update_accent_for_album'):
@@ -462,79 +509,30 @@ class Player(QWidget):
                 self._set_play_icon(True)
                 self.resume()
 
-    def update_layout(self):
-        """Recalculate control sizing after mode/visibility changes."""
-        self.resizeEvent(None)
+    def set_control_scale(self, font_size=None):
+        """Size icons and time labels from the controls font size, scaled
+        down further by the current compactness (see _update_compactness).
 
-    def resizeEvent(self, event):
-        if event:
-            super().resizeEvent(event)
-
-        outer_m = self.layout_player.contentsMargins()
-
-        # Determine spacing first (used in controls height calc)
-        avail_w_est = self.width() - outer_m.left() - outer_m.right()
-        compact = avail_w_est < 250
-        sp = 2 if compact else 4
-
-        # Apply spacing/margins to controls container
-        self.controls_container.layout().setSpacing(sp)
-        self.controls_container.layout().setContentsMargins(0, sp, 0, 0)
-        self._btn_container.layout().setSpacing(0)
-
-        # Calculate exact controls height from components + layout gaps
-        info_h = self.track_info.sizeHint().height()
-        progress_h = max(self.progress_bar.maximumHeight(),
-                         self.track_progress_label.sizeHint().height())
-        btn_m = self.layout_player_buttons.contentsMargins()
-        icon_dim = max(16, min(24, avail_w_est // 12))
-        btn_h = icon_dim + 12 + btn_m.top() + btn_m.bottom()
-        ctrl_m = self.controls_container.layout().contentsMargins()
-        controls_height = (ctrl_m.top() + info_h + sp
-                           + progress_h + sp
-                           + btn_h + ctrl_m.bottom())
-
-        # Available space for album art
-        total_reserved = controls_height + outer_m.top() + outer_m.bottom()
-        margin = min(10, int(self.width() * 0.02))
-        avail_w = self.width() - outer_m.left() - outer_m.right() - margin * 2
-        avail_h = self.height() - total_reserved
-        avail_w = max(avail_w, 80)
-        avail_h = max(avail_h, 80)
-
-        pixmap = self.album_widget.pixmap()
-        if pixmap and not pixmap.isNull() and pixmap.width() > 0 and pixmap.height() > 0:
-            pw, ph = pixmap.width(), pixmap.height()
-            ratio = pw / ph
-            if avail_w / avail_h > ratio:
-                art_h = avail_h
-                art_w = int(art_h * ratio)
-            else:
-                art_w = avail_w
-                art_h = int(art_w / ratio)
-        else:
-            art_w = art_h = min(avail_w, avail_h)
-
-        self.album_widget.setFixedSize(art_w, art_h)
-        controls_w = min(art_w, avail_w)
-        self.controls_container.setFixedWidth(controls_w)
-
-        # Scale button icons to fit available width
+        Called at build time, whenever the theme/font changes, and whenever
+        the column gets short enough to need tighter chrome.
+        """
+        if font_size is None:
+            import theme as theme_mod
+            font_size = theme_mod.DEFAULT_SIZE_CONTROLS
+        self._last_font_size = font_size
+        compact_scale = 0.7 + 0.3 * self._compact_t  # 0.7 tight .. 1.0 roomy
+        icon_dim = max(22, min(56, int(font_size * 3.2 * compact_scale)))
         icon_size = QSize(icon_dim, icon_dim)
-        btn_w = icon_dim + 12
         for btn in (self.prev_track_button, self.play_button, self.next_track_button):
             btn.setIconSize(icon_size)
-            btn.setFixedWidth(btn_w)
-
-        # Keep buttons clustered in the center
-        visible = [b for b in (self.prev_track_button, self.play_button, self.next_track_button) if b.isVisible()]
-        self._btn_container.setFixedWidth(btn_w * len(visible))
-
-        # Adapt time label widths
-        time_w = max(30, controls_w // 5)
+            btn.setFixedHeight(icon_dim + 8)
+            btn.setMinimumWidth(icon_dim + 20)
+        # Time labels get a stable width so the progress bar doesn't jitter
+        fm = QFontMetrics(self.track_length_label.font())
+        time_w = fm.horizontalAdvance('-88:88') + 6
         self.track_progress_label.setFixedWidth(time_w)
         self.track_length_label.setFixedWidth(time_w)
-        
+
 def main():
 
     app = QApplication(sys.argv)

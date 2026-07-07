@@ -31,6 +31,7 @@ from PyQt5.QtCore import QThread, pyqtSignal
 
 LRCLIB_GET = 'https://lrclib.net/api/get'
 LRCLIB_SEARCH = 'https://lrclib.net/api/search'
+DURATION_TOLERANCE = 15  # seconds — reject results with duration off by more than this
 
 
 def sanitize_filename(name):
@@ -62,13 +63,14 @@ class LyricsFetchThread(QThread):
     """Fetch lyrics from LRCLIB in background, save to disk."""
     lyrics_ready = pyqtSignal(str, str)  # (file_path, lyrics_text)
 
-    def __init__(self, artist, track_title, album_title, track, album):
+    def __init__(self, artist, track_title, album_title, track, album, duration=0):
         super().__init__()
         self.artist = artist or ''
         self.track_title = track_title or ''
         self.album_title = album_title or ''
         self.track = track
         self.album = album
+        self.duration = duration or 0
 
     @staticmethod
     def _clean(text):
@@ -83,6 +85,15 @@ class LyricsFetchThread(QThread):
         req = urllib.request.Request(url, headers={'User-Agent': 'lp-music-player/1.0'})
         data = urllib.request.urlopen(req, timeout=10, context=_ssl_ctx).read()
         return json.loads(data)
+
+    def _duration_ok(self, result):
+        """Check if result duration is close enough to our track."""
+        if not self.duration:
+            return True
+        api_dur = result.get('duration')
+        if not api_dur:
+            return True
+        return abs(api_dur - self.duration) <= DURATION_TOLERANCE
 
     def _save_and_emit(self, synced, plain):
         """Save lyrics to cache and emit result. Returns True if found."""
@@ -108,15 +119,16 @@ class LyricsFetchThread(QThread):
             return
 
         try:
-            # 1) Exact match with raw metadata
+            # 1) Exact match with cleaned album name
+            clean_album = self._clean(self.album_title)
             params = urllib.parse.urlencode({
                 'artist_name': self.artist,
                 'track_name': self.track_title,
-                'album_name': self.album_title,
+                'album_name': clean_album,
             })
             try:
                 result = self._fetch(f'{LRCLIB_GET}?{params}')
-                if self._save_and_emit(
+                if self._duration_ok(result) and self._save_and_emit(
                     result.get('syncedLyrics', ''),
                     result.get('plainLyrics', '')
                 ):
@@ -124,35 +136,19 @@ class LyricsFetchThread(QThread):
             except Exception:
                 pass
 
-            # 2) Exact match with cleaned album name
-            clean_album = self._clean(self.album_title)
-            if clean_album != self.album_title:
-                params = urllib.parse.urlencode({
-                    'artist_name': self.artist,
-                    'track_name': self.track_title,
-                    'album_name': clean_album,
-                })
-                try:
-                    result = self._fetch(f'{LRCLIB_GET}?{params}')
-                    if self._save_and_emit(
-                        result.get('syncedLyrics', ''),
-                        result.get('plainLyrics', '')
-                    ):
-                        return
-                except Exception:
-                    pass
-
-            # 3) Search fallback — artist + track title
+            # 2) Search fallback — artist + track title
             clean_title = self._clean(self.track_title)
             clean_artist = self._clean(self.artist)
             q = f'{clean_artist} {clean_title}'.strip()
             if q:
                 params = urllib.parse.urlencode({'q': q})
                 results = self._fetch(f'{LRCLIB_SEARCH}?{params}')
-                # Pick best match: prefer synced, match artist name
+                # Pick best match: prefer synced, match artist name, check duration
                 artist_lower = clean_artist.lower()
                 for r in results:
                     if artist_lower and artist_lower not in r.get('artistName', '').lower():
+                        continue
+                    if not self._duration_ok(r):
                         continue
                     synced = r.get('syncedLyrics', '')
                     plain = r.get('plainLyrics', '')
@@ -160,6 +156,8 @@ class LyricsFetchThread(QThread):
                         return
                 # If no artist match, try first result with lyrics
                 for r in results:
+                    if not self._duration_ok(r):
+                        continue
                     synced = r.get('syncedLyrics', '')
                     plain = r.get('plainLyrics', '')
                     if self._save_and_emit(synced, plain):

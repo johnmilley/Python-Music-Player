@@ -83,10 +83,6 @@ class FolderView(QWidget):
         self.model.setRootPath(path)
         self.view.setRootIndex(self.model.index(path))
 
-    def ideal_width(self):
-        """Return the ideal width based on visible content."""
-        return self.view.sizeHintForColumn(0) + 40
-
     @staticmethod
     def _has_music(path):
         try:
