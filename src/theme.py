@@ -141,6 +141,18 @@ def build_qss(t, fs_controls=None, fs_tracklist=None, fs_lyrics=None):
         QMainWindow, #main-window, #left-stack {{
             background-color: {t['bg']};
         }}
+        /* Frameless window: root_stack fills the window edge to edge and
+           draws the window's own 1px hairline outline (no OS border).
+           Hidden while maximized/fullscreen, like a normal window's border
+           merging with the screen edge. Resizing is invisible overlay
+           grips (window_chrome.py), not a padded margin. */
+        #root-stack {{
+            background-color: {t['bg']};
+            border: 1px solid {t['hairline']};
+        }}
+        #root-stack[maximized="true"] {{
+            border: none;
+        }}
         QMenuBar {{
             background-color: {t['bg']};
             border: none; padding: 0; margin: 0; max-height: 0;
@@ -156,6 +168,33 @@ def build_qss(t, fs_controls=None, fs_tracklist=None, fs_lyrics=None):
 
         /* ── Splitters: handles are custom-painted (grip_splitter.py) ── */
         QSplitter::handle {{ background: transparent; }}
+
+        /* ── Titlebar: custom frameless-window chrome, sits directly on
+           top of the toolbar with the same background so the two read as
+           one continuous strip (mirrors the titlebar+tabbar stack in the
+           sibling 'text' app) ── */
+        #titlebar {{
+            background-color: {t['bg_elevated']};
+            border-bottom: 1px solid {t['hairline']};
+        }}
+        #titlebar-title {{
+            color: {t['fg_dim']};
+            font-family: {FONT_CONTROLS};
+            font-size: {fs_c}pt;
+        }}
+        #titlebar-buttons QToolButton {{
+            background: transparent;
+            border: none;
+            color: {t['fg_dim']};
+        }}
+        #titlebar-buttons QToolButton:hover {{
+            background-color: {accent_hover};
+            color: {t['fg']};
+        }}
+        #tb-close:hover {{
+            background-color: #c0392b;
+            color: white;
+        }}
 
         /* ── Toolbar: accent strip, elevated strip, square toggles ── */
         #accent-bar {{

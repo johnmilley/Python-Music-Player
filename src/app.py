@@ -25,6 +25,7 @@ from media_keys import MediaKeyHandler, start_native_backend
 from panel_manager import PanelManager
 from grip_splitter import GripSplitter
 from max_view import MaxView
+from window_chrome import TitleBar, WindowGrips
 import theme
 
 from PyQt5.QtWidgets import (QMainWindow, QApplication, QWidget, QHBoxLayout,
@@ -53,8 +54,12 @@ class ToolBar(QWidget):
         self.update_height(theme.DEFAULT_SIZE_CONTROLS)
 
     def update_height(self, fs):
-        """Size the bar to fit the icon buttons."""
-        self.setFixedHeight(max(fs + 18, 32))
+        """Size the bar to fit the icon buttons.
+
+        Floor matches the titlebar/tabbar height (30px) used by the sibling
+        'text' app, so the two apps' chrome reads as the same height.
+        """
+        self.setFixedHeight(max(fs + 18, 30))
 
     def addWidget(self, widget):
         self._layout.addWidget(widget, 0, Qt.AlignVCenter)
@@ -130,6 +135,10 @@ class App(QMainWindow):
         self.player.timer.timeout.connect(self._update_lyrics_position)
         self.player.art_clicked.connect(self._on_art_clicked)
 
+        # Frameless custom window (own titlebar below), matching the
+        # non-system window style of the sibling 'text' app
+        self.setWindowFlags(self.windowFlags() | Qt.FramelessWindowHint)
+
         self.setWindowTitle("lp")
         # Support both normal and PyInstaller-bundled paths
         if getattr(sys, '_MEIPASS', None):
@@ -174,10 +183,18 @@ class App(QMainWindow):
         self.layout_app.addWidget(self.main_splitter)
         self.app_widget.setLayout(self.layout_app)
 
-        # Top-level stack: normal page now; max-mode page swaps in on demand
+        # Top-level stack: normal page now; max-mode page swaps in on demand.
+        # Content runs edge to edge; the frameless window's own 1px outline
+        # is drawn by root_stack's stylesheet border.
         self.root_stack = QStackedWidget()
+        self.root_stack.setObjectName('root-stack')
+        self.root_stack.setAttribute(Qt.WA_StyledBackground, True)
         self.root_stack.addWidget(self.app_widget)
         self.setCentralWidget(self.root_stack)
+
+        # Invisible grips floating over the edges/corners handle resizing
+        # (positioned in resizeEvent, hidden while maximized/fullscreen)
+        self._grips = WindowGrips(self)
 
         self.settings = QSettings('lp', 'music-player')
         self._episode_positions = self.settings.value('podcast/episode_positions', {}) or {}
@@ -281,8 +298,14 @@ class App(QMainWindow):
         self.accent_bar.setObjectName('accent-bar')
         self.accent_bar.setAttribute(Qt.WA_StyledBackground, True)
         self.accent_bar.setFixedHeight(3)
-        self.layout_app.insertWidget(0, self.toolbar_widget)
-        self.layout_app.insertWidget(1, self.accent_bar)
+
+        # Custom titlebar (frameless window) sits above the toolbar, same
+        # background, so the two read as one continuous strip of chrome
+        self.title_bar = TitleBar(self)
+        self.title_bar.set_title(self.windowTitle())
+        self.layout_app.insertWidget(0, self.title_bar)
+        self.layout_app.insertWidget(1, self.toolbar_widget)
+        self.layout_app.insertWidget(2, self.accent_bar)
 
         # Max mode state — the MaxView page is created lazily on first use
         self.is_maxplayer = False
@@ -788,8 +811,43 @@ class App(QMainWindow):
             vol = self.player.playback.volume + delta
             self.player.playback.set_volume(max(0, min(1, vol)))
 
+    def setWindowTitle(self, title):
+        super().setWindowTitle(title)
+        if hasattr(self, 'title_bar'):
+            self.title_bar.set_title(title)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._grips.relayout()
+
     def changeEvent(self, event):
         super().changeEvent(event)
+        if event.type() == QEvent.WindowStateChange:
+            self._update_window_state_chrome()
+
+    def _update_window_state_chrome(self):
+        """Keep the custom titlebar/border/grips in sync with window state.
+
+        Frameless windows have no OS border to draw a maximize/restore
+        distinction for us, so the titlebar's square glyph, the window's
+        hairline outline (hidden while maximized/fullscreen, like a normal
+        window's border merging with the screen edge) and the resize grips
+        (pointless without a normal-state border) are driven from here.
+        """
+        maximized = self.isMaximized()
+        edgeless = maximized or self.isFullScreen()
+        self.title_bar.set_maximized(maximized)
+        self._grips.set_enabled(not edgeless)
+        if self.root_stack.property('maximized') != edgeless:
+            self.root_stack.setProperty('maximized', edgeless)
+            self.root_stack.style().unpolish(self.root_stack)
+            self.root_stack.style().polish(self.root_stack)
+        # Windows draws frameless+maximized windows a few px off-screen
+        # (the invisible native resize border still swells outward); inset
+        # the content to compensate. Not an issue on Linux/macOS.
+        if sys.platform == 'win32':
+            m = 8 if maximized else 0
+            self.setContentsMargins(m, m, m, m)
 
     def keyPressEvent(self, event):
         """Handle key presses — dispatch shortcuts in max mode."""
@@ -1144,6 +1202,8 @@ class App(QMainWindow):
         self._style_max_mode()
         self.root_stack.setCurrentWidget(self._max_view)
         self._max_view.setFocus()
+        # Grips/border are hidden by _update_window_state_chrome when the
+        # fullscreen state change lands
         self.showFullScreen()
 
     def _style_max_mode(self):
@@ -1187,6 +1247,7 @@ class App(QMainWindow):
         self._was_inactive = False
         if self._pre_max_geometry:
             self.restoreGeometry(self._pre_max_geometry)
+        self._update_window_state_chrome()
         # macOS fullscreen exit animation delays focus — retry once it settles
         def _force_focus():
             self.raise_()
