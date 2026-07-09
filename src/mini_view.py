@@ -16,7 +16,8 @@
 # (set_key_handlers), so mini mode reuses the same shortcut behaviors
 # (play/pause, seek, volume) without duplicating any logic.
 
-from PyQt5.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout, QToolButton, QApplication
+from PyQt5.QtWidgets import (QWidget, QHBoxLayout, QVBoxLayout, QToolButton,
+    QApplication, QLabel)
 from PyQt5.QtCore import Qt, QEvent, QSize, QTimer, pyqtSignal
 from PyQt5.QtGui import QIcon, QCursor
 
@@ -42,6 +43,7 @@ class MiniView(QWidget):
         self._keymap = {}
         self._resizing_self = False  # guard for programmatic resizes
         self.lyrics_on = False
+        self.tracklist_on = False
 
         layout = QHBoxLayout()
         layout.setContentsMargins(1, 1, 1, 1)  # keep the hairline border visible
@@ -53,16 +55,36 @@ class MiniView(QWidget):
         self.art.installEventFilter(self)  # drag-to-move / double-click exit
         layout.addWidget(self.art)
 
-        # Lyrics column — the app's lyrics widget is reparented in here
-        # while lyrics are toggled on
-        self.lyrics_column = QWidget()
-        self.lyrics_column.setObjectName('mini-lyrics-column')
-        self.lyrics_column.setMinimumWidth(160)
-        self.lyrics_slot = QVBoxLayout()
-        self.lyrics_slot.setContentsMargins(8, 8, 8, 8)
-        self.lyrics_column.setLayout(self.lyrics_slot)
-        self.lyrics_column.hide()
-        layout.addWidget(self.lyrics_column, stretch=1)
+        # Side column — track title (always visible whenever the column is
+        # shown) plus a tracklist slot and a lyrics slot, each independently
+        # toggleable. The app's AlbumView / LyricsWidget are reparented in
+        # here while toggled on (same borrowing pattern as MaxView).
+        self.side_column = QWidget()
+        self.side_column.setObjectName('mini-lyrics-column')
+        self.side_column.setMinimumWidth(160)
+        side = QVBoxLayout()
+        side.setContentsMargins(8, 8, 8, 8)
+        side.setSpacing(6)
+        self.track_label = QLabel()
+        self.track_label.setObjectName('mini-track-label')
+        self.track_label.setWordWrap(True)
+        side.addWidget(self.track_label)
+
+        self.tracklist_wrap = QWidget()
+        self.tracklist_slot = QVBoxLayout(self.tracklist_wrap)
+        self.tracklist_slot.setContentsMargins(0, 0, 0, 0)
+        self.tracklist_wrap.hide()
+        side.addWidget(self.tracklist_wrap, stretch=1)
+
+        self.lyrics_wrap = QWidget()
+        self.lyrics_slot = QVBoxLayout(self.lyrics_wrap)
+        self.lyrics_slot.setContentsMargins(0, 0, 0, 0)
+        self.lyrics_wrap.hide()
+        side.addWidget(self.lyrics_wrap, stretch=1)
+
+        self.side_column.setLayout(side)
+        self.side_column.hide()
+        layout.addWidget(self.side_column, stretch=1)
 
         self.setLayout(layout)
 
@@ -92,12 +114,13 @@ class MiniView(QWidget):
         self.prev_btn = self._make_button('skip_previous', 'Previous')
         self.play_btn = self._make_button('play_arrow', 'Play / Pause (p)')
         self.next_btn = self._make_button('skip_next', 'Next')
+        self.tracklist_btn = self._make_button('tracklist', 'Toggle tracklist (4)')
         self.lyrics_btn = self._make_button('lyrics', 'Toggle lyrics (5)')
         self.exit_btn = self._make_button(None, 'Back to full window (m)',
                                           glyph='⤢')
         self.exit_btn.clicked.connect(self.exit_requested.emit)
         for btn in (self.prev_btn, self.play_btn, self.next_btn,
-                    self.lyrics_btn, self.exit_btn):
+                    self.tracklist_btn, self.lyrics_btn, self.exit_btn):
             bar.addWidget(btn)
         self.controls.setLayout(bar)
         self.controls.hide()
@@ -118,7 +141,11 @@ class MiniView(QWidget):
 
         player.art_changed.connect(self.art.set_source)
         player.play_state_changed.connect(self.set_playing)
+        player.track_changed.connect(self._on_track_changed)
         player.register_art_label(self.art)
+
+    def _on_track_changed(self, track):
+        self.track_label.setText(str(getattr(track, 'title', '') or ''))
 
     # ── Buttons ─────────────────────────────────────────────────────
 
@@ -152,18 +179,38 @@ class MiniView(QWidget):
             #mini-lyrics-column {{
                 background-color: {t['bg']};
             }}
+            #mini-track-label {{
+                color: {t['fg']};
+                background: transparent;
+                font-weight: bold;
+            }}
         """)
 
-    # ── Lyrics column ───────────────────────────────────────────────
+    # ── Side column (tracklist / lyrics) ────────────────────────────
+
+    def _any_side_visible(self):
+        return self.lyrics_on or self.tracklist_on
 
     def set_lyrics_visible(self, on):
-        """Show/hide the lyrics column; the window widens beside the square
-        art rather than stealing width from it."""
+        """Show/hide the lyrics pane in the side column."""
         self.lyrics_on = on
-        self.lyrics_column.setVisible(on)
+        self.lyrics_wrap.setVisible(on)
+        self._apply_side_layout()
+
+    def set_tracklist_visible(self, on):
+        """Show/hide the tracklist pane in the side column."""
+        self.tracklist_on = on
+        self.tracklist_wrap.setVisible(on)
+        self._apply_side_layout()
+
+    def _apply_side_layout(self):
+        """Resize the window for the side column's current visibility; the
+        window widens beside the square art rather than stealing width from
+        it. Shared by lyrics/tracklist since either (or both) can be open."""
+        self.side_column.setVisible(self._any_side_visible())
         side = self.height()
         self._resizing_self = True
-        if on:
+        if self._any_side_visible():
             self.art.setFixedWidth(side - 2)
             self.resize(side + max(220, side // 2), side)
         else:
@@ -186,8 +233,8 @@ class MiniView(QWidget):
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._grips.relayout()
-        if self.lyrics_on:
-            # Art column pinned square; the lyrics column takes the rest
+        if self._any_side_visible():
+            # Art column pinned square; the side column takes the rest
             self.art.setFixedWidth(self.height() - 2)
         elif not self._resizing_self and self.width() != self.height():
             # Square window: follow whichever edge the user is dragging

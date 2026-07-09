@@ -282,6 +282,9 @@ class App(QMainWindow):
             'lyrics', 'panel-toggle', 'Toggle Lyrics (5)',
             self._on_toggle_lyrics, checkable=True)
         self.toggle_lyrics_btn.setChecked(True)
+        self.toggle_max_btn = self._make_tool_button(
+            'maximize', 'panel-toggle', 'Max mode (Shift+M)',
+            self.toggle_maxplayer, checkable=False)
 
         # Assemble: modes (left) | stretch | panel toggles + gear (right)
         hm.addWidget(self.mode_music_btn)
@@ -291,6 +294,7 @@ class App(QMainWindow):
         hm.addWidget(self.toggle_library_btn)
         hm.addWidget(self.toggle_tracklist_btn)
         hm.addWidget(self.toggle_lyrics_btn)
+        hm.addWidget(self.toggle_max_btn)
         hm.addSpacing(8)
         hm.addWidget(self.gear_btn)
 
@@ -333,6 +337,7 @@ class App(QMainWindow):
         for w in [self.player.prev_track_button, self.player.play_button,
                   self.player.next_track_button, self.player.progress_bar,
                   self.toggle_tracklist_btn, self.toggle_lyrics_btn,
+                  self.toggle_max_btn,
                   self.mode_music_btn, self.mode_podcast_btn, self.mode_radio_btn]:
             w.setFocusPolicy(Qt.NoFocus)
         self.lyrics_widget.setFocusPolicy(Qt.NoFocus)
@@ -428,7 +433,7 @@ class App(QMainWindow):
         for btn in (self.mode_music_btn, self.mode_podcast_btn,
                     self.mode_radio_btn, self.toggle_library_btn,
                     self.toggle_tracklist_btn, self.toggle_lyrics_btn,
-                    self.gear_btn):
+                    self.toggle_max_btn, self.gear_btn):
             name = getattr(btn, '_icon_name', None)
             if name:
                 btn.setIcon(self._toolbar_icon(name))
@@ -907,7 +912,10 @@ class App(QMainWindow):
                 Qt.Key_B: self._shortcut_seek_back,
                 Qt.Key_Period: lambda: self._adjust_volume(0.05),
                 Qt.Key_Comma: lambda: self._adjust_volume(-0.05),
+                Qt.Key_4: self.toggle_tracklist,
                 Qt.Key_5: self.toggle_lyrics,
+                Qt.Key_Left: lambda: self.player.step_art(-1),
+                Qt.Key_Right: lambda: self.player.step_art(1),
                 Qt.Key_Q: self.close,
                 Qt.Key_Question: self.show_help,
             }
@@ -1101,7 +1109,10 @@ class App(QMainWindow):
         self.panels.set_visible('tracklist', True, remember_size=False)
 
     def toggle_tracklist(self):
-        self.panels.toggle('tracklist')
+        if self.is_maxplayer:
+            self._toggle_max_tracklist()
+        else:
+            self.panels.toggle('tracklist')
 
     def toggle_lyrics(self):
         if self.is_maxplayer:
@@ -1111,8 +1122,11 @@ class App(QMainWindow):
 
     def _toggle_max_lyrics(self):
         if self._max_view:
-            col = self._max_view.lyrics_column
-            col.setVisible(not col.isVisible())
+            self._max_view.set_lyrics_visible(not self._max_view.lyrics_on)
+
+    def _toggle_max_tracklist(self):
+        if self._max_view:
+            self._max_view.set_tracklist_visible(not self._max_view.tracklist_on)
 
     # ── Lyrics & Track Change Handling ─────────────────────────────
 
@@ -1220,6 +1234,7 @@ class App(QMainWindow):
         if self._max_view is None:
             self._max_view = MaxView(self.player)
             self._max_view.art.clicked.connect(self.toggle_maxplayer)
+            self._max_view.exit_requested.connect(self.toggle_maxplayer)
             self.root_stack.addWidget(self._max_view)
 
         # Seed current state; player signals keep it in sync from here on
@@ -1231,8 +1246,10 @@ class App(QMainWindow):
         else:
             self._max_view.art.clear()
 
-        # Borrow the one true lyrics widget — same content, same highlight
+        # Borrow the one true lyrics widget and tracklist — same content,
+        # same highlight/selection, no duplication
         self._max_view.attach_lyrics(self.lyrics_widget)
+        self._max_view.attach_tracklist(self.album_view)
 
         self._style_max_mode()
         self.root_stack.setCurrentWidget(self._max_view)
@@ -1256,21 +1273,28 @@ class App(QMainWindow):
                 font-family: {theme.FONT};
                 font-size: {fs}pt;
             }}
+            {theme.minimal_scrollbar_qss(t)}
         """)
         self.lyrics_widget.set_theme(t, fs)
+        self._max_view.set_close_icon_color(t['fg_dim'])
 
     def exit_maxplayer(self):
         if not self.is_maxplayer:
             return
         self.is_maxplayer = False
 
-        # Return the borrowed lyrics widget to the right column
+        # Return the borrowed lyrics widget and tracklist to the right column
+        self.right_splitter.insertWidget(0, self.album_view)
         self.right_splitter.insertWidget(1, self.lyrics_widget)
         self.lyrics_widget.setStyleSheet('')  # drop the max-mode font bump
         self.panels.locked = False
+        self.album_view.setVisible(self.panels.is_visible('tracklist'))
         self.lyrics_widget.setVisible(self.panels.is_visible('lyrics'))
+        self.panels.reapply_size('tracklist')
         self.panels.reapply_size('lyrics')
-        self._max_view.lyrics_column.setVisible(True)  # reset for next entry
+        # Reset the side panes for the next entry: lyrics on, tracklist off
+        self._max_view.set_lyrics_visible(True)
+        self._max_view.set_tracklist_visible(False)
 
         self.root_stack.setCurrentWidget(self.app_widget)
 
@@ -1314,6 +1338,7 @@ class App(QMainWindow):
             mv.prev_btn.clicked.connect(self._shortcut_prev)
             mv.play_btn.clicked.connect(self._shortcut_play_pause)
             mv.next_btn.clicked.connect(self._shortcut_next)
+            mv.tracklist_btn.clicked.connect(self._toggle_mini_tracklist)
             mv.lyrics_btn.clicked.connect(self._toggle_mini_lyrics)
             # Mini mode reuses the app's shortcut behaviors directly
             mv.set_key_handlers({
@@ -1325,7 +1350,10 @@ class App(QMainWindow):
                 Qt.Key_Period: lambda: self._adjust_volume(0.05),
                 Qt.Key_Comma: lambda: self._adjust_volume(-0.05),
                 Qt.Key_M: self.exit_minimode,
+                Qt.Key_4: self._toggle_mini_tracklist,
                 Qt.Key_5: self._toggle_mini_lyrics,
+                Qt.Key_Left: lambda: self.player.step_art(-1),
+                Qt.Key_Right: lambda: self.player.step_art(1),
                 Qt.Key_Q: self.close,
             })
 
@@ -1344,10 +1372,12 @@ class App(QMainWindow):
             mv.restore_geometry(geometry)
         self.hide()
         mv.show()
-        # Lyrics preference from the last mini session (attach after show
-        # so the window geometry math sees real sizes)
+        # Lyrics/tracklist preference from the last mini session (attach
+        # after show so the window geometry math sees real sizes)
         if self.settings.value('mini/lyrics') == 'true' and not mv.lyrics_on:
             self._attach_mini_lyrics()
+        if self.settings.value('mini/tracklist') == 'true' and not mv.tracklist_on:
+            self._attach_mini_tracklist()
         mv.raise_()
         mv.activateWindow()
 
@@ -1358,19 +1388,26 @@ class App(QMainWindow):
         mv = self._mini_view
         self.settings.setValue('mini/lyrics',
                                'true' if mv.lyrics_on else 'false')
+        self.settings.setValue('mini/tracklist',
+                               'true' if mv.tracklist_on else 'false')
         if mv.lyrics_on:
             mv.set_lyrics_visible(False)
             self._return_lyrics_widget()
-        # Save the geometry only after the lyrics column has collapsed the
-        # window back to square — saving the widened lyrics-on rectangle
-        # here would get restored next time while lyrics_on is still False,
-        # tripping mini_view's "keep it square" resize logic into treating
-        # the wide saved width as the new square side (compounding growth
-        # on every lyrics-on/off round trip).
+        if mv.tracklist_on:
+            mv.set_tracklist_visible(False)
+            self._return_tracklist_widget()
+        # Save the geometry only after the side column has collapsed the
+        # window back to square — saving the widened lyrics/tracklist-on
+        # rectangle here would get restored next time while both are still
+        # False, tripping mini_view's "keep it square" resize logic into
+        # treating the wide saved width as the new square side (compounding
+        # growth on every side-column-on/off round trip).
         self.settings.setValue('mini/geometry', mv.saveGeometry())
         mv.hide()
         self.panels.locked = False
+        self.album_view.setVisible(self.panels.is_visible('tracklist'))
         self.lyrics_widget.setVisible(self.panels.is_visible('lyrics'))
+        self.panels.reapply_size('tracklist')
         self.panels.reapply_size('lyrics')
         self.show()
         self.raise_()
@@ -1400,6 +1437,7 @@ class App(QMainWindow):
                 font-family: {theme.FONT};
                 font-size: {self.font_size}pt;
             }}
+            {theme.minimal_scrollbar_qss(t)}
         """)
         self.lyrics_widget.set_theme(t, self.font_size)
         mv.set_lyrics_visible(True)
@@ -1409,6 +1447,32 @@ class App(QMainWindow):
         self.right_splitter.insertWidget(1, self.lyrics_widget)
         self.lyrics_widget.setStyleSheet('')
         self.lyrics_widget.setVisible(self.panels.is_visible('lyrics'))
+
+    def _toggle_mini_tracklist(self):
+        if not (self.is_minimode and self._mini_view):
+            return
+        if self._mini_view.tracklist_on:
+            self._mini_view.set_tracklist_visible(False)
+            self._return_tracklist_widget()
+        else:
+            self._attach_mini_tracklist()
+
+    def _attach_mini_tracklist(self):
+        """Borrow the one true AlbumView/tracklist into the mini window."""
+        mv = self._mini_view
+        mv.tracklist_slot.addWidget(self.album_view)
+        self.album_view.setVisible(True)
+        # Reparented out of the main window, it falls outside the app
+        # stylesheet — style it directly (cleared again on return)
+        t = self.effective_theme
+        self.album_view.setStyleSheet(theme.track_list_qss(t, self.font_size))
+        mv.set_tracklist_visible(True)
+
+    def _return_tracklist_widget(self):
+        """Give the borrowed tracklist back to the right column."""
+        self.right_splitter.insertWidget(0, self.album_view)
+        self.album_view.setStyleSheet('')
+        self.album_view.setVisible(self.panels.is_visible('tracklist'))
 
     # ── Podcast mode ──────────────────────────────────────────────
 
@@ -2027,6 +2091,8 @@ class App(QMainWindow):
         if self._mini_view:
             self.settings.setValue(
                 'mini/lyrics', 'true' if self._mini_view.lyrics_on else 'false')
+            self.settings.setValue(
+                'mini/tracklist', 'true' if self._mini_view.tracklist_on else 'false')
             if self.is_minimode:
                 self.settings.setValue('mini/geometry',
                                        self._mini_view.saveGeometry())

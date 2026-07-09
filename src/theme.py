@@ -106,6 +106,88 @@ def _alpha(color, alpha):
     return f'rgba({c.red()}, {c.green()}, {c.blue()}, {alpha})'
 
 
+def track_list_qss(t, fs=None):
+    """QSS for the tracklist (#track-list) and its search bar (#search-bar).
+
+    Factored out of build_qss() so it can also be applied directly to
+    AlbumView when it's borrowed into MiniView — a separate top-level window
+    that the main stylesheet never reaches (see App._attach_mini_tracklist).
+    """
+    fs_t = fs or DEFAULT_SIZE
+    accent = t['accent']
+    accent_fg = t['accent_fg']
+    accent_hover = _alpha(accent, 22)
+    item_pad = max(3, (fs_t - 10) // 2 + 3)
+    return f"""
+        #track-list {{
+            background-color: {t['bg']};
+            font-size: {fs_t}pt;
+            font-family: {FONT};
+            border: none;
+            color: {t['fg']};
+            outline: none;
+        }}
+        #track-list::item {{
+            padding: {item_pad}px 4px;
+        }}
+        #track-list::item:hover {{ background-color: {accent_hover}; }}
+        #track-list::item:selected {{
+            background-color: {t['hover']};
+            color: {t['fg']};
+        }}
+        #track-list[paneFocused="true"]::item:selected {{
+            background-color: {accent};
+            color: {accent_fg};
+        }}
+        #search-bar {{
+            background-color: {t['bg_elevated']};
+            color: {t['fg']};
+            border: 1px solid {t['hairline']};
+            font-family: {FONT};
+            font-size: {fs_t}pt;
+            padding: 5px 8px;
+        }}
+        #search-bar:focus {{
+            border: 1px solid {accent};
+        }}
+    """
+
+
+def minimal_scrollbar_qss(t, selector='#lyrics-text'):
+    """A thin scrollbar that fades into the background — a faint handle with
+    no visible track, just enough to hint at scroll position. Scoped to a
+    selector rather than applied globally (the base stylesheet hides
+    scrollbars everywhere else — see 'QScrollBar:vertical { width: 0; }' in
+    build_qss); used for the lyrics pane in max/mini mode, where the pane is
+    short enough that scrolling isn't otherwise obvious.
+    """
+    handle = _alpha(t['fg'], 40)
+    handle_hover = _alpha(t['fg'], 90)
+    return f"""
+        {selector} QScrollBar:vertical {{
+            background: transparent;
+            width: 8px;
+            margin: 2px;
+        }}
+        {selector} QScrollBar::handle:vertical {{
+            background: {handle};
+            border-radius: 4px;
+            min-height: 24px;
+        }}
+        {selector} QScrollBar::handle:vertical:hover {{
+            background: {handle_hover};
+        }}
+        {selector} QScrollBar::add-line:vertical,
+        {selector} QScrollBar::sub-line:vertical {{
+            height: 0px;
+        }}
+        {selector} QScrollBar::add-page:vertical,
+        {selector} QScrollBar::sub-page:vertical {{
+            background: transparent;
+        }}
+    """
+
+
 def build_qss(t, fs=None):
     """The entire application stylesheet, applied once to the main window.
 
@@ -293,37 +375,7 @@ def build_qss(t, fs=None):
             background-color: {accent};
             color: {accent_fg};
         }}
-        #track-list {{
-            background-color: {t['bg']};
-            font-size: {fs_t}pt;
-            font-family: {FONT};
-            border: none;
-            color: {t['fg']};
-            outline: none;
-        }}
-        #track-list::item {{
-            padding: {item_pad}px 4px;
-        }}
-        #track-list::item:hover {{ background-color: {accent_hover}; }}
-        #track-list::item:selected {{
-            background-color: {t['hover']};
-            color: {t['fg']};
-        }}
-        #track-list[paneFocused="true"]::item:selected {{
-            background-color: {accent};
-            color: {accent_fg};
-        }}
-        #search-bar {{
-            background-color: {t['bg_elevated']};
-            color: {t['fg']};
-            border: 1px solid {t['hairline']};
-            font-family: {FONT};
-            font-size: {fs_t}pt;
-            padding: 5px 8px;
-        }}
-        #search-bar:focus {{
-            border: 1px solid {accent};
-        }}
+        {track_list_qss(t, fs_t)}
 
         /* ── Lyrics pane ──────────────────────────────────────── */
         LyricsWidget {{
@@ -402,6 +454,14 @@ def build_qss(t, fs=None):
             font-family: {FONT};
             font-size: {fs_c + 12}pt;
             padding: 8px 20px 20px 0;
+        }}
+        #max-close-btn {{
+            background: transparent;
+            border: none;
+            border-radius: 14px;
+        }}
+        #max-close-btn:hover {{
+            background-color: {accent_hover};
         }}
     """
 
