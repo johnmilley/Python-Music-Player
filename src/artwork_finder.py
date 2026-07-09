@@ -28,7 +28,7 @@ _ssl_ctx = _make_ssl_ctx()
 
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QScrollArea, QWidget, QSizePolicy, QLineEdit, QProgressBar
+    QScrollArea, QWidget, QSizePolicy, QLineEdit, QProgressBar, QCheckBox
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QSize
 from PyQt5.QtGui import QPixmap, QImage
@@ -131,10 +131,16 @@ class DiscogsSearchThread(QThread):
 
 
 class ArtworkResult(QWidget):
-    """Single artwork result row with thumbnail and download button."""
-    download_requested = pyqtSignal(str, str)  # hi_res_url, album_name
+    """Single artwork result row with thumbnail and download/select control.
 
-    def __init__(self, result, index, theme_dict):
+    selectable=True (multi-image 'find more art' mode) shows a checkbox
+    instead of an immediate-download Save button, so several images across
+    one or more searches can be queued and saved together.
+    """
+    download_requested = pyqtSignal(str, str)  # hi_res_url, album_name
+    selection_changed = pyqtSignal(bool, str, str)  # checked, hi_res_url, name
+
+    def __init__(self, result, index, theme_dict, selectable=False, checked=False):
         super().__init__()
         t = theme_dict
         self.result = result
@@ -174,23 +180,32 @@ class ArtworkResult(QWidget):
         info_layout.addStretch()
         layout.addLayout(info_layout, stretch=1)
 
-        # Download button
-        dl_btn = QPushButton('Save')
-        dl_btn.setMinimumSize(70, 35)
-        dl_btn.setStyleSheet(f"""
-            QPushButton {{
-                background: {t['accent']};
-                color: {t['selection_text']};
-                border: none;
-                font-family: {theme.FONT};
-                font-size: 11pt;
-            }}
-            QPushButton:hover {{ opacity: 0.8; }}
-        """)
-        dl_btn.clicked.connect(lambda: self.download_requested.emit(
-            self.hi_res_url, name
-        ))
-        layout.addWidget(dl_btn)
+        if selectable:
+            self.checkbox = QCheckBox('Select')
+            self.checkbox.setStyleSheet(
+                f'color: {t["fg"]}; font-family: {theme.FONT}; font-size: 10pt; border: none;')
+            self.checkbox.setChecked(checked)
+            self.checkbox.toggled.connect(
+                lambda on: self.selection_changed.emit(on, self.hi_res_url, name))
+            layout.addWidget(self.checkbox)
+        else:
+            # Download button
+            dl_btn = QPushButton('Save')
+            dl_btn.setMinimumSize(70, 35)
+            dl_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background: {t['accent']};
+                    color: {t['selection_text']};
+                    border: none;
+                    font-family: {theme.FONT};
+                    font-size: 11pt;
+                }}
+                QPushButton:hover {{ opacity: 0.8; }}
+            """)
+            dl_btn.clicked.connect(lambda: self.download_requested.emit(
+                self.hi_res_url, name
+            ))
+            layout.addWidget(dl_btn)
 
         self.setLayout(layout)
 
@@ -202,10 +217,11 @@ class ArtworkResult(QWidget):
 
 
 class DiscogsImageRow(QWidget):
-    """Single Discogs image result: thumbnail, pressing info, save button."""
+    """Single Discogs image result: thumbnail, pressing info, save/select control."""
     download_requested = pyqtSignal(str, str)  # full_url, name
+    selection_changed = pyqtSignal(bool, str, str)  # checked, url, name
 
-    def __init__(self, img, index, theme_dict):
+    def __init__(self, img, index, theme_dict, selectable=False, checked=False):
         super().__init__()
         t = theme_dict
         self.index = index
@@ -231,20 +247,29 @@ class DiscogsImageRow(QWidget):
         info_layout.addStretch()
         layout.addLayout(info_layout, stretch=1)
 
-        save_btn = QPushButton('Save')
-        save_btn.setMinimumSize(70, 35)
-        save_btn.setStyleSheet(f"""
-            QPushButton {{
-                background: {t['accent']};
-                color: {t['selection_text']};
-                border: none;
-                font-family: {theme.FONT};
-                font-size: 11pt;
-            }}
-        """)
-        save_btn.clicked.connect(lambda: self.download_requested.emit(
-            img['url'], img['title']))
-        layout.addWidget(save_btn)
+        if selectable:
+            self.checkbox = QCheckBox('Select')
+            self.checkbox.setStyleSheet(
+                f'color: {t["fg"]}; font-family: {theme.FONT}; font-size: 10pt; border: none;')
+            self.checkbox.setChecked(checked)
+            self.checkbox.toggled.connect(
+                lambda on: self.selection_changed.emit(on, img['url'], img['title']))
+            layout.addWidget(self.checkbox)
+        else:
+            save_btn = QPushButton('Save')
+            save_btn.setMinimumSize(70, 35)
+            save_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background: {t['accent']};
+                    color: {t['selection_text']};
+                    border: none;
+                    font-family: {theme.FONT};
+                    font-size: 11pt;
+                }}
+            """)
+            save_btn.clicked.connect(lambda: self.download_requested.emit(
+                img['url'], img['title']))
+            layout.addWidget(save_btn)
 
         self.setLayout(layout)
 
@@ -268,6 +293,9 @@ class ArtworkFinderDialog(QDialog):
         self.theme_dict = theme_dict
         self.extra = extra  # save alongside the cover instead of replacing it
         self._loaders = []
+        # url -> title, kept across searches so picks from an earlier
+        # search aren't lost when a later search replaces the result rows
+        self._selected = {}
 
         self.setWindowTitle('Find More Album Art' if extra
                             else 'Find Album Artwork')
@@ -319,6 +347,33 @@ class ArtworkFinderDialog(QDialog):
         search_btn.clicked.connect(self._on_search_submit)
         search_layout.addWidget(search_btn)
         layout.addLayout(search_layout)
+
+        # Multi-select footer: pick images across one or more searches,
+        # then save them all in one go
+        if self.extra:
+            select_row = QHBoxLayout()
+            self.selected_label = QLabel('0 selected')
+            self.selected_label.setStyleSheet(
+                f'color: {t.get("fg_dim", t["fg"])}; '
+                f'font-family: {theme.FONT}; font-size: 10pt;')
+            select_row.addWidget(self.selected_label)
+            select_row.addStretch()
+            self.save_selected_btn = QPushButton('Save Selected')
+            self.save_selected_btn.setEnabled(False)
+            self.save_selected_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background: {t['accent']};
+                    color: {t['selection_text']};
+                    border: none;
+                    font-family: {theme.FONT};
+                    font-size: 11pt;
+                    padding: 5px 14px;
+                }}
+                QPushButton:disabled {{ background: {t['bg_alt']}; color: {t['fg']}; }}
+            """)
+            self.save_selected_btn.clicked.connect(self._save_selected)
+            select_row.addWidget(self.save_selected_btn)
+            layout.addLayout(select_row)
 
         # Status label
         self.status = QLabel()
@@ -434,8 +489,15 @@ class ArtworkFinderDialog(QDialog):
             self.itunes_section.addWidget(self._section_header('iTunes — covers'))
 
         for i, result in enumerate(results):
-            row = ArtworkResult(result, i, self.theme_dict)
-            row.download_requested.connect(self._download_artwork)
+            art100 = result.get('artworkUrl100', '')
+            hi_res_url = art100.replace('100x100bb', '3000x3000bb')
+            row = ArtworkResult(result, i, self.theme_dict,
+                                selectable=self.extra,
+                                checked=hi_res_url in self._selected)
+            if self.extra:
+                row.selection_changed.connect(self._on_selection_changed)
+            else:
+                row.download_requested.connect(self._download_artwork)
             self.itunes_section.addWidget(row)
 
             # Load thumbnail in background
@@ -455,8 +517,13 @@ class ArtworkFinderDialog(QDialog):
         self.discogs_section.addWidget(
             self._section_header('Discogs — backs, labels, inserts'))
         for i, img in enumerate(images):
-            row = DiscogsImageRow(img, i, self.theme_dict)
-            row.download_requested.connect(self._download_artwork)
+            row = DiscogsImageRow(img, i, self.theme_dict,
+                                  selectable=self.extra,
+                                  checked=img['url'] in self._selected)
+            if self.extra:
+                row.selection_changed.connect(self._on_selection_changed)
+            else:
+                row.download_requested.connect(self._download_artwork)
             self.discogs_section.addWidget(row)
             if img['thumb']:
                 loader = ImageLoader(i, img['thumb'])
@@ -479,6 +546,57 @@ class ArtworkFinderDialog(QDialog):
             if isinstance(widget, row_cls) and widget.index == index:
                 widget.set_thumbnail(pixmap)
                 break
+
+    def _on_selection_changed(self, checked, url, title):
+        if checked:
+            self._selected[url] = title
+        else:
+            self._selected.pop(url, None)
+        self.selected_label.setText(
+            f'{len(self._selected)} selected')
+        self.save_selected_btn.setEnabled(bool(self._selected))
+
+    def _save_selected(self):
+        """Download every checked image, one at a time, then close."""
+        if not self._selected:
+            return
+        self._save_queue = list(self._selected.items())  # [(url, title), ...]
+        self._save_total = len(self._save_queue)
+        self._save_done = 0
+        self.save_selected_btn.setEnabled(False)
+        self.search_input.setEnabled(False)
+        t = self.theme_dict
+        self._dl_progress = QProgressBar()
+        self._dl_progress.setRange(0, 100)
+        self._dl_progress.setFixedHeight(14)
+        self._dl_progress.setTextVisible(False)
+        self._dl_progress.setStyleSheet(f"""
+            QProgressBar {{ border: 1px solid {t['accent']}; background: {t['bg']}; }}
+            QProgressBar::chunk {{ background-color: {t['accent']}; }}
+        """)
+        self.layout().addWidget(self._dl_progress)
+        self._save_next()
+
+    def _save_next(self):
+        if not self._save_queue:
+            self._dl_progress.deleteLater()
+            self.status.setText(f'Saved {self._save_done} image(s).')
+            self.accept()
+            return
+        url, title = self._save_queue.pop(0)
+        self.status.setText(
+            f'Saving {self._save_done + 1} of {self._save_total}: {title}')
+        self._dl_progress.setValue(0)
+        self._dl_thread = DownloadThread(url, self.album_path, extra=True)
+        self._dl_thread.progress.connect(self._dl_progress.setValue)
+        self._dl_thread.finished.connect(self._on_batch_item_downloaded)
+        self._dl_thread.start()
+
+    def _on_batch_item_downloaded(self, path):
+        if path:
+            self._save_done += 1
+            self.artwork_saved.emit(path)
+        self._save_next()
 
     def _download_artwork(self, url, album_name):
         t = self.theme_dict

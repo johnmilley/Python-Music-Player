@@ -1,7 +1,11 @@
 # MiniView — compact "mini mode": a small, always-on-top square window of
 # just the album art, resizable from its invisible edge grips (the window
 # stays square). Playback controls float over the art and only appear on
-# hover — they hide again on leave and whenever the window loses focus.
+# hover — they hide immediately on leave or whenever the window loses focus,
+# and also auto-hide after a few seconds of no mouse movement even while
+# still hovering (a QApplication-wide MouseMove filter, since child widgets
+# — the art label, the control buttons — swallow mouse-move before it would
+# ever reach this window's own event handlers).
 # The album's art gallery scrolls here too (AlbumArtLabel's hover arrows).
 #
 # Lyrics can be toggled on alongside the art: like MaxView, this borrows
@@ -12,8 +16,8 @@
 # (set_key_handlers), so mini mode reuses the same shortcut behaviors
 # (play/pause, seek, volume) without duplicating any logic.
 
-from PyQt5.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout, QToolButton
-from PyQt5.QtCore import Qt, QEvent, QSize, pyqtSignal
+from PyQt5.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout, QToolButton, QApplication
+from PyQt5.QtCore import Qt, QEvent, QSize, QTimer, pyqtSignal
 from PyQt5.QtGui import QIcon, QCursor
 
 from art_label import AlbumArtLabel
@@ -23,6 +27,8 @@ from player import _render_svg
 
 class MiniView(QWidget):
     exit_requested = pyqtSignal()
+
+    IDLE_HIDE_MS = 2500  # hover controls fade after this long without motion
 
     def __init__(self, player, parent=None):
         super().__init__(None)
@@ -98,6 +104,17 @@ class MiniView(QWidget):
 
         # Invisible edge/corner grips handle resizing (frameless window)
         self._grips = WindowGrips(self)
+
+        # Auto-hide timer: restarted on every mouse move while this window
+        # is the active one; firing hides the controls + art nav arrows
+        # even though the cursor never left
+        self._idle_timer = QTimer(self)
+        self._idle_timer.setSingleShot(True)
+        self._idle_timer.setInterval(self.IDLE_HIDE_MS)
+        self._idle_timer.timeout.connect(self._hide_hover_controls)
+        app = QApplication.instance()
+        if app is not None:
+            app.installEventFilter(self)
 
         player.art_changed.connect(self.art.set_source)
         player.play_state_changed.connect(self.set_playing)
@@ -184,22 +201,44 @@ class MiniView(QWidget):
         self.controls.setGeometry(x, y, hint.width(), hint.height())
 
     # ── Hover / focus behavior for the controls ─────────────────────
+    #
+    # Two independent paths hide the controls: an immediate one (cursor
+    # actually left the window, or the window lost focus) and a delayed one
+    # (no mouse motion for IDLE_HIDE_MS, even though the cursor is still
+    # inside and the window is still active — like video-player controls).
 
-    def enterEvent(self, event):
+    def _cursor_inside(self):
+        return self.rect().contains(self.mapFromGlobal(QCursor.pos()))
+
+    def _show_hover_controls(self):
         self._position_controls()
         self.controls.show()
         self.controls.raise_()
+        self.art._show_nav()  # no-op if the gallery has only one image
+        self._idle_timer.start()
+
+    def _hide_hover_controls(self):
+        self._idle_timer.stop()
+        self.controls.hide()
+        self.art._hide_nav()
+
+    def enterEvent(self, event):
+        self._show_hover_controls()
         super().enterEvent(event)
 
     def leaveEvent(self, event):
-        if not self.rect().contains(self.mapFromGlobal(QCursor.pos())):
-            self.controls.hide()
+        if not self._cursor_inside():
+            self._hide_hover_controls()
         super().leaveEvent(event)
+
+    def hideEvent(self, event):
+        self._idle_timer.stop()
+        super().hideEvent(event)
 
     def event(self, event):
         # Hide the hover controls whenever the mini window loses focus
         if event.type() == QEvent.WindowDeactivate:
-            self.controls.hide()
+            self._hide_hover_controls()
         return super().event(event)
 
     # ── Input ───────────────────────────────────────────────────────
@@ -219,7 +258,15 @@ class MiniView(QWidget):
         super().keyPressEvent(event)
 
     def eventFilter(self, obj, event):
-        """Drag anywhere on the art to move the window; double-click exits."""
+        """App-wide filter: drag/double-click on the art (obj is self.art),
+        plus mouse-move detection for the idle-hide timer. Mouse-move never
+        reaches this window's own event handlers when the cursor is over a
+        child widget (the art label, a button) — Qt delivers it to that
+        child, not the parent — so this has to watch every widget's events
+        and check the cursor position itself."""
+        if event.type() == QEvent.MouseMove and self.isVisible() \
+                and self.isActiveWindow() and self._cursor_inside():
+            self._show_hover_controls()
         if obj is self.art:
             if event.type() == QEvent.MouseButtonDblClick:
                 self.exit_requested.emit()
