@@ -54,50 +54,37 @@ for _t in (LIGHT, DARK):
     _t['selection_text'] = _t['accent_fg']
     _t['scrollbar_bg'] = _t['bg']
 
-# Curated font options grouped by family (resolved at startup)
-FONT_OPTIONS = [
-    # Sans-serif
-    'Segoe UI', 'Helvetica Neue', 'Arial', 'Roboto',
-    'Noto Sans', 'Open Sans', 'Inter', 'Ubuntu',
-    # Serif
-    'Georgia', 'Palatino Linotype', 'Cambria', 'Times New Roman',
-    'Noto Serif', 'DejaVu Serif', 'Liberation Serif', 'Merriweather',
-    # Monospace
-    'Consolas', 'Cascadia Mono', 'JetBrains Mono', 'Fira Code',
-    'Source Code Pro', 'DejaVu Sans Mono', 'Courier New', 'Monaco',
-    'Menlo', 'Ubuntu Mono',
-]
-AVAILABLE_FONTS = []  # populated by resolve_fonts()
+# One font for the entire application: Inter, bundled in src/fonts/ and
+# registered at startup by resolve_fonts(). If the bundled files are ever
+# missing, resolve_fonts falls back to the best available system sans.
+FONT = "'Inter'"
 
-# Three font categories: controls (toggles/menus), tracklist, lyrics
-FONT_CONTROLS = "'Noto Sans'"
-FONT_TRACKLIST = "'Noto Sans'"
-FONT_LYRICS = "'Noto Sans'"
+# One size scale for the whole app — everything steps together.
+SIZES = [8, 9, 10, 11, 12, 13, 14, 15, 16, 18, 20]
+DEFAULT_SIZE = 10
 
-# Size options per category
-SIZES_CONTROLS = [8, 9, 10, 11, 12, 13, 14, 15, 16, 18, 20]
-SIZES_TRACKLIST = [8, 9, 10, 11, 12, 13, 14, 15, 16, 18, 20]
-SIZES_LYRICS = [8, 9, 10, 11, 12, 13, 14, 15, 16, 18, 20]
+_FALLBACK_FONTS = ['Noto Sans', 'Segoe UI', 'Helvetica Neue', 'Ubuntu', 'Arial']
 
-DEFAULT_SIZE_CONTROLS = 10
-DEFAULT_SIZE_TRACKLIST = 10
-DEFAULT_SIZE_LYRICS = 10
-
-# Legacy alias used by max mode and dialogs
-FONT = "'Noto Sans'"
 
 def resolve_fonts():
-    """Find which curated fonts are available on this system."""
-    global AVAILABLE_FONTS, FONT, FONT_CONTROLS, FONT_TRACKLIST, FONT_LYRICS
-    available = set(QFontDatabase().families())
-    AVAILABLE_FONTS = [f for f in FONT_OPTIONS if f in available]
-    if not AVAILABLE_FONTS:
-        AVAILABLE_FONTS = ['sans-serif']
-    default = f"'{AVAILABLE_FONTS[0]}'"
-    FONT = default
-    FONT_CONTROLS = default
-    FONT_TRACKLIST = default
-    FONT_LYRICS = default
+    """Register the bundled Inter files with Qt; fall back to a system sans
+    only if they're missing. Must run after QApplication exists."""
+    global FONT
+    import sys
+    from pathlib import Path
+    if getattr(sys, '_MEIPASS', None):
+        fonts_dir = Path(sys._MEIPASS) / 'fonts'
+    else:
+        fonts_dir = Path(__file__).parent / 'fonts'
+    if fonts_dir.is_dir():
+        for f in sorted(fonts_dir.glob('*.ttf')):
+            QFontDatabase.addApplicationFont(str(f))
+    families = set(QFontDatabase().families())
+    if 'Inter' in families:
+        FONT = "'Inter'"
+    else:
+        fallback = next((f for f in _FALLBACK_FONTS if f in families), 'sans-serif')
+        FONT = f"'{fallback}'"
 
 DEFAULT_ACCENT = 'orange'
 ACCENT_PRESETS = {
@@ -119,16 +106,14 @@ def _alpha(color, alpha):
     return f'rgba({c.red()}, {c.green()}, {c.blue()}, {alpha})'
 
 
-def build_qss(t, fs_controls=None, fs_tracklist=None, fs_lyrics=None):
+def build_qss(t, fs=None):
     """The entire application stylesheet, applied once to the main window.
 
     Focus styling uses the dynamic 'paneFocused' property on the tree/list
     views — flipping the property repolishes only those widgets, so no
     stylesheet is ever rebuilt on focus changes.
     """
-    fs_c = fs_controls or DEFAULT_SIZE_CONTROLS
-    fs_t = fs_tracklist or DEFAULT_SIZE_TRACKLIST
-    fs_l = fs_lyrics or DEFAULT_SIZE_LYRICS
+    fs_c = fs_t = fs_l = fs or DEFAULT_SIZE
     accent = t['accent']
     accent_fg = t['accent_fg']
     accent_soft = _alpha(accent, 38)     # pill/selection tint
@@ -179,7 +164,7 @@ def build_qss(t, fs_controls=None, fs_tracklist=None, fs_lyrics=None):
         }}
         #titlebar-title {{
             color: {t['fg_dim']};
-            font-family: {FONT_CONTROLS};
+            font-family: {FONT};
             font-size: {fs_c}pt;
         }}
         #titlebar-buttons QToolButton {{
@@ -217,7 +202,7 @@ def build_qss(t, fs_controls=None, fs_tracklist=None, fs_lyrics=None):
         QMenu {{
             background-color: {t['bg_elevated']};
             color: {t['fg']};
-            font-family: {FONT_CONTROLS};
+            font-family: {FONT};
             font-size: {fs_c}pt;
             border: 1px solid {t['hairline']};
             padding: 4px;
@@ -253,14 +238,13 @@ def build_qss(t, fs_controls=None, fs_tracklist=None, fs_lyrics=None):
             background-color: {t['bg']};
         }}
         #track-info {{
-            font-family: {FONT_CONTROLS};
+            font-family: {FONT};
             font-size: {fs_c + 1}pt;
-            font-weight: 600;
             color: {t['fg']};
             background: transparent;
         }}
         #track-progress, #track-length {{
-            font-family: {FONT_CONTROLS};
+            font-family: {FONT};
             font-size: {max(fs_c - 1, 7)}pt;
             color: {t['fg_dim']};
             background: transparent;
@@ -290,7 +274,7 @@ def build_qss(t, fs_controls=None, fs_tracklist=None, fs_lyrics=None):
         }}
         QTreeView {{
             font-size: {fs_t}pt;
-            font-family: {FONT_TRACKLIST};
+            font-family: {FONT};
             border: none;
             background-color: {t['bg']};
             color: {t['fg']};
@@ -312,7 +296,7 @@ def build_qss(t, fs_controls=None, fs_tracklist=None, fs_lyrics=None):
         #track-list {{
             background-color: {t['bg']};
             font-size: {fs_t}pt;
-            font-family: {FONT_TRACKLIST};
+            font-family: {FONT};
             border: none;
             color: {t['fg']};
             outline: none;
@@ -333,7 +317,7 @@ def build_qss(t, fs_controls=None, fs_tracklist=None, fs_lyrics=None):
             background-color: {t['bg_elevated']};
             color: {t['fg']};
             border: 1px solid {t['hairline']};
-            font-family: {FONT_TRACKLIST};
+            font-family: {FONT};
             font-size: {fs_t}pt;
             padding: 5px 8px;
         }}
@@ -349,7 +333,7 @@ def build_qss(t, fs_controls=None, fs_tracklist=None, fs_lyrics=None):
         #lyrics-text {{
             background-color: {t['bg']};
             color: {t['fg']};
-            font-family: {FONT_LYRICS};
+            font-family: {FONT};
             font-size: {fs_l}pt;
         }}
 
@@ -359,7 +343,7 @@ def build_qss(t, fs_controls=None, fs_tracklist=None, fs_lyrics=None):
         }}
         PodcastView QListWidget, RadioView QListWidget {{
             font-size: {fs_t}pt;
-            font-family: {FONT_TRACKLIST};
+            font-family: {FONT};
             color: {t['fg']};
             background-color: {t['bg']};
             border: none;
@@ -377,7 +361,7 @@ def build_qss(t, fs_controls=None, fs_tracklist=None, fs_lyrics=None):
         }}
         PodcastView QLineEdit, RadioView QLineEdit {{
             font-size: {fs_t}pt;
-            font-family: {FONT_TRACKLIST};
+            font-family: {FONT};
             color: {t['fg']};
             background-color: {t['bg_elevated']};
             border: 1px solid {t['hairline']};
@@ -388,7 +372,7 @@ def build_qss(t, fs_controls=None, fs_tracklist=None, fs_lyrics=None):
         }}
         PodcastView QPushButton, RadioView QPushButton {{
             font-size: {fs_t}pt;
-            font-family: {FONT_TRACKLIST};
+            font-family: {FONT};
             color: {t['fg']};
             background-color: {t['hover']};
             border: none;
@@ -400,7 +384,7 @@ def build_qss(t, fs_controls=None, fs_tracklist=None, fs_lyrics=None):
         }}
         #podcast-status, #radio-status {{
             font-size: {max(fs_t - 1, 7)}pt;
-            font-family: {FONT_TRACKLIST};
+            font-family: {FONT};
             color: {t['fg_dim']};
             padding: 2px;
         }}
@@ -415,9 +399,8 @@ def build_qss(t, fs_controls=None, fs_tracklist=None, fs_lyrics=None):
         #max-track-label {{
             color: {t['fg']};
             background: transparent;
-            font-family: {FONT_CONTROLS};
+            font-family: {FONT};
             font-size: {fs_c + 12}pt;
-            font-weight: 600;
             padding: 8px 20px 20px 0;
         }}
     """
@@ -433,7 +416,7 @@ def dialog_qss(t, fs=None):
         }}
         QLabel {{
             color: {t['fg']};
-            font-family: {FONT_CONTROLS};
+            font-family: {FONT};
             font-size: {fs}pt;
         }}
         QComboBox {{

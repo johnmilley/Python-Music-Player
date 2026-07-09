@@ -25,13 +25,14 @@ from media_keys import MediaKeyHandler, start_native_backend
 from panel_manager import PanelManager
 from grip_splitter import GripSplitter
 from max_view import MaxView
+from mini_view import MiniView
 from window_chrome import TitleBar, WindowGrips
 import theme
 
 from PyQt5.QtWidgets import (QMainWindow, QApplication, QWidget, QHBoxLayout,
     QAction, QSplitter, QStackedWidget, QColorDialog, QShortcut, QDialog, QMenu,
     QVBoxLayout, QLabel, QLineEdit, QListWidgetItem, QSizePolicy, QFileDialog,
-    QPushButton, QToolButton, QComboBox, QFormLayout, QDialogButtonBox)
+    QPushButton, QToolButton, QSlider, QDialogButtonBox)
 from PyQt5.QtCore import Qt, QEvent, QSettings, QTimer, QSize
 from PyQt5.QtGui import QColor, QPixmap, QIcon, QKeySequence
 
@@ -51,7 +52,7 @@ class ToolBar(QWidget):
         self._layout.setContentsMargins(8, 1, 8, 1)
         self._layout.setSpacing(2)
         self.setLayout(self._layout)
-        self.update_height(theme.DEFAULT_SIZE_CONTROLS)
+        self.update_height(theme.DEFAULT_SIZE)
 
     def update_height(self, fs):
         """Size the bar to fit the icon buttons.
@@ -219,18 +220,22 @@ class App(QMainWindow):
             lambda: self._set_mode('radio'), checkable=True)
 
         # Settings menus (Theme / Preferences / Help) — reached via the gear button
-        self.font_size = theme.DEFAULT_SIZE_CONTROLS  # legacy, used by some calcs
-        self.font_size_controls = theme.DEFAULT_SIZE_CONTROLS
-        self.font_size_tracklist = theme.DEFAULT_SIZE_TRACKLIST
-        self.font_size_lyrics = theme.DEFAULT_SIZE_LYRICS
+        # One font (Inter) and one size for the whole app
+        self.font_size = theme.DEFAULT_SIZE
 
         self.prefs_menu = QMenu('Preferences', self)
-        self.font_action = QAction('Fonts...', self)
-        self.font_action.triggered.connect(self._open_font_settings)
+        self.font_action = QAction('Text Size...', self)
+        self.font_action.triggered.connect(self._open_text_size)
         self.prefs_menu.addAction(self.font_action)
-        self.change_art_action = QAction('Change Album Art...', self)
+        self.change_art_action = QAction('Change Cover Art...', self)
         self.change_art_action.triggered.connect(self._change_album_art)
         self.prefs_menu.addAction(self.change_art_action)
+        self.add_art_action = QAction('Add Album Art...', self)
+        self.add_art_action.triggered.connect(self._add_album_art)
+        self.prefs_menu.addAction(self.add_art_action)
+        self.find_art_action = QAction('Find More Album Art...', self)
+        self.find_art_action.triggered.connect(self._find_extra_art)
+        self.prefs_menu.addAction(self.find_art_action)
         self.prefs_menu.addSeparator()
         self.library_action = QAction('Music Library...', self)
         self.library_action.triggered.connect(self._pick_library)
@@ -311,6 +316,10 @@ class App(QMainWindow):
         self.is_maxplayer = False
         self._max_view = None
 
+        # Mini mode state — the MiniView window is created lazily too
+        self.is_minimode = False
+        self._mini_view = None
+
         # Theme setup
         self.current_theme = theme.LIGHT
         self.apply_theme(self.current_theme)
@@ -375,18 +384,18 @@ class App(QMainWindow):
         t['selection_text'] = t['accent_fg']
         self.effective_theme = t
 
-        self.setStyleSheet(theme.build_qss(
-            t, self.font_size_controls,
-            self.font_size_tracklist, self.font_size_lyrics))
+        self.setStyleSheet(theme.build_qss(t, self.font_size))
         self.player.update_button_icons(t['fg'], hover_color=accent)
-        self.player.set_control_scale(self.font_size_controls)
-        self.toolbar_widget.update_height(self.font_size_controls)
+        self.player.set_control_scale(self.font_size)
+        self.toolbar_widget.update_height(self.font_size)
         self._refresh_toolbar_icons()
         self.main_splitter.set_colors(t['hairline'], t['fg_dim'], accent)
         self.right_splitter.set_colors(t['hairline'], t['fg_dim'], accent)
-        self.lyrics_widget.set_theme(t, self.font_size_lyrics)
+        self.lyrics_widget.set_theme(t, self.font_size)
         if self.is_maxplayer:
             self._style_max_mode()
+        if self._mini_view:
+            self._mini_view.set_theme(t)
 
     def _make_tool_button(self, icon_name, obj_name, tooltip, handler,
                           checkable=False):
@@ -444,22 +453,16 @@ class App(QMainWindow):
 
     def set_font_size(self, size):
         self.font_size = size
-        self.font_size_controls = size
-        self.font_size_tracklist = size
-        self.font_size_lyrics = size
         self.apply_theme(self.current_theme)
 
     def _step_font_size(self, delta):
-        sizes = theme.SIZES_CONTROLS
+        sizes = theme.SIZES
         try:
-            idx = sizes.index(self.font_size_controls)
+            idx = sizes.index(self.font_size)
         except ValueError:
-            idx = sizes.index(theme.DEFAULT_SIZE_CONTROLS)
+            idx = sizes.index(theme.DEFAULT_SIZE)
         idx = max(0, min(len(sizes) - 1, idx + delta))
-        new_size = sizes[idx]
-        self.font_size = new_size
-        self.font_size_controls = new_size
-        self.apply_theme(self.current_theme)
+        self.set_font_size(sizes[idx])
 
     def set_accent(self, color):
         self.accent_color = color
@@ -468,86 +471,81 @@ class App(QMainWindow):
             self._album_accents[self.player.album.path] = color
         self.apply_theme(self.current_theme)
 
-    def _open_font_settings(self):
-        """Open custom font settings dialog with 3 categories."""
+    def _open_text_size(self):
+        """One text-size control for the whole app: a slider over the size
+        scale with a live 'Aa' preview. Changes apply immediately; Cancel
+        puts the original size back."""
         dlg = QDialog(self)
-        dlg.setWindowTitle('Font Settings')
-        dlg.setMinimumWidth(340)
-        layout = QVBoxLayout(dlg)
-
-        fonts = theme.AVAILABLE_FONTS
-        accent = self.effective_theme.get('accent_text', self.effective_theme['accent'])
+        dlg.setWindowTitle('Text Size')
+        dlg.setMinimumWidth(320)
         dlg.setStyleSheet(theme.dialog_qss(self.effective_theme))
+        t = self.effective_theme
+        sizes = theme.SIZES
+        original = self.font_size
+        layout = QVBoxLayout(dlg)
+        layout.setSpacing(10)
 
-        def _strip(f):
-            return f.strip("'\"")
+        preview = QLabel('Aa')
+        preview.setAlignment(Qt.AlignCenter)
+        preview.setFixedHeight(64)
 
-        def _make_row(label, current_font, current_size, sizes):
-            section = QLabel(label)
-            section.setStyleSheet(f'font-weight: bold; color: {accent}; font-size: 12pt; margin-top: 8px;')
-            layout.addWidget(section)
-            form = QFormLayout()
-            form.setSpacing(6)
+        size_label = QLabel()
+        size_label.setAlignment(Qt.AlignCenter)
+        size_label.setStyleSheet(f'color: {t["fg_dim"]};')
 
-            font_cb = QComboBox()
-            for f in fonts:
-                font_cb.addItem(f)
-                # Show each item in its own font
-                font_cb.setItemData(font_cb.count() - 1, f, Qt.FontRole)
-            cur = _strip(current_font)
-            idx = fonts.index(cur) if cur in fonts else 0
-            font_cb.setCurrentIndex(idx)
+        row = QHBoxLayout()
+        small_a = QLabel('A')
+        small_a.setStyleSheet(f'font-size: 9pt; color: {t["fg_dim"]};')
+        big_a = QLabel('A')
+        big_a.setStyleSheet(f'font-size: 15pt; color: {t["fg_dim"]};')
+        slider = QSlider(Qt.Horizontal)
+        slider.setRange(0, len(sizes) - 1)
+        try:
+            slider.setValue(sizes.index(self.font_size))
+        except ValueError:
+            slider.setValue(sizes.index(theme.DEFAULT_SIZE))
+        slider.setPageStep(1)
+        slider.setStyleSheet(f"""
+            QSlider::groove:horizontal {{
+                height: 4px; background: {t['hover']}; border-radius: 2px;
+            }}
+            QSlider::sub-page:horizontal {{
+                background: {t['accent']}; border-radius: 2px;
+            }}
+            QSlider::handle:horizontal {{
+                width: 16px; height: 16px; margin: -6px 0;
+                border-radius: 8px; background: {t['accent']};
+            }}
+        """)
+        row.addWidget(small_a)
+        row.addWidget(slider, stretch=1)
+        row.addWidget(big_a)
 
-            size_cb = QComboBox()
-            for s in sizes:
-                size_cb.addItem(str(s))
-            try:
-                size_idx = sizes.index(current_size)
-            except ValueError:
-                size_idx = 0
-            size_cb.setCurrentIndex(size_idx)
-
-            # Live preview: set font_cb's own font to the selected font
-            def _update_preview():
-                from PyQt5.QtGui import QFont
-                f = QFont(font_cb.currentText())
-                f.setPointSize(int(size_cb.currentText()))
-                font_cb.setFont(f)
-            font_cb.currentIndexChanged.connect(lambda: _update_preview())
-            size_cb.currentIndexChanged.connect(lambda: _update_preview())
-            _update_preview()
-
-            form.addRow('Font:', font_cb)
-            form.addRow('Size:', size_cb)
-            layout.addLayout(form)
-            return font_cb, size_cb
-
-        ctrl_font, ctrl_size = _make_row(
-            'Controls', theme.FONT_CONTROLS,
-            self.font_size_controls, theme.SIZES_CONTROLS)
-        track_font, track_size = _make_row(
-            'Tracklist', theme.FONT_TRACKLIST,
-            self.font_size_tracklist, theme.SIZES_TRACKLIST)
-        lyrics_font, lyrics_size = _make_row(
-            'Lyrics', theme.FONT_LYRICS,
-            self.font_size_lyrics, theme.SIZES_LYRICS)
+        def _apply(idx):
+            size = sizes[idx]
+            preview.setStyleSheet(
+                f'font-size: {size + 6}pt; color: {t["fg"]};')
+            size_label.setText(f'{size} pt')
+            if size != self.font_size:
+                self.set_font_size(size)
+        slider.valueChanged.connect(_apply)
+        _apply(slider.value())
 
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        reset_btn = buttons.addButton('Reset', QDialogButtonBox.ResetRole)
+        reset_btn.clicked.connect(
+            lambda: slider.setValue(sizes.index(theme.DEFAULT_SIZE)))
         buttons.accepted.connect(dlg.accept)
         buttons.rejected.connect(dlg.reject)
-        layout.addSpacing(12)
+
+        layout.addWidget(preview)
+        layout.addLayout(row)
+        layout.addWidget(size_label)
+        layout.addSpacing(4)
         layout.addWidget(buttons)
 
-        if dlg.exec_() == QDialog.Accepted:
-            theme.FONT_CONTROLS = f"'{ctrl_font.currentText()}'"
-            theme.FONT_TRACKLIST = f"'{track_font.currentText()}'"
-            theme.FONT_LYRICS = f"'{lyrics_font.currentText()}'"
-            theme.FONT = theme.FONT_CONTROLS  # legacy alias
-            self.font_size_controls = int(ctrl_size.currentText())
-            self.font_size_tracklist = int(track_size.currentText())
-            self.font_size_lyrics = int(lyrics_size.currentText())
-            self.font_size = self.font_size_controls
-            self.apply_theme(self.current_theme)
+        if dlg.exec_() != QDialog.Accepted and self.font_size != original:
+            self.set_font_size(original)
 
     def pick_custom_accent(self):
         color = QColorDialog.getColor(QColor(self.accent_color), self, 'Pick Accent Color')
@@ -655,6 +653,45 @@ class App(QMainWindow):
         dialog.artwork_saved.connect(lambda _: self._update_accent_for_album(force=True))
         dialog.exec_()
 
+    def _add_album_art(self):
+        """Copy image files (back covers, inserts, lyric sheets...) into the
+        album folder — they join the scrollable art gallery."""
+        album = self.player.album
+        if not album or not hasattr(album, 'refresh_art'):
+            return
+        import shutil
+        paths, _ = QFileDialog.getOpenFileNames(
+            self, 'Add Album Art', '', 'Images (*.jpg *.jpeg *.png)')
+        if not paths:
+            return
+        dest_dir = Path(album.path)
+        for p in paths:
+            src = Path(p)
+            dest = dest_dir / src.name
+            n = 1
+            while dest.exists():
+                dest = dest_dir / f'{src.stem}_{n}{src.suffix}'
+                n += 1
+            try:
+                shutil.copy2(src, dest)
+            except OSError as e:
+                print(f'LOG: could not copy artwork: {e}')
+        self.player.refresh_art_gallery()
+
+    def _find_extra_art(self):
+        """Search online for additional artwork — saved alongside the cover
+        instead of replacing it."""
+        album = self.player.album
+        if not album or not hasattr(album, 'refresh_art'):
+            return
+        from artwork_finder import ArtworkFinderDialog
+        dialog = ArtworkFinderDialog(
+            album.artist, album.title, album.path,
+            self.effective_theme, parent=self, extra=True)
+        dialog.artwork_saved.connect(
+            lambda _: self.player.refresh_art_gallery())
+        dialog.exec_()
+
     def _color_icon(self, color, width=120, height=24):
         pixmap = QPixmap(width, height)
         pixmap.fill(QColor(color))
@@ -672,21 +709,13 @@ class App(QMainWindow):
         # Panel visibility + splitter sizes (PanelManager owns both;
         # first run without saved state gets the minimal default layout)
         self.panels.load(self.settings)
-        # Restore per-category font settings
-        for cat, attr, sizes_list, font_var in [
-            ('controls', 'font_size_controls', theme.SIZES_CONTROLS, 'FONT_CONTROLS'),
-            ('tracklist', 'font_size_tracklist', theme.SIZES_TRACKLIST, 'FONT_TRACKLIST'),
-            ('lyrics', 'font_size_lyrics', theme.SIZES_LYRICS, 'FONT_LYRICS'),
-        ]:
-            saved_sz = self.settings.value(f'font_size_{cat}', type=int)
-            if saved_sz:
-                lo, hi = sizes_list[0], sizes_list[-1]
-                setattr(self, attr, max(lo, min(hi, saved_sz)))
-            saved_fam = self.settings.value(f'font_family_{cat}')
-            if saved_fam:
-                setattr(theme, font_var, f"'{saved_fam}'")
-        self.font_size = self.font_size_controls
-        theme.FONT = theme.FONT_CONTROLS
+        # Restore the app-wide text size (falls back to the old per-category
+        # 'controls' key from before the single-font simplification)
+        saved_sz = (self.settings.value('font_size', type=int)
+                    or self.settings.value('font_size_controls', type=int))
+        if saved_sz:
+            lo, hi = theme.SIZES[0], theme.SIZES[-1]
+            self.font_size = max(lo, min(hi, saved_sz))
         saved_accent = self.settings.value('accent_color')
         if saved_accent:
             self.accent_color = saved_accent
@@ -697,15 +726,20 @@ class App(QMainWindow):
             self.apply_theme(theme.DARK)
         else:
             self.apply_theme(self.current_theme)
-        # Restore app mode
+        # Restore app mode. _mode is cleared first so the mode switch does
+        # not snapshot the just-loaded panel state as 'music' — the loaded
+        # per-mode snapshots already hold each mode's remembered panels.
         saved_mode = self.settings.value('app_mode', 'music')
         if saved_mode == 'podcast':
+            self._mode = None
             self._set_mode('podcast')
             self._restore_podcast_state()
         elif saved_mode == 'radio':
+            self._mode = None
             self._set_mode('radio')
             self._restore_radio_state()
         else:
+            self.panels.apply_mode('music')
             # Restore last music album
             last_album = self.settings.value('last_album')
             if last_album and Path(last_album).is_dir():
@@ -763,6 +797,7 @@ class App(QMainWindow):
             ('4',       'Toggle tracklist',    self._toggle_and_focus_tracklist),
             ('5',       'Toggle lyrics',       self.toggle_lyrics),
             ('/',       'Search',              self._open_search),
+            ('m',       'Toggle mini mode',    self.toggle_minimode),
             ('Shift+M', 'Toggle max mode',    self.toggle_maxplayer),
             ('Shift+D', 'Toggle dark/light',   self.toggle_theme),
             ('Ctrl++',  'Increase font size',  lambda: self._step_font_size(1)),
@@ -1213,12 +1248,12 @@ class App(QMainWindow):
         per-widget override is cleared again on exit.
         """
         t = self.effective_theme
-        fs = self.font_size_lyrics + 8
+        fs = self.font_size + 8
         self.lyrics_widget.setStyleSheet(f"""
             #lyrics-text {{
                 background-color: {t['bg']};
                 color: {t['fg']};
-                font-family: {theme.FONT_LYRICS};
+                font-family: {theme.FONT};
                 font-size: {fs}pt;
             }}
         """)
@@ -1257,6 +1292,118 @@ class App(QMainWindow):
         _force_focus()
         QTimer.singleShot(300, _force_focus)
 
+    # ── Mini Mode (small always-on-top art window) ──────────────────
+
+    def toggle_minimode(self):
+        if self.is_minimode:
+            self.exit_minimode()
+        else:
+            self.enter_minimode()
+
+    def enter_minimode(self):
+        if self.is_minimode:
+            return
+        if self.is_maxplayer:
+            self.exit_maxplayer()
+        self.is_minimode = True
+        self.panels.locked = True
+
+        if self._mini_view is None:
+            mv = self._mini_view = MiniView(self.player)
+            mv.exit_requested.connect(self.exit_minimode)
+            mv.prev_btn.clicked.connect(self._shortcut_prev)
+            mv.play_btn.clicked.connect(self._shortcut_play_pause)
+            mv.next_btn.clicked.connect(self._shortcut_next)
+            mv.lyrics_btn.clicked.connect(self._toggle_mini_lyrics)
+            # Mini mode reuses the app's shortcut behaviors directly
+            mv.set_key_handlers({
+                Qt.Key_P: self._shortcut_play_pause,
+                Qt.Key_Greater: self._shortcut_next,
+                Qt.Key_Less: self._shortcut_prev,
+                Qt.Key_F: self._shortcut_seek_forward,
+                Qt.Key_B: self._shortcut_seek_back,
+                Qt.Key_Period: lambda: self._adjust_volume(0.05),
+                Qt.Key_Comma: lambda: self._adjust_volume(-0.05),
+                Qt.Key_M: self.exit_minimode,
+                Qt.Key_5: self._toggle_mini_lyrics,
+                Qt.Key_Q: self.close,
+            })
+
+        mv = self._mini_view
+        mv.set_theme(self.effective_theme)
+        # Seed current state; player signals keep it in sync from here on
+        art_px = self.player.album_widget.pixmap()
+        if art_px:
+            mv.art.set_source(art_px)
+        else:
+            mv.art.clear()
+        mv.set_playing(self.player._is_playing)
+
+        geometry = self.settings.value('mini/geometry')
+        if geometry:
+            mv.restoreGeometry(geometry)
+        self.hide()
+        mv.show()
+        # Lyrics preference from the last mini session (attach after show
+        # so the window geometry math sees real sizes)
+        if self.settings.value('mini/lyrics') == 'true' and not mv.lyrics_on:
+            self._attach_mini_lyrics()
+        mv.raise_()
+        mv.activateWindow()
+
+    def exit_minimode(self):
+        if not self.is_minimode:
+            return
+        self.is_minimode = False
+        mv = self._mini_view
+        self.settings.setValue('mini/geometry', mv.saveGeometry())
+        self.settings.setValue('mini/lyrics',
+                               'true' if mv.lyrics_on else 'false')
+        if mv.lyrics_on:
+            mv.set_lyrics_visible(False)
+            self._return_lyrics_widget()
+        mv.hide()
+        self.panels.locked = False
+        self.lyrics_widget.setVisible(self.panels.is_visible('lyrics'))
+        self.panels.reapply_size('lyrics')
+        self.show()
+        self.raise_()
+        self.activateWindow()
+
+    def _toggle_mini_lyrics(self):
+        if not (self.is_minimode and self._mini_view):
+            return
+        if self._mini_view.lyrics_on:
+            self._mini_view.set_lyrics_visible(False)
+            self._return_lyrics_widget()
+        else:
+            self._attach_mini_lyrics()
+
+    def _attach_mini_lyrics(self):
+        """Borrow the one true lyrics widget into the mini window."""
+        mv = self._mini_view
+        mv.lyrics_slot.addWidget(self.lyrics_widget)
+        self.lyrics_widget.setVisible(True)
+        # Reparented out of the main window, the widget falls outside the
+        # app stylesheet — style it directly (cleared again on return)
+        t = self.effective_theme
+        self.lyrics_widget.setStyleSheet(f"""
+            #lyrics-text {{
+                background-color: {t['bg']};
+                color: {t['fg']};
+                font-family: {theme.FONT};
+                font-size: {self.font_size}pt;
+            }}
+        """)
+        self.lyrics_widget.set_theme(t, self.font_size)
+        mv.set_lyrics_visible(True)
+
+    def _return_lyrics_widget(self):
+        """Give the borrowed lyrics widget back to the right column."""
+        self.right_splitter.insertWidget(1, self.lyrics_widget)
+        self.lyrics_widget.setStyleSheet('')
+        self.lyrics_widget.setVisible(self.panels.is_visible('lyrics'))
+
     # ── Podcast mode ──────────────────────────────────────────────
 
     def _update_radio_icon(self):
@@ -1284,8 +1431,10 @@ class App(QMainWindow):
         self._save_podcast_position()
         if self._mode == 'music':
             self._save_music_folder_position()
-            # Remember which right panels music mode had open
-            self.panels.snapshot('music')
+        # Remember which right panels the outgoing mode had open (None
+        # during startup restore — nothing to remember yet)
+        if self._mode:
+            self.panels.snapshot(self._mode)
         self._mode = mode
         self.mode_music_btn.setChecked(mode == 'music')
         self.mode_podcast_btn.setChecked(mode == 'podcast')
@@ -1294,17 +1443,12 @@ class App(QMainWindow):
 
         if mode == 'podcast':
             self.left_stack.setCurrentWidget(self.podcast_view)
-            self.panels.set_visible('tracklist', False, remember_size=False)
-            self.panels.set_visible('lyrics', False, remember_size=False)
             self.podcast_view.load_saved_feeds()
         elif mode == 'radio':
             self.left_stack.setCurrentWidget(self.radio_view)
-            self.panels.set_visible('tracklist', False, remember_size=False)
-            self.panels.set_visible('lyrics', False, remember_size=False)
             self.radio_view.load_saved_stations()
         else:
             self.left_stack.setCurrentWidget(self.folder_view)
-            self.panels.restore('music')
             self._restore_music_folder_position()
             # Reconnect album_view click to music handler
             try:
@@ -1315,6 +1459,9 @@ class App(QMainWindow):
                 self.album_view.set_current_track)
             self.album_view.track_list_widget.setContextMenuPolicy(Qt.NoContextMenu)
 
+        # The incoming mode's remembered panels (or first-visit defaults:
+        # podcast shows the tracklist, radio shows neither)
+        self.panels.apply_mode(mode)
         # Switching modes always reveals the new mode's library panel
         self.panels.set_visible('library', True, remember_size=False)
 
@@ -1375,7 +1522,7 @@ class App(QMainWindow):
         p.next_track_button.pressed.connect(lambda: self._seek_relative(30))
         color = getattr(p, '_icon_color', 'black')
         hover_color = getattr(p, '_icon_hover_color', None)
-        small_bold = f'font-size: {max(self.font_size_controls - 3, 7)}pt; font-weight: bold;'
+        small_bold = f'font-size: {max(self.font_size - 3, 7)}pt; font-weight: bold;'
         p._set_btn_hover_icons(p.prev_track_button, 'fast_rewind', color, hover_color)
         p.prev_track_button.setText('30s')
         p.prev_track_button.setStyleSheet(small_bold)
@@ -1846,16 +1993,11 @@ class App(QMainWindow):
 
     def closeEvent(self, event):
         self.settings.setValue('geometry', self.saveGeometry())
+        if self._mode:
+            self.panels.snapshot(self._mode)  # current mode's panels persist too
         self.panels.save(self.settings)
         self.settings.setValue('dark_mode', 'true' if self.current_theme is theme.DARK else 'false')
-        # Save per-category font settings
-        for cat, sz_attr, font_var in [
-            ('controls', 'font_size_controls', 'FONT_CONTROLS'),
-            ('tracklist', 'font_size_tracklist', 'FONT_TRACKLIST'),
-            ('lyrics', 'font_size_lyrics', 'FONT_LYRICS'),
-        ]:
-            self.settings.setValue(f'font_size_{cat}', getattr(self, sz_attr))
-            self.settings.setValue(f'font_family_{cat}', getattr(theme, font_var).strip("'\""))
+        self.settings.setValue('font_size', self.font_size)
         self.settings.setValue('accent_color', self.accent_color)
         self.settings.setValue('album_accents', self._album_accents)
         self.settings.setValue('app_mode', self._playing_mode or self._mode)
@@ -1873,6 +2015,17 @@ class App(QMainWindow):
             self.settings.setValue('radio/last_station_name', self._current_radio_station.name)
         self.radio_player.stop()
         self._media_keys.cleanup()
+        # Quit can arrive from mini mode ('q') — persist its state and make
+        # sure the mini window actually closes (hidden first: its closeEvent
+        # treats closing a visible window as "return to the full app")
+        if self._mini_view:
+            self.settings.setValue(
+                'mini/lyrics', 'true' if self._mini_view.lyrics_on else 'false')
+            if self.is_minimode:
+                self.settings.setValue('mini/geometry',
+                                       self._mini_view.saveGeometry())
+            self._mini_view.hide()
+            self._mini_view.close()
         super().closeEvent(event)
 
 def main():
@@ -1891,6 +2044,9 @@ def main():
     # (e.g. Pop!_OS, GNOME), which overrides QSS colours and font sizes.
     app.setStyle('Fusion')
     theme.resolve_fonts()
+    # App-wide default font so unstyled widgets match the stylesheet
+    from PyQt5.QtGui import QFont
+    app.setFont(QFont(theme.FONT.strip("'\""), theme.DEFAULT_SIZE))
 
     app.setDesktopFileName('lp')
     app_ui = App(media_signals=media_signals, media_backend=media_backend)

@@ -60,6 +60,8 @@ class MaxView(QWidget):
 
         player.art_changed.connect(self.art.set_source)
         player.track_changed.connect(self._on_track_changed)
+        # Hover arrows scroll the album's art gallery here too
+        player.register_art_label(self.art)
 
     def _on_track_changed(self, track):
         self.set_title(str(getattr(track, 'title', '') or ''))

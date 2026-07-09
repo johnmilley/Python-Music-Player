@@ -160,14 +160,26 @@ class PanelManager(QObject):
                 self._remembered['tracklist'] = rsizes[0]
                 self._remembered['lyrics'] = rsizes[1]
 
-    # ── Mode snapshots (podcast/radio hide the right panels) ────────
+    # ── Per-mode panel memory ────────────────────────────────────────
+    # Each app mode (music/podcast/radio) remembers which right-column
+    # panels the user last had open there. First visit to a mode gets its
+    # default: podcasts open the tracklist (episode list), radio opens
+    # neither; music keeps whatever the session restored.
+
+    MODE_DEFAULTS = {
+        'podcast': {'tracklist': True, 'lyrics': False},
+        'radio':   {'tracklist': False, 'lyrics': False},
+    }
 
     def snapshot(self, key):
         self._snapshots[key] = {'tracklist': self._visible['tracklist'],
                                 'lyrics': self._visible['lyrics']}
 
-    def restore(self, key):
-        snap = self._snapshots.pop(key, None)
+    def apply_mode(self, key):
+        """Apply a mode's remembered panel visibility, or its default on
+        the first visit. Music has no default — it keeps the current state
+        until a snapshot exists."""
+        snap = self._snapshots.get(key) or self.MODE_DEFAULTS.get(key)
         if not snap:
             return
         for name, vis in snap.items():
@@ -183,8 +195,18 @@ class PanelManager(QObject):
         for name in self.PANELS:
             settings.setValue(f'{name}_visible',
                               'true' if self._visible[name] else 'false')
+        settings.setValue('layout/mode_panels',
+                          {mode: {k: 'true' if v else 'false'
+                                  for k, v in snap.items()}
+                           for mode, snap in self._snapshots.items()})
 
     def load(self, settings):
+        mode_panels = settings.value('layout/mode_panels')
+        if isinstance(mode_panels, dict):
+            for mode, snap in mode_panels.items():
+                if isinstance(snap, dict):
+                    self._snapshots[mode] = {k: v != 'false'
+                                             for k, v in snap.items()}
         remembered = settings.value('layout/panel_sizes')
         if isinstance(remembered, dict):
             for k, v in remembered.items():

@@ -84,7 +84,7 @@ class LyricsWidget(QWidget):
         """Store theme dict and font size, then re-render with new colors."""
         self._theme = t
         self._font_size = fs
-        family = theme.FONT_LYRICS.strip("'\"")
+        family = theme.FONT.strip("'\"")
         font = QFont(family)
         font.setPointSize(fs or 13)
         self.view.document().setDefaultFont(font)

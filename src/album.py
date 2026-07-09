@@ -10,6 +10,9 @@ from track import Track
 # mutagen
 import mutagen
 
+IMAGE_EXTS = ('.jpg', '.jpeg', '.png')
+
+
 class Album:
     def __init__(self, directory=""):
         self.tracklist = self.tracklist_from_folder(directory)
@@ -18,8 +21,22 @@ class Album:
             self.artist = self.tracklist[0].artist
             self.year = self.tracklist[0].year
             self.path = str(Path(self.tracklist[0].path).parent)
-            art_path = Path(self.path, 'cover.jpg')
-            self.art = art_path if art_path.exists() else None
+            self.refresh_art()
+
+    def refresh_art(self):
+        """Scan the album folder for artwork: cover.jpg first, then any other
+        images (back covers, inserts, lyric sheets...) in name order."""
+        cover = Path(self.path, 'cover.jpg')
+        self.art = cover if cover.exists() else None
+        try:
+            images = sorted(p for p in Path(self.path).iterdir()
+                            if p.suffix.lower() in IMAGE_EXTS)
+        except OSError:
+            images = []
+        if self.art in images:
+            images.remove(self.art)
+            images.insert(0, self.art)
+        self.art_list = images
 
     def tracklist_from_folder(self, directory_path):
         """

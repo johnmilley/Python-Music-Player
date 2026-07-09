@@ -77,6 +77,7 @@ class Player(QWidget):
     track_changed = pyqtSignal(object)
     art_clicked = pyqtSignal()
     art_changed = pyqtSignal(QPixmap)
+    play_state_changed = pyqtSignal(bool)
 
     def __init__(self, album=None, folder_view=None, album_view=None):
         super().__init__()
@@ -91,6 +92,13 @@ class Player(QWidget):
         # before it ever eats into the album art's space.
         self._compact_t = 1.0
         self._last_font_size = None
+
+        # Artwork gallery: cover.jpg first, then any other images from the
+        # album folder (back covers, inserts...). Registered AlbumArtLabels
+        # (player column, max mode, mini mode) get hover arrows to scroll it.
+        self._art_paths = []
+        self._art_index = 0
+        self._art_labels = []
 
         self.build_gui()
 
@@ -130,8 +138,9 @@ class Player(QWidget):
         # ALBUM ART — square footprint, cached scaling. Centered as a tight
         # unit with the controls (stretches above/below share the slack).
         self.layout_player.addStretch(1)
-        self.album_widget = AlbumArtLabel()
+        self.album_widget = AlbumArtLabel(square=True)
         self.album_widget.clicked.connect(self.art_clicked.emit)
+        self.register_art_label(self.album_widget)
         self.layout_player.addWidget(self.album_widget)
 
         # Controls container — fixed height, capped width, centered
@@ -285,7 +294,10 @@ class Player(QWidget):
     def _set_play_icon(self, playing=None):
         """Update play button icon to play or pause."""
         if playing is not None:
+            changed = playing != self._is_playing
             self._is_playing = playing
+            if changed:
+                self.play_state_changed.emit(playing)
         name = 'pause' if self._is_playing else 'play_arrow'
         color = getattr(self, '_icon_color', 'black')
         hover_color = getattr(self, '_icon_hover_color', None)
@@ -452,7 +464,14 @@ class Player(QWidget):
             self._update_time_label(0)
 
     def set_art(self, pixmap):
-        """Route all artwork through here so listeners (max mode) stay in sync."""
+        """Route single artwork through here so listeners (max/mini mode)
+        stay in sync. Clears any multi-image gallery."""
+        self._art_paths = []
+        self._art_index = 0
+        self._set_nav_enabled(False)
+        self._display_art(pixmap)
+
+    def _display_art(self, pixmap):
         if pixmap is None or pixmap.isNull():
             self.album_widget.clear()
             self.art_changed.emit(QPixmap())
@@ -461,9 +480,48 @@ class Player(QWidget):
             # Emit the display copy (already downscaled) for reuse elsewhere
             self.art_changed.emit(self.album_widget.pixmap())
 
+    # ── Artwork gallery (multiple images per album) ────────────────
+
+    def register_art_label(self, label):
+        """Wire an AlbumArtLabel's hover arrows to the shared art gallery.
+        The player column, max mode and mini mode all register here."""
+        self._art_labels.append(label)
+        label.prev_requested.connect(lambda: self.step_art(-1))
+        label.next_requested.connect(lambda: self.step_art(1))
+        label.set_nav_enabled(len(self._art_paths) > 1)
+
+    def _set_nav_enabled(self, enabled):
+        for label in self._art_labels:
+            label.set_nav_enabled(enabled)
+
+    def set_art_gallery(self, paths):
+        """Show a scrollable set of artwork images (cover first)."""
+        self._art_paths = [str(p) for p in paths]
+        self._art_index = 0
+        self._set_nav_enabled(len(self._art_paths) > 1)
+        self._display_art(
+            QPixmap(self._art_paths[0]) if self._art_paths else None)
+
+    def step_art(self, delta):
+        """Scroll the gallery forward/back (wraps around)."""
+        if len(self._art_paths) < 2:
+            return
+        self._art_index = (self._art_index + delta) % len(self._art_paths)
+        self._display_art(QPixmap(self._art_paths[self._art_index]))
+
+    def refresh_art_gallery(self):
+        """Re-scan the album folder after artwork was added or replaced."""
+        if self.album and hasattr(self.album, 'refresh_art'):
+            self.album.refresh_art()
+            if self.album.art_list:
+                self.set_art_gallery(self.album.art_list)
+
     def load_album_art(self, album):
-        """Load cover.jpg from album folder, or offer to search iTunes."""
-        if self.album.art:
+        """Load artwork from the album folder, or offer to search iTunes."""
+        art_list = getattr(self.album, 'art_list', None)
+        if art_list:
+            self.set_art_gallery(art_list)
+        elif self.album.art:
             self.set_art(QPixmap(str(self.album.art)))
         else:
             self.set_art(None)
@@ -492,7 +550,10 @@ class Player(QWidget):
         """Called when artwork is downloaded and saved."""
         from pathlib import Path as P
         self.album.art = P(path)
-        self.set_art(QPixmap(path))
+        if hasattr(self.album, 'refresh_art'):
+            self.refresh_art_gallery()
+        else:
+            self.set_art(QPixmap(path))
         # Notify app to update accent palette
         app = self.window()
         if hasattr(app, '_update_accent_for_album'):
@@ -518,7 +579,7 @@ class Player(QWidget):
         """
         if font_size is None:
             import theme as theme_mod
-            font_size = theme_mod.DEFAULT_SIZE_CONTROLS
+            font_size = theme_mod.DEFAULT_SIZE
         self._last_font_size = font_size
         compact_scale = 0.7 + 0.3 * self._compact_t  # 0.7 tight .. 1.0 roomy
         icon_dim = max(22, min(56, int(font_size * 3.2 * compact_scale)))

@@ -15,6 +15,7 @@ a = Analysis(
     datas=[
         ('icon.png', '.'),
         ('src/icons', 'icons'),
+        ('src/fonts', 'fonts'),
         (certifi.where(), 'certifi'),
     ],
     hiddenimports=[
@@ -82,7 +83,7 @@ if sys.platform == 'darwin':
         icon=None,
         bundle_identifier='com.lp.musicplayer',
         info_plist={
-            'CFBundleShortVersionString': '1.0.0',
+            'CFBundleShortVersionString': '1.2.0',
             'NSHighResolutionCapable': True,
         },
     )
