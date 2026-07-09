@@ -1341,7 +1341,7 @@ class App(QMainWindow):
 
         geometry = self.settings.value('mini/geometry')
         if geometry:
-            mv.restoreGeometry(geometry)
+            mv.restore_geometry(geometry)
         self.hide()
         mv.show()
         # Lyrics preference from the last mini session (attach after show
@@ -1356,12 +1356,18 @@ class App(QMainWindow):
             return
         self.is_minimode = False
         mv = self._mini_view
-        self.settings.setValue('mini/geometry', mv.saveGeometry())
         self.settings.setValue('mini/lyrics',
                                'true' if mv.lyrics_on else 'false')
         if mv.lyrics_on:
             mv.set_lyrics_visible(False)
             self._return_lyrics_widget()
+        # Save the geometry only after the lyrics column has collapsed the
+        # window back to square — saving the widened lyrics-on rectangle
+        # here would get restored next time while lyrics_on is still False,
+        # tripping mini_view's "keep it square" resize logic into treating
+        # the wide saved width as the new square side (compounding growth
+        # on every lyrics-on/off round trip).
+        self.settings.setValue('mini/geometry', mv.saveGeometry())
         mv.hide()
         self.panels.locked = False
         self.lyrics_widget.setVisible(self.panels.is_visible('lyrics'))

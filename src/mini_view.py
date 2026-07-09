@@ -175,6 +175,14 @@ class MiniView(QWidget):
 
     # ── Geometry: keep it square (art-only) / art column square ─────
 
+    def restore_geometry(self, geometry):
+        """Like restoreGeometry(), but suppresses the square-follow logic
+        below — a restored geometry is trusted as-is, never reinterpreted
+        by picking whichever edge moved most."""
+        self._resizing_self = True
+        self.restoreGeometry(geometry)
+        self._resizing_self = False
+
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._grips.relayout()
