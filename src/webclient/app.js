@@ -270,6 +270,7 @@ function updateNowPlaying() {
   renderTracklist();
   renderAlbumList($('filter').value);
   if ('mediaSession' in navigator && current && t) {
+    navigator.mediaSession.playbackState = 'playing';
     navigator.mediaSession.metadata = new MediaMetadata({
       title: t.title,
       artist: current.artist || '',
@@ -312,8 +313,17 @@ $('play-btn').addEventListener('click', togglePlay);
 $('prev-btn').addEventListener('click', prevTrack);
 $('next-btn').addEventListener('click', nextTrack);
 
-audio.addEventListener('play', () => setIcon($('play-btn'), 'pause'));
-audio.addEventListener('pause', () => setIcon($('play-btn'), 'play'));
+// playbackState keeps the OS media session bound to this page while
+// paused — without it, pausing releases the session and the lock-screen
+// play button falls back to the phone's previous media app.
+audio.addEventListener('play', () => {
+  setIcon($('play-btn'), 'pause');
+  if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
+});
+audio.addEventListener('pause', () => {
+  setIcon($('play-btn'), 'play');
+  if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused';
+});
 
 // ── lyrics (cached .lrc/.txt served by /api/lyrics) ───────────────
 
