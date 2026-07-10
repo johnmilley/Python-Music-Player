@@ -1,0 +1,85 @@
+<!doctype html>
+<!-- lp stats — year-in-review listening page, served at /stats.
+     Data from /api/stats; artist photos via /api/artist_image (Deezer,
+     cached server-side); covers via the existing /api/art routes. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#121212">
+<title>lp — listening stats</title>
+<link rel="icon" href="icon.png">
+<link rel="stylesheet" href="stats.css">
+</head>
+<body>
+
+<header id="top">
+  <a id="back" href="/">&#8592; player</a>
+  <nav id="years"></nav>
+</header>
+
+<main id="page" hidden>
+  <!-- hero -->
+  <section id="hero">
+    <h1 id="hero-title"></h1>
+    <div id="hero-minutes"></div>
+    <div id="hero-sub">minutes with your music</div>
+    <div id="kpis"></div>
+  </section>
+
+  <!-- top artist -->
+  <section id="artist-section" hidden>
+    <h2>Top artist</h2>
+    <div id="top-artist">
+      <div id="top-artist-img"></div>
+      <div id="top-artist-info">
+        <div id="top-artist-name"></div>
+        <div id="top-artist-meta"></div>
+      </div>
+    </div>
+    <div id="runners"></div>
+  </section>
+
+  <!-- top albums -->
+  <section id="albums-section" hidden>
+    <h2>Top albums</h2>
+    <div id="album-grid"></div>
+  </section>
+
+  <!-- top tracks -->
+  <section id="tracks-section" hidden>
+    <h2>Top tracks</h2>
+    <ol id="track-list"></ol>
+  </section>
+
+  <!-- charts -->
+  <section id="months-section" hidden>
+    <h2>Minutes by month</h2>
+    <div class="chart" id="month-chart"></div>
+  </section>
+  <section id="hours-section" hidden>
+    <h2>Listening clock</h2>
+    <div class="chart" id="hour-chart"></div>
+  </section>
+
+  <!-- fun facts -->
+  <section id="facts-section" hidden>
+    <h2>Highlights</h2>
+    <div id="facts"></div>
+  </section>
+</main>
+
+<div id="empty" hidden>
+  <p id="empty-msg"></p>
+</div>
+
+<div id="unauth" hidden>
+  <p>Unauthorized — open Listening Stats from the app, or visit the
+     player page first so this browser remembers the token.</p>
+</div>
+
+<div id="tooltip" hidden></div>
+
+<script src="stats.js"></script>
+</body>
+</html>

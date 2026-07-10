@@ -1,0 +1,11 @@
+{
+  "name": "lp",
+  "short_name": "lp",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#121212",
+  "theme_color": "#121212",
+  "icons": [
+    { "src": "icon.png", "sizes": "any", "type": "image/png" }
+  ]
+}

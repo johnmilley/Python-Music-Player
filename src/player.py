@@ -78,6 +78,10 @@ class Player(QWidget):
     art_clicked = pyqtSignal()
     art_changed = pyqtSignal(QPixmap)
     play_state_changed = pyqtSignal(bool)
+    # (track, seconds actually listened) — emitted by flush_listen() when a
+    # track is about to be replaced (or the app closes). Player stays
+    # log-agnostic: thresholds and persistence live in play_log/App.
+    listen_ended = pyqtSignal(object, float)
 
     def __init__(self, album=None, folder_view=None, album_view=None):
         super().__init__()
@@ -105,6 +109,10 @@ class Player(QWidget):
         # just_playback: see notes/just_played_usage.png
         self.playback = Playback()
         self._time_elapsed = 0
+        # Seconds of *actual* playback for the current track: ticked in
+        # check_track_pos only while playing, untouched by seeks, reset by
+        # flush_listen(). This is what decides whether a play counts.
+        self._listened = 0.0
         
         # Timer is used to track elapsed time and end of track
         self.timer = QTimer(self)
@@ -336,6 +344,8 @@ class Player(QWidget):
         if not self.current_track or not self.playback.playing:
             return
 
+        self._listened += self.APP_UPDATE_TIME / 1000.0
+
         pos = self.playback.curr_pos
         total = self.current_track.length
 
@@ -379,7 +389,16 @@ class Player(QWidget):
                 self.playlist_pos = len(self.playlist.tracklist) - 1
             self.play(self.playlist, self.playlist_pos)
 
+    def flush_listen(self):
+        """Report the outgoing track's accumulated listen time and reset.
+        Must run before current_track is reassigned — first statement of
+        play()/load_track() — and once more from App on close."""
+        if self.current_track is not None and self._listened > 0:
+            self.listen_ended.emit(self.current_track, self._listened)
+        self._listened = 0.0
+
     def play(self, album, track_pos):
+        self.flush_listen()
         self.timer.start(self.APP_UPDATE_TIME) # updates time elapsed
 
         # update instance variables (from AlbumView)
@@ -408,6 +427,7 @@ class Player(QWidget):
             
     def load_track(self, album, track_pos, seek_to=0):
         """Load a track and update UI without playing. Optionally seek to position."""
+        self.flush_listen()
         self.album = album
         self.track_pos = track_pos
         self.playlist = album

@@ -16,6 +16,7 @@ a = Analysis(
         ('icon.png', '.'),
         ('src/icons', 'icons'),
         ('src/fonts', 'fonts'),
+        ('src/webclient', 'webclient'),
         (certifi.where(), 'certifi'),
     ],
     hiddenimports=[

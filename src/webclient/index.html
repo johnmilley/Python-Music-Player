@@ -1,0 +1,75 @@
+<!doctype html>
+<!-- lp remote — mini-mode-style phone client. The album cover takes the
+     whole viewport; controls float over it and auto-hide when idle
+     (mirrors MiniView); the library browser is a left drawer. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#121212">
+<title>lp</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon.png">
+<link rel="icon" href="icon.png">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- Full-bleed art viewport -->
+<main id="stage">
+  <img id="art" alt="" draggable="false">
+  <div id="placeholder">lp</div>
+
+  <!-- chrome: everything that auto-hides together.
+       Buttons carry lp's own SVG icons, injected by app.js. -->
+  <button id="menu-btn" class="chrome" aria-label="Library"></button>
+  <div id="title-scrim" class="chrome">
+    <div id="track-title"></div>
+    <div id="track-album"></div>
+  </div>
+  <div id="bar" class="chrome">
+    <div id="seek-row">
+      <span id="time-cur">0:00</span>
+      <input id="seek" type="range" min="0" max="1000" value="0" step="1">
+      <span id="time-len">0:00</span>
+    </div>
+    <div id="buttons">
+      <button id="tracks-btn" aria-label="Tracklist"></button>
+      <button id="prev-btn" aria-label="Previous"></button>
+      <button id="play-btn" aria-label="Play"></button>
+      <button id="next-btn" aria-label="Next"></button>
+      <button id="lyrics-btn" aria-label="Lyrics"></button>
+    </div>
+  </div>
+</main>
+
+<!-- Left drawer: library browser (artists collapse; tap a header to open) -->
+<div id="scrim"></div>
+<nav id="drawer">
+  <input id="filter" type="search" placeholder="Filter albums" autocomplete="off">
+  <div id="album-list"></div>
+</nav>
+
+<!-- Tracklist / lyrics overlays (mutually exclusive, slide from the right) -->
+<div id="tracklist"></div>
+<div id="lyrics"></div>
+
+<!-- Token prompt (shown only when unauthorized) -->
+<div id="token-screen" hidden>
+  <div>
+    <p>Enter the access token shown in lp&rsquo;s Remote&nbsp;Access dialog:</p>
+    <input id="token-input" autocomplete="off" autocapitalize="off" spellcheck="false">
+    <button id="token-go">Connect</button>
+    <p id="token-err"></p>
+  </div>
+</div>
+
+<!-- ONE persistent audio element — never recreated, or iOS drops the
+     background-audio session -->
+<audio id="player" playsinline preload="auto"></audio>
+
+<script src="app.js"></script>
+</body>
+</html>

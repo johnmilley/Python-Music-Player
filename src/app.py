@@ -27,14 +27,15 @@ from grip_splitter import GripSplitter
 from max_view import MaxView
 from mini_view import MiniView
 from window_chrome import TitleBar, WindowGrips
+import play_log
 import theme
 
 from PyQt5.QtWidgets import (QMainWindow, QApplication, QWidget, QHBoxLayout,
     QAction, QSplitter, QStackedWidget, QColorDialog, QShortcut, QDialog, QMenu,
     QVBoxLayout, QLabel, QLineEdit, QListWidgetItem, QSizePolicy, QFileDialog,
-    QPushButton, QToolButton, QSlider, QDialogButtonBox)
-from PyQt5.QtCore import Qt, QEvent, QSettings, QTimer, QSize
-from PyQt5.QtGui import QColor, QPixmap, QIcon, QKeySequence
+    QPushButton, QToolButton, QSlider, QDialogButtonBox, QMessageBox)
+from PyQt5.QtCore import Qt, QEvent, QSettings, QTimer, QSize, QUrl
+from PyQt5.QtGui import QColor, QPixmap, QIcon, QKeySequence, QDesktopServices
 
 
 class ToolBar(QWidget):
@@ -135,6 +136,7 @@ class App(QMainWindow):
         self.player.track_changed.connect(self._on_track_changed)
         self.player.timer.timeout.connect(self._update_lyrics_position)
         self.player.art_clicked.connect(self._on_art_clicked)
+        self.player.listen_ended.connect(self._on_listen_ended)
 
         # Frameless custom window (own titlebar below), matching the
         # non-system window style of the sibling 'text' app
@@ -240,6 +242,13 @@ class App(QMainWindow):
         self.library_action = QAction('Music Library...', self)
         self.library_action.triggered.connect(self._pick_library)
         self.prefs_menu.addAction(self.library_action)
+        self.prefs_menu.addSeparator()
+        self.remote_action = QAction('Remote Access...', self)
+        self.remote_action.triggered.connect(self._open_remote_dialog)
+        self.prefs_menu.addAction(self.remote_action)
+        self.stats_action = QAction('Listening Stats...', self)
+        self.stats_action.triggered.connect(self._open_stats_page)
+        self.prefs_menu.addAction(self.stats_action)
 
         self.colour_menu = QMenu('Theme', self)
         self.accent_color = theme.DEFAULT_ACCENT
@@ -285,6 +294,9 @@ class App(QMainWindow):
         self.toggle_max_btn = self._make_tool_button(
             'maximize', 'panel-toggle', 'Max mode (Shift+M)',
             self.toggle_maxplayer, checkable=False)
+        self.toggle_mini_btn = self._make_tool_button(
+            'minimize', 'panel-toggle', 'Mini mode (m)',
+            self.toggle_minimode, checkable=False)
 
         # Assemble: modes (left) | stretch | panel toggles + gear (right)
         hm.addWidget(self.mode_music_btn)
@@ -295,6 +307,7 @@ class App(QMainWindow):
         hm.addWidget(self.toggle_tracklist_btn)
         hm.addWidget(self.toggle_lyrics_btn)
         hm.addWidget(self.toggle_max_btn)
+        hm.addWidget(self.toggle_mini_btn)
         hm.addSpacing(8)
         hm.addWidget(self.gear_btn)
 
@@ -323,6 +336,10 @@ class App(QMainWindow):
         # Mini mode state — the MiniView window is created lazily too
         self.is_minimode = False
         self._mini_view = None
+
+        # Media server (Remote Access) — created lazily when enabled
+        self._media_server = None
+        self._media_server_error = ''
 
         # Theme setup
         self.current_theme = theme.LIGHT
@@ -433,7 +450,7 @@ class App(QMainWindow):
         for btn in (self.mode_music_btn, self.mode_podcast_btn,
                     self.mode_radio_btn, self.toggle_library_btn,
                     self.toggle_tracklist_btn, self.toggle_lyrics_btn,
-                    self.toggle_max_btn, self.gear_btn):
+                    self.toggle_max_btn, self.toggle_mini_btn, self.gear_btn):
             name = getattr(btn, '_icon_name', None)
             if name:
                 btn.setIcon(self._toolbar_icon(name))
@@ -643,6 +660,58 @@ class App(QMainWindow):
         if path:
             self.folder_view.set_root(path)
             self.settings.setValue('library_root', path)
+            if self._media_server:
+                self._media_server.set_library_root(path)
+
+    # ── Remote Access (media server) ────────────────────────────────
+
+    def _start_media_server(self):
+        """Start the phone-streaming HTTP server. Failure (e.g. port in
+        use) is recorded for the dialog, never raised."""
+        if self._media_server and self._media_server.running:
+            return
+        from media_server import MediaServer, DEFAULT_PORT, generate_token
+        token = self.settings.value('server/token', '')
+        if not token:
+            token = generate_token()
+            self.settings.setValue('server/token', token)
+        port = int(self.settings.value('server/port', DEFAULT_PORT))
+        root = self.settings.value('library_root', '')
+        self._media_server_error = ''
+        if not root:
+            self._media_server_error = 'no music library folder set'
+            return
+        try:
+            self._media_server = MediaServer(root, port, token)
+            self._media_server.start()
+        except OSError as e:
+            self._media_server_error = str(e)
+            self._media_server = None
+
+    def _stop_media_server(self):
+        if self._media_server:
+            self._media_server.stop()
+            self._media_server = None
+
+    def _open_remote_dialog(self):
+        from server_dialog import ServerDialog
+        ServerDialog(self).exec_()
+
+    def _open_stats_page(self):
+        """Open the year-in-review stats page in the default browser.
+        Starts the server one-shot if needed — without flipping
+        server/enabled, so this never opts the user into LAN serving."""
+        if not (self._media_server and self._media_server.running):
+            self._start_media_server()
+        if not (self._media_server and self._media_server.running):
+            QMessageBox.warning(
+                self, 'Listening Stats',
+                f'Could not start the local server: '
+                f'{self._media_server_error or "unknown error"}')
+            return
+        s = self._media_server
+        QDesktopServices.openUrl(
+            QUrl(f'http://127.0.0.1:{s.port}/stats?token={s.token}'))
 
     def _change_album_art(self):
         """Open artwork finder to search for new album cover."""
@@ -708,6 +777,13 @@ class App(QMainWindow):
         library_root = self.settings.value('library_root')
         if library_root:
             self.folder_view.set_root(library_root)
+        # Remote access autostarts if it was enabled last session; a bind
+        # failure is remembered for the dialog and must not break startup
+        if self.settings.value('server/enabled', 'false') == 'true':
+            try:
+                self._start_media_server()
+            except Exception:
+                pass
         geometry = self.settings.value('geometry')
         if geometry:
             self.restoreGeometry(geometry)
@@ -1129,6 +1205,31 @@ class App(QMainWindow):
             self._max_view.set_tracklist_visible(not self._max_view.tracklist_on)
 
     # ── Lyrics & Track Change Handling ─────────────────────────────
+
+    def _on_listen_ended(self, track, listened):
+        """A track's playback ended (replaced or app closing) — log it as a
+        play if enough of it was actually heard. Music only; must never be
+        able to break playback."""
+        try:
+            if hasattr(track, 'audio_url'):    # podcast (radio never gets here)
+                return
+            if not play_log.should_count(track.length, listened):
+                return
+            album_id = None
+            root = self.settings.value('library_root', '')
+            if root and track.path:
+                try:
+                    album_id = Path(track.path).parent.relative_to(root).as_posix()
+                except ValueError:
+                    pass    # played from outside the library — still logged
+            record = play_log.make_record(
+                artist=track.artist, album=track.album,
+                title=track.title or track.filename, n=track.tracknumber,
+                length=track.length, listened=listened, album_id=album_id)
+            record['src'] = 'desktop'
+            play_log.append(record)
+        except Exception as e:
+            print(f'LOG: play log write failed: {e}')
 
     def _on_track_changed(self, track):
         """Fetch lyrics when the track changes."""
@@ -2073,6 +2174,8 @@ class App(QMainWindow):
         self.settings.setValue('app_mode', self._playing_mode or self._mode)
         # Save music state from the last actual music playback
         self._save_music_position()  # update snapshot if still playing music
+        # The in-progress track gets its chance to count as a play
+        self.player.flush_listen()
         if self._playing_album_path:
             self.settings.setValue('last_album', self._playing_album_path)
             self.settings.setValue('last_track_pos', self._playing_track_pos)
@@ -2085,6 +2188,7 @@ class App(QMainWindow):
             self.settings.setValue('radio/last_station_name', self._current_radio_station.name)
         self.radio_player.stop()
         self._media_keys.cleanup()
+        self._stop_media_server()
         # Quit can arrive from mini mode ('q') — persist its state and make
         # sure the mini window actually closes (hidden first: its closeEvent
         # treats closing a visible window as "return to the full app")

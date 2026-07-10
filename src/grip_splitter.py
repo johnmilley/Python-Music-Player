@@ -32,9 +32,9 @@ class _GripHandle(QSplitterHandle):
         # Faint hairline along the handle's full length (accent on hover)
         line = QColor(sp._accent_color if self._hover else sp._line_color)
         if self.orientation() == Qt.Horizontal:
-            painter.fillRect(cx, rect.top(), 1, rect.height(), line)
+            painter.fillRect(cx - 1, rect.top(), 2, rect.height(), line)
         else:
-            painter.fillRect(rect.left(), cy, rect.width(), 1, line)
+            painter.fillRect(rect.left(), cy - 1, rect.width(), 2, line)
 
 
 class GripSplitter(QSplitter):
