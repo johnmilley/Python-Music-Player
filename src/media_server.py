@@ -29,6 +29,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, quote, unquote, urlparse
 
 from album import Album
+from favorites import FavoritesStore
 import play_log
 
 DEFAULT_PORT = 8642
@@ -321,6 +322,8 @@ class _Handler(BaseHTTPRequestHandler):
             return self._api_lyrics(query)
         if segments[1:] == ['artist_image']:
             return self._api_artist_image(query)
+        if segments[1:] == ['favorite']:
+            return self._api_favorite_get(query)
         if len(segments) == 4 and segments[1] in ('stream', 'art'):
             return self._api_file(segments[1], segments[2], segments[3])
         return self._send_error_json(404, 'not found')
@@ -329,10 +332,12 @@ class _Handler(BaseHTTPRequestHandler):
         try:
             url = urlparse(self.path)
             query = parse_qs(url.query)
-            if url.path != '/api/played':
+            if url.path not in ('/api/played', '/api/favorite'):
                 return self._send_error_json(404, 'not found')
             if not self._check_token(query):
                 return self._send_error_json(401, 'unauthorized')
+            if url.path == '/api/favorite':
+                return self._api_favorite_toggle()
             length = int(self.headers.get('Content-Length', 0))
             if not 0 < length <= 8192:
                 return self._send_error_json(400, 'bad body')
@@ -390,6 +395,47 @@ class _Handler(BaseHTTPRequestHandler):
             except OSError:
                 pass
         return self._send_error_json(404, 'no lyrics')
+
+    def _resolve_track(self, rel, n):
+        """The track at album `rel`, tracknumber `n` — same identity the
+        desktop app keys favourites by (Track.path), resolved fresh from
+        disk rather than trusting a client-supplied path (mirrors _resolve's
+        containment check; absolute paths never cross the wire)."""
+        try:
+            n = int(n)
+            folder = self._resolve(rel)
+        except (ValueError, OSError, TypeError):
+            return None
+        if not folder.is_dir():
+            return None
+        album = Album(folder)
+        for t in album.tracklist:
+            if int(t.tracknumber or 0) == n:
+                return t
+        return None
+
+    def _api_favorite_get(self, query):
+        rel = (query.get('id') or [''])[0]
+        n = (query.get('n') or [''])[0]
+        track = self._resolve_track(rel, n)
+        if track is None:
+            return self._send_error_json(404, 'not found')
+        store = FavoritesStore(self.server.favorites_path)
+        self._send_json({'favorited': store.is_favorite(track.path)})
+
+    def _api_favorite_toggle(self):
+        length = int(self.headers.get('Content-Length', 0))
+        if not 0 < length <= 2048:
+            return self._send_error_json(400, 'bad body')
+        try:
+            data = json.loads(self.rfile.read(length))
+        except (ValueError, json.JSONDecodeError):
+            return self._send_error_json(400, 'bad body')
+        track = self._resolve_track(data.get('id', ''), data.get('n'))
+        if track is None:
+            return self._send_error_json(404, 'not found')
+        store = FavoritesStore(self.server.favorites_path)
+        self._send_json({'favorited': store.toggle(track)})
 
     def _api_stats(self, query):
         year_s = (query.get('year') or [''])[0]
@@ -536,11 +582,12 @@ class MediaServer:
     so it can be updated live without a restart."""
 
     def __init__(self, library_root, port=DEFAULT_PORT, token='',
-                 plays_path=None):
+                 plays_path=None, favorites_path=None):
         self.library_root = str(library_root)
         self.port = int(port)
         self.token = token or generate_token()
         self.plays_path = plays_path   # None = play_log's default location
+        self.favorites_path = favorites_path   # None = FavoritesStore's default
         self._httpd = None
         self._thread = None
 
@@ -557,6 +604,7 @@ class MediaServer:
         httpd.cache = _LibraryCache()
         httpd.static_dir = WEBCLIENT_DIR
         httpd.plays_path = self.plays_path
+        httpd.favorites_path = self.favorites_path
         self._httpd = httpd
         self._thread = threading.Thread(
             target=httpd.serve_forever, name='lp-media-server', daemon=True)

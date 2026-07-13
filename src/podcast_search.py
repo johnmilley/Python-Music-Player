@@ -19,9 +19,10 @@ class PodcastResult(QWidget):
     """Single podcast result row with thumbnail, info, and subscribe button."""
     subscribe_requested = pyqtSignal(str)  # feedUrl
 
-    def __init__(self, result, index, theme_dict):
+    def __init__(self, result, index, theme_dict, fs=None):
         super().__init__()
         t = theme_dict
+        fs = fs or theme.DEFAULT_SIZE
         self.index = index
         self.feed_url = result.get('feedUrl', '')
 
@@ -44,9 +45,9 @@ class PodcastResult(QWidget):
 
         title_label = QLabel(f'<b>{name}</b>')
         title_label.setWordWrap(True)
-        title_label.setStyleSheet(f'color: {t["fg"]}; font-family: {theme.FONT}; font-size: 12pt; border: none;')
+        title_label.setStyleSheet(f'color: {t["fg"]}; font-family: {theme.FONT}; font-size: {fs + 2}pt; border: none;')
         detail_label = QLabel(f'{artist} - {count} episodes')
-        detail_label.setStyleSheet(f'color: {t["fg"]}; font-family: {theme.FONT}; font-size: 10pt; border: none;')
+        detail_label.setStyleSheet(f'color: {t["fg"]}; font-family: {theme.FONT}; font-size: {fs}pt; border: none;')
 
         info_layout.addWidget(title_label)
         info_layout.addWidget(detail_label)
@@ -62,7 +63,7 @@ class PodcastResult(QWidget):
                 color: {t['selection_text']};
                 border: none;
                 font-family: {theme.FONT};
-                font-size: 11pt;
+                font-size: {fs + 1}pt;
             }}
             QPushButton:hover {{ opacity: 0.8; }}
         """)
@@ -107,9 +108,10 @@ class PodcastSearchDialog(QDialog):
     """Dialog to search iTunes for podcasts and subscribe."""
     feed_subscribed = pyqtSignal(str)  # feedUrl
 
-    def __init__(self, initial_query, theme_dict, parent=None):
+    def __init__(self, initial_query, theme_dict, parent=None, fs=None):
         super().__init__(parent)
         self.theme_dict = theme_dict
+        self.fs = fs = fs or theme.DEFAULT_SIZE
         self._loaders = []
 
         self.setWindowTitle('Search Podcasts')
@@ -136,7 +138,7 @@ class PodcastSearchDialog(QDialog):
                 color: {t['fg']};
                 border: 1px solid {t['border']};
                 font-family: {theme.FONT};
-                font-size: 11pt;
+                font-size: {fs + 1}pt;
                 padding: 6px;
             }}
         """)
@@ -152,7 +154,7 @@ class PodcastSearchDialog(QDialog):
                 color: {t['selection_text']};
                 border: none;
                 font-family: {theme.FONT};
-                font-size: 11pt;
+                font-size: {fs + 1}pt;
             }}
         """)
         search_btn.clicked.connect(self._on_search_submit)
@@ -161,7 +163,7 @@ class PodcastSearchDialog(QDialog):
 
         # Status
         self.status = QLabel()
-        self.status.setStyleSheet(f'color: {t["fg"]}; font-family: {theme.FONT}; font-size: 11pt;')
+        self.status.setStyleSheet(f'color: {t["fg"]}; font-family: {theme.FONT}; font-size: {fs + 1}pt;')
         self.status.setWordWrap(True)
         layout.addWidget(self.status)
 
@@ -216,7 +218,7 @@ class PodcastSearchDialog(QDialog):
         self.status.setText(f'Found {len(results)} results:')
 
         for i, result in enumerate(results):
-            row = PodcastResult(result, i, self.theme_dict)
+            row = PodcastResult(result, i, self.theme_dict, self.fs)
             row.subscribe_requested.connect(self._on_subscribe)
             self.results_layout.addWidget(row)
 

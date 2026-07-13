@@ -167,8 +167,9 @@ class PanelManager(QObject):
     # neither; music keeps whatever the session restored.
 
     MODE_DEFAULTS = {
-        'podcast': {'tracklist': True, 'lyrics': False},
-        'radio':   {'tracklist': False, 'lyrics': False},
+        'podcast':   {'tracklist': True, 'lyrics': False},
+        'radio':     {'tracklist': False, 'lyrics': False},
+        'favorites': {'tracklist': True, 'lyrics': False},
     }
 
     def snapshot(self, key):

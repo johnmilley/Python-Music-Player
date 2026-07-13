@@ -165,10 +165,11 @@ class StationArtDialog(QDialog):
     """Search for a station image via DuckDuckGo Images."""
     art_selected = pyqtSignal(QPixmap)  # emitted when user picks an image
 
-    def __init__(self, station_name, theme_dict, parent=None):
+    def __init__(self, station_name, theme_dict, parent=None, fs=None):
         super().__init__(parent)
         self.station_name = station_name
         self.theme_dict = theme_dict
+        self.fs = fs
         self._loaders = []
         self._dest = str(station_art_path(station_name))
 
@@ -176,12 +177,8 @@ class StationArtDialog(QDialog):
         self.setMinimumSize(480, 380)
         self.resize(520, 460)
 
-        t = theme_dict
-        self.setStyleSheet(f"""
-            QDialog {{ background-color: {t['bg']}; }}
-            QScrollArea {{ border: none; background: {t['bg']}; }}
-            QWidget#results-container {{ background: {t['bg']}; }}
-        """)
+        from artwork_finder import finder_dialog_qss
+        self.setStyleSheet(finder_dialog_qss(theme_dict, fs))
 
         layout = QVBoxLayout()
 
@@ -190,33 +187,21 @@ class StationArtDialog(QDialog):
         self.search_input = QLineEdit()
         self.search_input.setPlaceholderText('Search for station image...')
         self.search_input.setText(station_name)
-        self.search_input.setStyleSheet(f"""
-            QLineEdit {{
-                background-color: {t['bg_alt']}; color: {t['fg']};
-                border: 1px solid {t['border']};
-                font-family: {theme.FONT}; font-size: 11pt; padding: 6px;
-            }}
-        """)
         self.search_input.returnPressed.connect(self._do_search)
         self.search_input.installEventFilter(self)
         search_row.addWidget(self.search_input)
 
         search_btn = QPushButton('Search')
-        search_btn.setFixedSize(70, 35)
-        search_btn.setStyleSheet(f"""
-            QPushButton {{
-                background: {t['accent']}; color: {t['selection_text']};
-                border: none; font-family: {theme.FONT}; font-size: 11pt;
-            }}
-        """)
+        search_btn.setObjectName('accent-btn')
+        search_btn.setCursor(Qt.PointingHandCursor)
+        search_btn.setFixedSize(80, 35)
         search_btn.clicked.connect(self._do_search)
         search_row.addWidget(search_btn)
         layout.addLayout(search_row)
 
         # Status
         self.status = QLabel()
-        self.status.setStyleSheet(
-            f'color: {t["fg"]}; font-family: {theme.FONT}; font-size: 11pt;')
+        self.status.setObjectName('status-label')
         self.status.setWordWrap(True)
         layout.addWidget(self.status)
 
@@ -275,42 +260,42 @@ class StationArtDialog(QDialog):
 
     def _make_row(self, index, result, t):
         row = QWidget()
+        row.setObjectName('result-row')
+        row.setAttribute(Qt.WA_StyledBackground, True)
         row.setProperty('_index', index)
         layout = QHBoxLayout()
         layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(12)
 
-        thumb = QLabel()
+        thumb = QLabel('…')
         thumb.setFixedSize(100, 100)
         thumb.setAlignment(Qt.AlignCenter)
-        thumb.setStyleSheet(
-            f'background: {t["bg_alt"]}; border: 1px solid {t["border"]};')
-        thumb.setText('...')
+        # findChild key first; the shared row look comes from #row-thumb...
         thumb.setObjectName(f'thumb-{index}')
+        fs = (self.fs or theme.DEFAULT_SIZE) + 4
+        thumb.setStyleSheet(
+            f'background: {t["bg_alt"]}; border: 1px solid {t["border"]}; '
+            f'color: {t.get("fg_dim", t["fg"])}; font-size: {fs}pt;')
         layout.addWidget(thumb)
 
         info = QVBoxLayout()
+        info.setSpacing(2)
         title = result.get('title', '')
         source = result.get('source', '')
         title_lbl = QLabel(f'<b>{title}</b>')
+        title_lbl.setObjectName('row-title')
         title_lbl.setWordWrap(True)
-        title_lbl.setStyleSheet(
-            f'color: {t["fg"]}; font-family: {theme.FONT}; font-size: 11pt; border:none;')
         source_lbl = QLabel(source)
-        source_lbl.setStyleSheet(
-            f'color: {t["fg"]}; font-family: {theme.FONT}; font-size: 9pt; border:none; opacity:0.6;')
+        source_lbl.setObjectName('row-detail')
         info.addWidget(title_lbl)
         info.addWidget(source_lbl)
         info.addStretch()
         layout.addLayout(info, stretch=1)
 
         choose_btn = QPushButton('Use')
+        choose_btn.setObjectName('accent-btn')
+        choose_btn.setCursor(Qt.PointingHandCursor)
         choose_btn.setMinimumSize(60, 32)
-        choose_btn.setStyleSheet(f"""
-            QPushButton {{
-                background: {t['accent']}; color: {t['selection_text']};
-                border: none; font-family: {theme.FONT}; font-size: 11pt;
-            }}
-        """)
         img_url = result.get('image', '')
         choose_btn.clicked.connect(lambda checked, u=img_url: self._choose(u))
         layout.addWidget(choose_btn)

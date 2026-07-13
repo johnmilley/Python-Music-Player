@@ -89,10 +89,13 @@ button svg { width: 22px; height: 22px; fill: currentColor; display: block;
   width: 48px; height: 44px;
 }
 #play-btn svg { width: 32px; height: 32px; }
-/* panel toggles sit dim like lp's toolbar; accent when their panel is open */
+/* panel toggles sit dim like lp's toolbar; accent when their panel is open.
+   The heart is always accent-colored (hollow or filled) rather than
+   dim-until-active — a standalone action, not a panel-state indicator. */
 #tracks-btn, #lyrics-btn { color: #999; }
-#tracks-btn svg, #lyrics-btn svg { width: 19px; height: 19px; }
+#tracks-btn svg, #lyrics-btn svg, #fav-btn svg { width: 19px; height: 19px; }
 body.tracks-open #tracks-btn, body.lyrics-open #lyrics-btn { color: #f2932c; }
+#fav-btn { color: #f2932c; }
 
 /* ── left drawer: library ──────────────────────────────────────── */
 

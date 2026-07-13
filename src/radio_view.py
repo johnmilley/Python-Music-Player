@@ -96,7 +96,8 @@ class RadioView(QWidget):
         t = dict(getattr(app, 'current_theme', theme_mod.LIGHT))
         t['accent'] = getattr(app, 'accent_color', theme_mod.DEFAULT_ACCENT)
         t['selection'] = t['accent']
-        dialog = RadioSearchDialog(query, t, parent=self)
+        dialog = RadioSearchDialog(query, t, parent=self,
+                                   fs=getattr(app, 'font_size', None))
         dialog.station_added.connect(self.add_station_external)
         dialog.exec_()
 

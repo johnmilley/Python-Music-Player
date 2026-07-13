@@ -142,7 +142,9 @@ def most_readable(colors):
 
 class PaletteExtractThread(QThread):
     """Extract color palette in a background thread."""
-    finished = pyqtSignal(list)  # list of hex color strings
+    # Named palette_ready (not 'finished') so QThread's own finished signal
+    # stays usable for lifecycle handling — see bg_threads.retire()
+    palette_ready = pyqtSignal(list)  # list of hex color strings
 
     def __init__(self, image_path, count=5):
         super().__init__()
@@ -151,4 +153,4 @@ class PaletteExtractThread(QThread):
 
     def run(self):
         colors = extract_palette(self.image_path, self.count)
-        self.finished.emit(colors)
+        self.palette_ready.emit(colors)

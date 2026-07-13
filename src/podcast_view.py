@@ -86,7 +86,8 @@ class PodcastView(QWidget):
         t = dict(getattr(app, 'current_theme', theme_mod.LIGHT))
         t['accent'] = getattr(app, 'accent_color', theme_mod.DEFAULT_ACCENT)
         t['selection'] = t['accent']
-        dialog = PodcastSearchDialog(query, t, parent=self)
+        dialog = PodcastSearchDialog(query, t, parent=self,
+                                     fs=getattr(app, 'font_size', None))
         dialog.feed_subscribed.connect(self.add_feed_by_url)
         dialog.exec_()
 

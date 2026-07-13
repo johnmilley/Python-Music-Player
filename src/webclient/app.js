@@ -33,6 +33,15 @@ const ICONS24 = {
     + '<path d="M3 17 H6 V20 H3 Z"/><path d="M8 17.5 H21 V19.5 H8 Z"/>',
   lyrics: '<path d="M4 4 H20 V6 H4 Z"/><path d="M4 8.5 H16 V10.5 H4 Z"/>'
     + '<path d="M4 13 H19 V15 H4 Z"/><path d="M4 17.5 H12 V19.5 H4 Z"/>',
+  heart: '<path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 '
+    + '7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 '
+    + '5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/>',
+  heart_outline: '<path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 '
+    + '5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 '
+    + '19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35zM12 5.09 '
+    + '10.94 6.14C10.02 5.09 8.79 4.5 7.5 4.5 5.24 4.5 3.5 6.24 3.5 8.5c0 '
+    + '2.89 2.7 5.31 6.79 9.03L12 19.14l1.71-1.61C17.8 13.81 20.5 11.39 '
+    + '20.5 8.5c0-2.26-1.74-4-4-4-1.29 0-2.52.59-3.44 1.64L12 5.09z"/>',
 };
 
 function setIcon(btn, name) {
@@ -47,6 +56,7 @@ setIcon($('lyrics-btn'), 'lyrics');
 setIcon($('prev-btn'), 'prev');
 setIcon($('play-btn'), 'play');
 setIcon($('next-btn'), 'next');
+setIcon($('fav-btn'), 'heart_outline');
 
 // ── token ─────────────────────────────────────────────────────────
 
@@ -262,6 +272,47 @@ function beaconTick() {
   }
 }
 
+// ── favourites (heart button) ──────────────────────────────────────
+// Mirrors the desktop's tracklist star/heart: favouriting from the phone
+// writes to the same favorites.json the desktop reads (see /api/favorite
+// in media_server.py), keyed by track path resolved server-side — the
+// client only ever sends album id + tracknumber, never a path.
+
+let favBusy = false;
+
+async function refreshFavoriteState() {
+  const t = tracks[idx];
+  if (!current || !t) { setIcon($('fav-btn'), 'heart_outline'); return; }
+  try {
+    const d = await api('/api/favorite?id=' + encodeURIComponent(current.id)
+      + '&n=' + encodeURIComponent(t.n));
+    setIcon($('fav-btn'), d.favorited ? 'heart' : 'heart_outline');
+  } catch {
+    // offline/error — leave the icon as-is rather than guess
+  }
+}
+
+$('fav-btn').addEventListener('click', async () => {
+  const t = tracks[idx];
+  if (!current || !t || favBusy) return;
+  favBusy = true;
+  try {
+    const res = await fetch(withToken('/api/favorite'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: current.id, n: t.n }),
+    });
+    if (res.ok) {
+      const d = await res.json();
+      setIcon($('fav-btn'), d.favorited ? 'heart' : 'heart_outline');
+    }
+  } catch {
+    // offline — the tap just doesn't register; no optimistic state to undo
+  } finally {
+    favBusy = false;
+  }
+});
+
 function updateNowPlaying() {
   const t = tracks[idx];
   $('track-title').textContent = t ? t.title : '';
@@ -269,6 +320,7 @@ function updateNowPlaying() {
     current ? [current.artist, current.title].filter(Boolean).join(' — ') : '';
   renderTracklist();
   renderAlbumList($('filter').value);
+  refreshFavoriteState();
   if ('mediaSession' in navigator && current && t) {
     navigator.mediaSession.playbackState = 'playing';
     navigator.mediaSession.metadata = new MediaMetadata({

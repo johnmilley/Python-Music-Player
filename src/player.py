@@ -21,9 +21,11 @@ from just_playback import Playback
 # pyqt5
 from PyQt5.QtWidgets import (QMainWindow, QApplication, QWidget, QHBoxLayout,
     QPushButton, QLabel, QVBoxLayout, QSizePolicy)
-from PyQt5.QtCore import Qt, QTimer, QSize, pyqtSignal, QByteArray
-from PyQt5.QtGui import QPixmap, QColor, QIcon, QPainter, QFontMetrics
+from PyQt5.QtCore import Qt, QTimer, QSize, QEvent, QThread, pyqtSignal, QByteArray
+from PyQt5.QtGui import QPixmap, QColor, QIcon, QImage, QPainter, QFontMetrics
 from PyQt5.QtSvg import QSvgRenderer
+
+import bg_threads
 
 
 if getattr(sys, '_MEIPASS', None):
@@ -56,6 +58,22 @@ def _render_svg(name, color, size):
     painter.end()
     _ICON_CACHE[key] = pixmap
     return pixmap
+
+
+class _ImageLoadThread(QThread):
+    """Decode an image file off the UI thread — QImage is thread-safe to
+    construct (unlike QPixmap). Album covers live on a possibly slow NAS,
+    so a synchronous QPixmap(path) on album/track switches froze the UI
+    for as long as the read+decode took."""
+    image_ready = pyqtSignal(int, QImage)
+
+    def __init__(self, path, token):
+        super().__init__()
+        self.path = str(path)
+        self.token = token
+
+    def run(self):
+        self.image_ready.emit(self.token, QImage(self.path))
 
 
 def _svg_icon(name, color='black', size=32, hover_color=None):
@@ -103,6 +121,15 @@ class Player(QWidget):
         self._art_paths = []
         self._art_index = 0
         self._art_labels = []
+        # Async art decode: token guards against a stale decode landing
+        # after a newer request (rapid album switches / gallery stepping)
+        self._art_token = 0
+        self._art_thread = None
+
+        # Extra progress bar/time-label sets (max mode, mini mode overlay
+        # panels) that mirror the player column's own — same pattern as
+        # _art_labels, single source of truth stays check_track_pos/etc.
+        self._extra_progress_bars = []
 
         self.build_gui()
 
@@ -124,6 +151,13 @@ class Player(QWidget):
         # Playlist: the album/feed that is actually playing (not just displayed)
         self.playlist = None
         self.playlist_pos = 0
+        # Shuffle: next_track draws from a shuffled bag of the remaining
+        # indices (so every track plays once per cycle); prev_track walks
+        # back through the actual play order.
+        self.shuffle = False
+        self._shuffle_bag = []
+        self._shuffle_history = []
+        self._shuffle_for = None  # the playlist the bag was drawn for
 
     def build_gui(self):
         """Build the player column: art on top, controls block below.
@@ -150,6 +184,14 @@ class Player(QWidget):
         self.album_widget.clicked.connect(self.art_clicked.emit)
         self.register_art_label(self.album_widget)
         self.layout_player.addWidget(self.album_widget)
+
+        # Big favourite heart over the art, shown only on hover (normal
+        # mode only; max/mini mode have their own separate art + full
+        # ControlPanel). Deferred import: overlay_controls imports
+        # _render_svg from this module.
+        import overlay_controls
+        self.heart_overlay = overlay_controls.HeartOverlay(self.album_widget)
+        self.album_widget.installEventFilter(self)
 
         # Controls container — fixed height, capped width, centered
         self.controls_container = QWidget()
@@ -257,6 +299,28 @@ class Player(QWidget):
         super().resizeEvent(event)
         self._update_compactness()
 
+    def eventFilter(self, obj, event):
+        """Show/hide/position the hover heart — Enter/Leave on the art
+        widget itself, since its child (the heart button) would otherwise
+        swallow those events before they reach it."""
+        if obj is self.album_widget:
+            t = event.type()
+            if t == QEvent.Enter:
+                self._position_heart_overlay()
+                self.heart_overlay.show()
+                self.heart_overlay.raise_()
+            elif t == QEvent.Leave:
+                self.heart_overlay.hide()
+            elif t == QEvent.Resize and self.heart_overlay.isVisible():
+                self._position_heart_overlay()
+        return super().eventFilter(obj, event)
+
+    def _position_heart_overlay(self):
+        hint = self.heart_overlay.sizeHint()
+        x = (self.album_widget.width() - hint.width()) // 2
+        y = (self.album_widget.height() - hint.height()) // 2
+        self.heart_overlay.setGeometry(x, y, hint.width(), hint.height())
+
     def _update_compactness(self):
         """Shrink the controls block's chrome (margins, spacing, icon size,
         progress bar thickness) as the column gets short — the album art
@@ -288,6 +352,9 @@ class Player(QWidget):
         self._set_btn_hover_icons(self.prev_track_button, 'skip_previous', color, hover_color)
         self._set_btn_hover_icons(self.next_track_button, 'skip_next', color, hover_color)
         self._set_play_icon()
+        if hasattr(self, 'heart_overlay'):
+            accent = getattr(self, '_accent_color', None) or color
+            self.heart_overlay.set_theme({'accent': accent})
 
     def _set_btn_hover_icons(self, btn, icon_name, color, hover_color):
         """Set normal icon and install enter/leave handlers for accent-contrast hover."""
@@ -319,23 +386,22 @@ class Player(QWidget):
             pos = self.playback.curr_pos if self.playback.playing else 0
         if self._show_remaining:
             remaining = max(0, total - pos)
-            self.track_length_label.setText(
-                f"-{self.current_track.length_to_string(remaining)}")
+            self._set_progress_text(
+                len_text=f"-{self.current_track.length_to_string(remaining)}")
         else:
-            self.track_length_label.setText(
-                self.current_track.length_to_string(total))
+            self._set_progress_text(
+                len_text=self.current_track.length_to_string(total))
 
     def seek_to(self, pos):
         self.playback.pause()
         if self.current_track:
             # 1000 is the size of the progress bar
             seconds = (pos / 1000) * self.current_track.length
-            self.track_progress_label.setText(
-                self.current_track.length_to_string(seconds)
-                )
+            self._set_progress_text(
+                pos_text=self.current_track.length_to_string(seconds))
             self._update_time_label(seconds)
             self.playback.seek(seconds)
-    
+
     def check_track_pos(self):
         """
             runs every APP_UPDATE_TIME (milliseconds)
@@ -352,42 +418,65 @@ class Player(QWidget):
         # Update progress bar
         if total > 0:
             progress = int((pos / total) * 1000)
-            self.progress_bar.setValue(progress)
+            self._set_progress_value(progress)
 
         # Update progress label
         if int(pos) != int(self._time_elapsed):
             self._time_elapsed = pos
-            self.track_progress_label.setText(
-                self.current_track.length_to_string(pos))
+            self._set_progress_text(
+                pos_text=self.current_track.length_to_string(pos))
             self._update_time_label(pos)
 
         # Check if Track finished playing (margin covers one timer tick)
         if pos >= total - 0.3:
-            self.track_progress_label.setText(
-                self.current_track.length_to_string(self.current_track.length)
-                )
-            self.progress_bar.setValue(1000)
+            self._set_progress_text(
+                pos_text=self.current_track.length_to_string(self.current_track.length))
+            self._set_progress_value(1000)
             self.timer.stop()
             self._set_play_icon(False)
             self.track_finished.emit()
-            if self.playlist and self.current_track != self.playlist.tracklist[-1]:
-                self.next_track()
+            if self.playlist:
+                if self.shuffle:
+                    # Advance until the shuffled cycle has played every
+                    # track once (the bag refills on manual next)
+                    if self._shuffle_for is not self.playlist or self._shuffle_bag:
+                        self.next_track()
+                elif self.current_track != self.playlist.tracklist[-1]:
+                    self.next_track()
 
     def next_track(self):
-        if self.playlist:
-            if self.playlist_pos != len(self.playlist.tracklist) - 1:
-                self.playlist_pos += 1
-            else:
-                self.playlist_pos = 0
-            self.play(self.playlist, self.playlist_pos)
+        if not self.playlist:
+            return
+        if self.shuffle and len(self.playlist.tracklist) > 1:
+            if self._shuffle_for is not self.playlist:
+                self._shuffle_bag = []
+                self._shuffle_history = []
+                self._shuffle_for = self.playlist
+            if not self._shuffle_bag:
+                import random
+                self._shuffle_bag = [
+                    i for i in range(len(self.playlist.tracklist))
+                    if i != self.playlist_pos]
+                random.shuffle(self._shuffle_bag)
+            self._shuffle_history.append(self.playlist_pos)
+            self.playlist_pos = self._shuffle_bag.pop(0)
+        elif self.playlist_pos != len(self.playlist.tracklist) - 1:
+            self.playlist_pos += 1
+        else:
+            self.playlist_pos = 0
+        self.play(self.playlist, self.playlist_pos)
 
     def prev_track(self):
-        if self.playlist:
-            if self.playlist_pos != 0:
-                self.playlist_pos -= 1
-            else:
-                self.playlist_pos = len(self.playlist.tracklist) - 1
-            self.play(self.playlist, self.playlist_pos)
+        if not self.playlist:
+            return
+        if self.shuffle and self._shuffle_history \
+                and self._shuffle_for is self.playlist:
+            self.playlist_pos = self._shuffle_history.pop()
+        elif self.playlist_pos != 0:
+            self.playlist_pos -= 1
+        else:
+            self.playlist_pos = len(self.playlist.tracklist) - 1
+        self.play(self.playlist, self.playlist_pos)
 
     def flush_listen(self):
         """Report the outgoing track's accumulated listen time and reset.
@@ -448,9 +537,9 @@ class Player(QWidget):
             if seek_to > 0:
                 self.playback.seek(seek_to)
                 progress = int((seek_to / self.current_track.length) * 1000)
-                self.progress_bar.setValue(progress)
-                self.track_progress_label.setText(
-                    self.current_track.length_to_string(seek_to))
+                self._set_progress_value(progress)
+                self._set_progress_text(
+                    pos_text=self.current_track.length_to_string(seek_to))
         except Exception as e:
             print(f"LOG: Unable to load track: {e}")
 
@@ -488,8 +577,39 @@ class Player(QWidget):
         stay in sync. Clears any multi-image gallery."""
         self._art_paths = []
         self._art_index = 0
+        self._art_token += 1  # invalidate any in-flight async decode
         self._set_nav_enabled(False)
         self._display_art(pixmap)
+
+    def set_art_path(self, path):
+        """Single-image variant of set_art that decodes off the UI thread.
+        path=None clears the art."""
+        self._art_paths = []
+        self._art_index = 0
+        self._set_nav_enabled(False)
+        self._load_art_async(path)
+
+    def _load_art_async(self, path):
+        """Decode an image in a background thread and display it when done.
+        Superseded decodes are token-invalidated and their threads retired
+        (never dropped while running, never waited on)."""
+        self._art_token += 1
+        if not path:
+            self._display_art(None)
+            return
+        old = self._art_thread
+        if old is not None:
+            bg_threads.retire(old)
+        t = _ImageLoadThread(path, self._art_token)
+        t.image_ready.connect(self._on_art_image_ready)
+        self._art_thread = t
+        t.start()
+
+    def _on_art_image_ready(self, token, image):
+        if token != self._art_token:
+            return  # a newer request superseded this decode
+        self._display_art(
+            QPixmap.fromImage(image) if not image.isNull() else None)
 
     def _display_art(self, pixmap):
         if pixmap is None or pixmap.isNull():
@@ -514,20 +634,50 @@ class Player(QWidget):
         for label in self._art_labels:
             label.set_nav_enabled(enabled)
 
+    # ── Progress bar / time labels (mirrored onto max/mini overlays) ──
+
+    def register_progress_display(self, progress_bar, pos_label, len_label):
+        """Wire a ClickableProgressBar + time labels (max/mini mode's
+        overlay panel) to seek/resume, and mirror the player column's own
+        progress bar/labels onto them from here on — same registration
+        pattern as register_art_label."""
+        progress_bar.seek_requested.connect(self.seek_to)
+        progress_bar.start_playback.connect(self.resume)
+        progress_bar.setRange(0, 1000)
+        progress_bar.setTextVisible(False)
+        self._extra_progress_bars.append((progress_bar, pos_label, len_label))
+        progress_bar.setValue(self.progress_bar.value())
+        pos_label.setText(self.track_progress_label.text())
+        len_label.setText(self.track_length_label.text())
+
+    def _set_progress_value(self, value):
+        self.progress_bar.setValue(value)
+        for bar, _, _ in self._extra_progress_bars:
+            bar.setValue(value)
+
+    def _set_progress_text(self, pos_text=None, len_text=None):
+        if pos_text is not None:
+            self.track_progress_label.setText(pos_text)
+            for _, pos_label, _ in self._extra_progress_bars:
+                pos_label.setText(pos_text)
+        if len_text is not None:
+            self.track_length_label.setText(len_text)
+            for _, _, len_label in self._extra_progress_bars:
+                len_label.setText(len_text)
+
     def set_art_gallery(self, paths):
         """Show a scrollable set of artwork images (cover first)."""
         self._art_paths = [str(p) for p in paths]
         self._art_index = 0
         self._set_nav_enabled(len(self._art_paths) > 1)
-        self._display_art(
-            QPixmap(self._art_paths[0]) if self._art_paths else None)
+        self._load_art_async(self._art_paths[0] if self._art_paths else None)
 
     def step_art(self, delta):
         """Scroll the gallery forward/back (wraps around)."""
         if len(self._art_paths) < 2:
             return
         self._art_index = (self._art_index + delta) % len(self._art_paths)
-        self._display_art(QPixmap(self._art_paths[self._art_index]))
+        self._load_art_async(self._art_paths[self._art_index])
 
     def refresh_art_gallery(self):
         """Re-scan the album folder after artwork was added or replaced."""
@@ -542,7 +692,7 @@ class Player(QWidget):
         if art_list:
             self.set_art_gallery(art_list)
         elif self.album.art:
-            self.set_art(QPixmap(str(self.album.art)))
+            self.set_art_path(str(self.album.art))
         else:
             self.set_art(None)
             self._offer_artwork_search()
@@ -561,7 +711,8 @@ class Player(QWidget):
 
         dialog = ArtworkFinderDialog(
             self.album.artist, self.album.title,
-            self.album.path, t, parent=self
+            self.album.path, t, parent=self,
+            fs=getattr(app, 'font_size', None)
         )
         dialog.artwork_saved.connect(self._on_artwork_saved)
         dialog.exec_()
@@ -608,6 +759,8 @@ class Player(QWidget):
             btn.setIconSize(icon_size)
             btn.setFixedHeight(icon_dim + 8)
             btn.setMinimumWidth(icon_dim + 20)
+        if hasattr(self, '_icon_color'):
+            self.update_button_icons()
         # Time labels get a stable width so the progress bar doesn't jitter
         fm = QFontMetrics(self.track_length_label.font())
         time_w = fm.horizontalAdvance('-88:88') + 6

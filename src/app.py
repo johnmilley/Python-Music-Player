@@ -6,6 +6,7 @@
 #   - Keyboard shortcuts and media key handling
 #   - Session persistence (window state, playback position, settings)
 
+import os
 import sys
 from pathlib import Path
 
@@ -14,7 +15,8 @@ from folder_view import FolderView
 from player import Player, _render_svg
 from album_view import AlbumView
 from lyrics_widget import LyricsWidget
-from lyrics_fetcher import LyricsFetchThread, lyrics_path_for_track
+import bg_threads
+from lyrics_fetcher import LyricsFetchThread
 from color_extract import most_readable, text_color_for, ensure_contrast, PaletteExtractThread
 from podcast_view import PodcastView
 from podcast_feed import PodcastFeed, EpisodeDownloadThread, ImageDownloadThread
@@ -23,18 +25,23 @@ from radio_player import _make_radio_player, StationArtDialog, station_art_path
 from radio_station import RadioStation
 from media_keys import MediaKeyHandler, start_native_backend
 from panel_manager import PanelManager
+from favorites import FavoritesStore
+from favorites_view import FavoritesView
+from playlist import Playlist
 from grip_splitter import GripSplitter
 from max_view import MaxView
 from mini_view import MiniView
 from window_chrome import TitleBar, WindowGrips
 import play_log
 import theme
+import overlay_controls
 
 from PyQt5.QtWidgets import (QMainWindow, QApplication, QWidget, QHBoxLayout,
     QAction, QSplitter, QStackedWidget, QColorDialog, QShortcut, QDialog, QMenu,
     QVBoxLayout, QLabel, QLineEdit, QListWidgetItem, QSizePolicy, QFileDialog,
-    QPushButton, QToolButton, QSlider, QDialogButtonBox, QMessageBox)
-from PyQt5.QtCore import Qt, QEvent, QSettings, QTimer, QSize, QUrl
+    QPushButton, QToolButton, QSlider, QDialogButtonBox, QMessageBox,
+    QWidgetAction, QGridLayout)
+from PyQt5.QtCore import Qt, QEvent, QSettings, QTimer, QSize, QUrl, pyqtSignal
 from PyQt5.QtGui import QColor, QPixmap, QIcon, QKeySequence, QDesktopServices
 
 
@@ -73,6 +80,57 @@ class ToolBar(QWidget):
         self._layout.addStretch()
 
 
+class AccentSwatchGrid(QWidget):
+    """A grid of colour swatches embedded in the accent menu.
+
+    Hovering a swatch previews that accent live across the app; moving off
+    the grid without clicking emits hovered('') so the owner can restore
+    the pre-preview colour; clicking commits the pick.
+    """
+    hovered = pyqtSignal(str)   # colour under the cursor; '' = left the grid
+    picked = pyqtSignal(str)
+
+    PER_ROW = 5
+
+    def __init__(self, colors, theme_dict, current='', names=None, parent=None):
+        super().__init__(parent)
+        t = theme_dict
+        grid = QGridLayout(self)
+        grid.setContentsMargins(16, 4, 16, 6)
+        grid.setSpacing(6)
+        names = names or {}
+        for i, c in enumerate(colors):
+            btn = QToolButton()
+            btn.setFixedSize(24, 24)
+            btn.setCursor(Qt.PointingHandCursor)
+            tip = names.get(c)
+            btn.setToolTip(f'{tip}  ({c})' if tip else c)
+            ring = t['fg'] if c == current else 'transparent'
+            btn.setStyleSheet(f"""
+                QToolButton {{
+                    background-color: {c};
+                    border: 2px solid {ring};
+                    border-radius: 12px;
+                }}
+                QToolButton:hover {{ border: 2px solid {t['fg']}; }}
+            """)
+            btn._swatch_color = c
+            btn.installEventFilter(self)
+            btn.clicked.connect(lambda _, color=c: self.picked.emit(color))
+            grid.addWidget(btn, i // self.PER_ROW, i % self.PER_ROW)
+        # Left-align partial rows instead of spreading them out
+        grid.setColumnStretch(self.PER_ROW, 1)
+
+    def eventFilter(self, obj, event):
+        if event.type() == QEvent.Enter and hasattr(obj, '_swatch_color'):
+            self.hovered.emit(obj._swatch_color)
+        return super().eventFilter(obj, event)
+
+    def leaveEvent(self, event):
+        self.hovered.emit('')
+        super().leaveEvent(event)
+
+
 class App(QMainWindow):
     """Main application window — owns all widgets and wires them together.
 
@@ -101,7 +159,17 @@ class App(QMainWindow):
         self.radio_view = RadioView()
         self.radio_player = _make_radio_player()
 
-        # Mode: 'music', 'podcast', or 'radio'
+        # Favourites: persistent store + the left-pane collections view
+        self.fav_store = FavoritesStore()
+        self.favorites_view = FavoritesView(self.fav_store)
+        self.album_view.fav_store = self.fav_store
+        self.album_view.favorites_changed.connect(self._on_favorites_changed)
+        self.favorites_view.collection_selected.connect(
+            self._load_favorites_collection)
+        self.favorites_view.shuffle_toggled.connect(self._on_shuffle_toggled)
+        self._last_playlist_folder = None  # per-song art/accent tracking
+
+        # Mode: 'music', 'podcast', 'radio', or 'favorites'
         self._mode = 'music'
         self._playing_mode = None  # mode of last actual playback
         self._controls_mode = 'music'  # current button/controls layout
@@ -138,6 +206,10 @@ class App(QMainWindow):
         self.player.art_clicked.connect(self._on_art_clicked)
         self.player.listen_ended.connect(self._on_listen_ended)
 
+        # Hover heart over the player-column art (normal mode only) — same
+        # handler as the shortcut so state always agrees
+        self.player.heart_overlay.heart_clicked.connect(self._toggle_current_favorite)
+
         # Frameless custom window (own titlebar below), matching the
         # non-system window style of the sibling 'text' app
         self.setWindowFlags(self.windowFlags() | Qt.FramelessWindowHint)
@@ -157,6 +229,7 @@ class App(QMainWindow):
         self.left_stack.addWidget(self.folder_view)
         self.left_stack.addWidget(self.podcast_view)
         self.left_stack.addWidget(self.radio_view)
+        self.left_stack.addWidget(self.favorites_view)
 
         # Right column: tracklist stacked over lyrics
         self.right_splitter = GripSplitter(Qt.Vertical)
@@ -220,15 +293,28 @@ class App(QMainWindow):
         self.mode_radio_btn = self._make_tool_button(
             'radio_waves', 'mode-toggle', 'Radio mode (3)',
             lambda: self._set_mode('radio'), checkable=True)
+        self.mode_fav_btn = self._make_tool_button(
+            'heart', 'mode-toggle', 'Favourites (0)',
+            lambda: self._set_mode('favorites'), checkable=True)
 
         # Settings menus (Theme / Preferences / Help) — reached via the gear button
         # One font (Inter) and one size for the whole app
         self.font_size = theme.DEFAULT_SIZE
+        # Mini/max overlay panel + player-column art hover row scrim
+        # opacity — 0 (glassy/see-through) .. 100 (solid), floored in
+        # overlay_controls.scrim_alpha so text never gets unreadable
+        self.overlay_opacity = overlay_controls.DEFAULT_OPACITY
 
         self.prefs_menu = QMenu('Preferences', self)
         self.font_action = QAction('Text Size...', self)
         self.font_action.triggered.connect(self._open_text_size)
         self.prefs_menu.addAction(self.font_action)
+        self.opacity_action = QAction('Overlay Opacity...', self)
+        self.opacity_action.triggered.connect(self._open_overlay_opacity)
+        self.prefs_menu.addAction(self.opacity_action)
+        self.window_opacity_action = QAction('Window Opacity...', self)
+        self.window_opacity_action.triggered.connect(self._open_window_opacity)
+        self.prefs_menu.addAction(self.window_opacity_action)
         self.change_art_action = QAction('Change Cover Art...', self)
         self.change_art_action.triggered.connect(self._change_album_art)
         self.prefs_menu.addAction(self.change_art_action)
@@ -256,6 +342,12 @@ class App(QMainWindow):
         self._last_palette_colors = []
         self._palette_thread = None
         self._accent_match = self.settings.value('accent_match', 'true') == 'true'
+        # Live accent preview: hovering a swatch applies it immediately;
+        # closing the menu without a pick restores what was there before
+        self._accent_before_menu = None
+        self._accent_committed = False
+        self.colour_menu.aboutToShow.connect(self._on_accent_menu_show)
+        self.colour_menu.aboutToHide.connect(self._on_accent_menu_hide)
         self._populate_accent_menu([])
 
         self.help_menu = QMenu('Help', self)
@@ -278,11 +370,9 @@ class App(QMainWindow):
         self.gear_btn.setMenu(self.gear_menu)
         self.gear_btn.setPopupMode(QToolButton.InstantPopup)
 
-        # Panel toggle icon buttons
-        self.toggle_library_btn = self._make_tool_button(
-            'library', 'panel-toggle', 'Toggle Library (1)',
-            self._on_toggle_library, checkable=True)
-        self.toggle_library_btn.setChecked(True)
+        # Panel toggle icon buttons. (No library toggle here — the mode
+        # buttons on the left cover it: clicking the active mode again, or
+        # pressing its number key, toggles the library panel.)
         self.toggle_tracklist_btn = self._make_tool_button(
             'tracklist', 'panel-toggle', 'Toggle Tracklist (4)',
             self._on_toggle_tracklist, checkable=True)
@@ -302,12 +392,12 @@ class App(QMainWindow):
         hm.addWidget(self.mode_music_btn)
         hm.addWidget(self.mode_podcast_btn)
         hm.addWidget(self.mode_radio_btn)
+        hm.addWidget(self.mode_fav_btn)
         hm.addStretch()
-        hm.addWidget(self.toggle_library_btn)
+        hm.addWidget(self.toggle_mini_btn)
+        hm.addWidget(self.toggle_max_btn)
         hm.addWidget(self.toggle_tracklist_btn)
         hm.addWidget(self.toggle_lyrics_btn)
-        hm.addWidget(self.toggle_max_btn)
-        hm.addWidget(self.toggle_mini_btn)
         hm.addSpacing(8)
         hm.addWidget(self.gear_btn)
 
@@ -341,9 +431,38 @@ class App(QMainWindow):
         self._media_server = None
         self._media_server_error = ''
 
-        # Theme setup
-        self.current_theme = theme.LIGHT
+        # Theme setup. Appearance settings are restored BEFORE the first
+        # apply_theme so the app starts directly in its saved look — apply
+        # light first and re-apply dark during state restore and Qt's
+        # repolish of a second pre-show stylesheet quietly skips some
+        # subtrees (the player column / file browser kept the light
+        # background on dark-mode launches).
+        saved_sz = (self.settings.value('font_size', type=int)
+                    or self.settings.value('font_size_controls', type=int))
+        if saved_sz:
+            lo, hi = theme.SIZES[0], theme.SIZES[-1]
+            self.font_size = max(lo, min(hi, saved_sz))
+        saved_opacity = self.settings.value('overlay_opacity', type=int)
+        if saved_opacity is not None:
+            self.overlay_opacity = max(0, min(100, saved_opacity))
+        saved_accent = self.settings.value('accent_color')
+        if saved_accent:
+            self.accent_color = saved_accent
+        saved_album_accents = self.settings.value('album_accents')
+        if saved_album_accents and isinstance(saved_album_accents, dict):
+            self._album_accents = saved_album_accents
+        self.current_theme = (theme.DARK
+                              if self.settings.value('dark_mode') == 'true'
+                              else theme.LIGHT)
+        self.accent_color = ensure_contrast(self.accent_color,
+                                            self.current_theme['bg'])
         self.apply_theme(self.current_theme)
+        # Whole-window opacity (distinct from the overlay scrim opacity):
+        # a translucent player, applied to the mini window too
+        saved_win_opacity = self.settings.value('window_opacity', type=int)
+        self.window_opacity = 100
+        if saved_win_opacity is not None:
+            self.set_window_opacity(saved_win_opacity)
 
         self.album_view.album_changed.connect(self._on_album_changed)
 
@@ -355,7 +474,8 @@ class App(QMainWindow):
                   self.player.next_track_button, self.player.progress_bar,
                   self.toggle_tracklist_btn, self.toggle_lyrics_btn,
                   self.toggle_max_btn,
-                  self.mode_music_btn, self.mode_podcast_btn, self.mode_radio_btn]:
+                  self.mode_music_btn, self.mode_podcast_btn,
+                  self.mode_radio_btn, self.mode_fav_btn]:
             w.setFocusPolicy(Qt.NoFocus)
         self.lyrics_widget.setFocusPolicy(Qt.NoFocus)
         self.lyrics_widget.seek_requested.connect(self._on_lyrics_seek)
@@ -365,9 +485,10 @@ class App(QMainWindow):
             view.setProperty('paneFocused', False)
         QApplication.instance().focusChanged.connect(self._on_focus_changed)
 
-        # Tab key cycles between folder view and album view
+        # Tab key cycles between the library pane and the tracklist
         self.folder_view.view.installEventFilter(self)
         self.album_view.track_list_widget.installEventFilter(self)
+        self.favorites_view.coll_list.installEventFilter(self)
 
         # Keyboard shortcuts
         self._setup_shortcuts()
@@ -404,20 +525,35 @@ class App(QMainWindow):
         # Legacy aliases still read by dialogs and the lyrics HTML renderer
         t['selection'] = accent
         t['selection_text'] = t['accent_fg']
+        t['overlay_opacity'] = self.overlay_opacity
         self.effective_theme = t
 
         self.setStyleSheet(theme.build_qss(t, self.font_size))
         self.player.update_button_icons(t['fg'], hover_color=accent)
         self.player.set_control_scale(self.font_size)
+        self.player.heart_overlay.set_theme(t)
         self.toolbar_widget.update_height(self.font_size)
         self._refresh_toolbar_icons()
         self.main_splitter.set_colors(t['hairline'], t['fg_dim'], accent)
         self.right_splitter.set_colors(t['hairline'], t['fg_dim'], accent)
         self.lyrics_widget.set_theme(t, self.font_size)
+        # Accent heart icons in the tracklist / favourites list follow the
+        # accent too
+        self.album_view.set_heart_color(accent, t['accent_fg'])
+        self.favorites_view.set_heart_color(accent, t['accent_fg'])
         if self.is_maxplayer:
             self._style_max_mode()
         if self._mini_view:
-            self._mini_view.set_theme(t)
+            self._mini_view.set_theme(t, self.font_size)
+        if self.is_minimode and self._mini_view:
+            # Borrowed panes carry inline QSS from attach time — reapply it
+            # so theme/font changes made *while in mini mode* (Shift+D,
+            # Ctrl+=/-) actually restyle them instead of leaving stale
+            # colors/sizes behind.
+            if self._mini_view.lyrics_on:
+                self._style_mini_lyrics()
+            if self._mini_view.tracklist_on:
+                self._style_mini_tracklist()
 
     def _make_tool_button(self, icon_name, obj_name, tooltip, handler,
                           checkable=False):
@@ -448,7 +584,7 @@ class App(QMainWindow):
 
     def _refresh_toolbar_icons(self):
         for btn in (self.mode_music_btn, self.mode_podcast_btn,
-                    self.mode_radio_btn, self.toggle_library_btn,
+                    self.mode_radio_btn, self.mode_fav_btn,
                     self.toggle_tracklist_btn, self.toggle_lyrics_btn,
                     self.toggle_max_btn, self.toggle_mini_btn, self.gear_btn):
             name = getattr(btn, '_icon_name', None)
@@ -468,14 +604,36 @@ class App(QMainWindow):
                 and self.player.album and self.player.album.art
                 and not (self._palette_thread and self._palette_thread.isRunning())):
             album_path = self.player.album.path
+            self._last_palette_album = album_path
             self._palette_thread = PaletteExtractThread(str(self.player.album.art))
-            self._palette_thread.finished.connect(
+            self._palette_thread.palette_ready.connect(
                 lambda colors, p=album_path: self._on_palette_extracted(colors, p))
             self._palette_thread.start()
 
     def set_font_size(self, size):
         self.font_size = size
         self.apply_theme(self.current_theme)
+
+    def set_overlay_opacity(self, value):
+        """Restyle only the overlay panels — a full apply_theme per slider
+        tick would rebuild the app stylesheet and re-render every icon."""
+        self.overlay_opacity = max(0, min(100, value))
+        t = dict(self.effective_theme)
+        t['overlay_opacity'] = self.overlay_opacity
+        self.effective_theme = t
+        if self._max_view:
+            self._max_view.panel.set_theme(t, self.font_size)
+        if self._mini_view:
+            self._mini_view.panel.set_theme(t, self.font_size)
+
+    def set_window_opacity(self, value):
+        """Whole-window translucency — the entire player, not just the
+        overlay scrims. Floored at 30 so the window can't vanish. The mini
+        window follows the same setting."""
+        self.window_opacity = max(30, min(100, value))
+        self.setWindowOpacity(self.window_opacity / 100.0)
+        if self._mini_view:
+            self._mini_view.setWindowOpacity(self.window_opacity / 100.0)
 
     def _step_font_size(self, delta):
         sizes = theme.SIZES
@@ -569,13 +727,169 @@ class App(QMainWindow):
         if dlg.exec_() != QDialog.Accepted and self.font_size != original:
             self.set_font_size(original)
 
+    def _open_overlay_opacity(self):
+        """Slider for the mini/max hover panel + player-column art hover
+        row's scrim darkness — glassy (see more art through it) to solid
+        (safer contrast for text). Changes apply immediately; Cancel puts
+        the original value back."""
+        dlg = QDialog(self)
+        dlg.setWindowTitle('Overlay Opacity')
+        dlg.setMinimumWidth(320)
+        dlg.setStyleSheet(theme.dialog_qss(self.effective_theme))
+        t = self.effective_theme
+        original = self.overlay_opacity
+        layout = QVBoxLayout(dlg)
+        layout.setSpacing(10)
+
+        # A fake "art" backdrop with a translucent scrim label on top —
+        # mirrors the real layering (overlay over album art) so the slider
+        # previews actual legibility, not just an abstract alpha value.
+        preview = QWidget()
+        preview.setFixedHeight(64)
+        preview.setStyleSheet(
+            f"background: qlineargradient(x1:0, y1:0, x2:1, y2:1, "
+            f"stop:0 {t['accent']}, stop:1 {t['bg_elevated']});")
+        preview_layout = QVBoxLayout(preview)
+        preview_layout.setContentsMargins(20, 12, 20, 12)
+        scrim = QLabel('lp')
+        scrim.setAlignment(Qt.AlignCenter)
+        scrim.setAttribute(Qt.WA_StyledBackground, True)
+        preview_layout.addWidget(scrim)
+
+        value_label = QLabel()
+        value_label.setAlignment(Qt.AlignCenter)
+        value_label.setStyleSheet(f'color: {t["fg_dim"]};')
+
+        row = QHBoxLayout()
+        glassy = QLabel('Glassy')
+        glassy.setStyleSheet(f'color: {t["fg_dim"]};')
+        solid = QLabel('Solid')
+        solid.setStyleSheet(f'color: {t["fg_dim"]};')
+        slider = QSlider(Qt.Horizontal)
+        slider.setRange(0, 100)
+        slider.setValue(self.overlay_opacity)
+        slider.setPageStep(5)
+        slider.setStyleSheet(f"""
+            QSlider::groove:horizontal {{
+                height: 4px; background: {t['hover']}; border-radius: 2px;
+            }}
+            QSlider::sub-page:horizontal {{
+                background: {t['accent']}; border-radius: 2px;
+            }}
+            QSlider::handle:horizontal {{
+                width: 16px; height: 16px; margin: -6px 0;
+                border-radius: 8px; background: {t['accent']};
+            }}
+        """)
+        row.addWidget(glassy)
+        row.addWidget(slider, stretch=1)
+        row.addWidget(solid)
+
+        def _apply(value):
+            alpha = overlay_controls.scrim_alpha(value)
+            scrim.setStyleSheet(
+                f'color: white; font-weight: bold; font-size: 14pt; '
+                f'border-radius: {overlay_controls.PANEL_RADIUS}px; '
+                f'background-color: rgba(20, 20, 20, {alpha});')
+            value_label.setText(f'{value}%')
+            if value != self.overlay_opacity:
+                self.set_overlay_opacity(value)
+        slider.valueChanged.connect(_apply)
+        _apply(slider.value())
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        reset_btn = buttons.addButton('Reset', QDialogButtonBox.ResetRole)
+        reset_btn.clicked.connect(
+            lambda: slider.setValue(overlay_controls.DEFAULT_OPACITY))
+        buttons.accepted.connect(dlg.accept)
+        buttons.rejected.connect(dlg.reject)
+
+        layout.addWidget(preview)
+        layout.addLayout(row)
+        layout.addWidget(value_label)
+        layout.addSpacing(4)
+        layout.addWidget(buttons)
+
+        if dlg.exec_() != QDialog.Accepted and self.overlay_opacity != original:
+            self.set_overlay_opacity(original)
+
+    def _open_window_opacity(self):
+        """Slider for whole-window translucency. The window itself is the
+        live preview; Cancel puts the original value back."""
+        dlg = QDialog(self)
+        dlg.setWindowTitle('Window Opacity')
+        dlg.setMinimumWidth(320)
+        dlg.setStyleSheet(theme.dialog_qss(self.effective_theme))
+        t = self.effective_theme
+        original = self.window_opacity
+        layout = QVBoxLayout(dlg)
+        layout.setSpacing(10)
+
+        value_label = QLabel()
+        value_label.setAlignment(Qt.AlignCenter)
+        value_label.setStyleSheet(f'color: {t["fg_dim"]};')
+
+        row = QHBoxLayout()
+        sheer = QLabel('Sheer')
+        sheer.setStyleSheet(f'color: {t["fg_dim"]};')
+        solid = QLabel('Solid')
+        solid.setStyleSheet(f'color: {t["fg_dim"]};')
+        slider = QSlider(Qt.Horizontal)
+        slider.setRange(30, 100)
+        slider.setValue(self.window_opacity)
+        slider.setPageStep(5)
+        slider.setStyleSheet(f"""
+            QSlider::groove:horizontal {{
+                height: 4px; background: {t['hover']}; border-radius: 2px;
+            }}
+            QSlider::sub-page:horizontal {{
+                background: {t['accent']}; border-radius: 2px;
+            }}
+            QSlider::handle:horizontal {{
+                width: 16px; height: 16px; margin: -6px 0;
+                border-radius: 8px; background: {t['accent']};
+            }}
+        """)
+        row.addWidget(sheer)
+        row.addWidget(slider, stretch=1)
+        row.addWidget(solid)
+
+        def _apply(value):
+            value_label.setText(f'{value}%')
+            if value != self.window_opacity:
+                self.set_window_opacity(value)
+        slider.valueChanged.connect(_apply)
+        _apply(slider.value())
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        reset_btn = buttons.addButton('Reset', QDialogButtonBox.ResetRole)
+        reset_btn.clicked.connect(lambda: slider.setValue(100))
+        buttons.accepted.connect(dlg.accept)
+        buttons.rejected.connect(dlg.reject)
+
+        layout.addLayout(row)
+        layout.addWidget(value_label)
+        layout.addSpacing(4)
+        layout.addWidget(buttons)
+
+        if dlg.exec_() != QDialog.Accepted and self.window_opacity != original:
+            self.set_window_opacity(original)
+
     def pick_custom_accent(self):
-        color = QColorDialog.getColor(QColor(self.accent_color), self, 'Pick Accent Color')
-        if color.isValid():
-            self.set_accent(color.name())
+        """Colour dialog with live preview — the accent follows the dialog's
+        current colour; Cancel restores the original."""
+        original = self.accent_color
+        dlg = QColorDialog(QColor(original), self)
+        dlg.setWindowTitle('Pick Accent Color')
+        dlg.currentColorChanged.connect(
+            lambda c: self._preview_accent(c.name()) if c.isValid() else None)
+        if dlg.exec_() == QDialog.Accepted and dlg.selectedColor().isValid():
+            self.set_accent(dlg.selectedColor().name())
+        else:
+            self._preview_accent(original)
 
     def _populate_accent_menu(self, album_colors):
-        """Rebuild the colour menu with theme toggle, album swatches, and presets."""
+        """Rebuild the colour menu: theme toggle, album swatches, presets."""
         self.colour_menu.clear()
         # Light/Dark toggle
         current = getattr(self, 'current_theme', theme.LIGHT)
@@ -590,29 +904,69 @@ class App(QMainWindow):
         self.colour_menu.addSeparator()
         # Album colours
         if album_colors:
-            self._add_colour_section('Album', album_colors)
+            self._add_swatch_section('Album', album_colors)
             self.colour_menu.addSeparator()
-        # Preset colours
-        self._add_colour_section('Presets', list(theme.ACCENT_PRESETS.values()))
+        # Preset colours (named — names show as tooltips)
+        self._add_swatch_section(
+            'Presets', list(theme.ACCENT_PRESETS.values()),
+            names={v: k for k, v in theme.ACCENT_PRESETS.items()})
         self.colour_menu.addSeparator()
         custom_action = QAction('Custom...', self)
         custom_action.triggered.connect(self.pick_custom_accent)
         self.colour_menu.addAction(custom_action)
 
-    def _add_colour_section(self, label, colors):
-        if label:
-            header = QAction(label, self)
-            header.setEnabled(False)
-            self.colour_menu.addAction(header)
-        for c in colors:
-            action = QAction(self._color_icon(c), c, self)
-            if c == self.accent_color:
-                action.setCheckable(True)
-                action.setChecked(True)
-            action.triggered.connect(lambda checked, color=c: self.set_accent(color))
-            self.colour_menu.addAction(action)
+    def _add_swatch_section(self, label, colors, names=None):
+        header = QAction(label, self)
+        header.setEnabled(False)
+        self.colour_menu.addAction(header)
+        grid = AccentSwatchGrid(
+            colors, getattr(self, 'effective_theme', theme.LIGHT),
+            current=self.accent_color, names=names)
+        grid.hovered.connect(self._on_swatch_hovered)
+        grid.picked.connect(self._on_swatch_picked)
+        act = QWidgetAction(self)
+        act.setDefaultWidget(grid)
+        self.colour_menu.addAction(act)
+
+    # ── Accent live preview ─────────────────────────────────────────
+
+    def _preview_accent(self, color):
+        """Apply an accent visually without recording it anywhere."""
+        if color and color != self.accent_color:
+            self.accent_color = color
+            self.apply_theme(self.current_theme)
+
+    def _on_accent_menu_show(self):
+        self._accent_before_menu = self.accent_color
+        self._accent_committed = False
+
+    def _on_accent_menu_hide(self):
+        # Closed without picking — put the original accent back
+        if not self._accent_committed:
+            self._preview_accent(self._accent_before_menu)
+
+    def _on_swatch_hovered(self, color):
+        # '' means the cursor left the swatch grid — revert the preview.
+        # Qt delivers a Leave event to the grid when the menu is hidden out
+        # from under the cursor (e.g. right after a click commits a pick),
+        # so once committed this must be a no-op or it stomps the commit.
+        if self._accent_committed:
+            return
+        self._preview_accent(color or self._accent_before_menu)
+
+    def _on_swatch_picked(self, color):
+        self._accent_committed = True
+        self.set_accent(color)
+        self.colour_menu.hide()
+        self.gear_menu.hide()
+        # Rebuild so the picked swatch carries the 'current' ring next open
+        self._populate_accent_menu(self._last_palette_colors)
 
     def _toggle_accent_match(self, checked):
+        # Clicking this QAction closes colour_menu, firing aboutToHide ->
+        # _on_accent_menu_hide; mark committed so it doesn't revert the
+        # accent that _update_accent_for_album just applied.
+        self._accent_committed = True
         self._accent_match = checked
         self.settings.setValue('accent_match', 'true' if checked else 'false')
         if checked:
@@ -634,14 +988,25 @@ class App(QMainWindow):
         if album_path in self._album_accents:
             self.accent_color = self._album_accents[album_path]
             self.apply_theme(self.current_theme)
-        # Extract palette in background thread
+        # Extract palette in background thread. A still-running extraction
+        # for the previous album is disconnected and retired (never dropped
+        # while running — QThread abort — and never waited on).
+        old = self._palette_thread
+        if old is not None:
+            try:
+                old.palette_ready.disconnect()
+            except TypeError:
+                pass
+            bg_threads.retire(old)
         self._palette_thread = PaletteExtractThread(str(self.player.album.art))
-        self._palette_thread.finished.connect(
+        self._palette_thread.palette_ready.connect(
             lambda colors, p=album_path: self._on_palette_extracted(colors, p))
         self._palette_thread.start()
 
     def _on_palette_extracted(self, colors, album_path):
         """Handle palette extraction results from background thread."""
+        if album_path != getattr(self, '_last_palette_album', None):
+            return  # stale result from a superseded extraction
         if not colors:
             return
         self._last_palette_colors = colors
@@ -713,15 +1078,31 @@ class App(QMainWindow):
         QDesktopServices.openUrl(
             QUrl(f'http://127.0.0.1:{s.port}/stats?token={s.token}'))
 
+    def _warn_if_playlist_art(self):
+        """Album art actions operate on a real album folder; a Playlist has
+        no folder of its own (its .path drifts to whatever song is
+        currently playing — see App._on_track_changed). Block the action
+        with a clear message instead of silently no-opping or, worse,
+        writing cover.jpg into an unrelated album's folder."""
+        if isinstance(self.player.album, Playlist):
+            QMessageBox.information(
+                self, 'Album Art',
+                "Album art actions aren't available for playlists or "
+                'favourites — play from an album to edit its art.')
+            return True
+        return False
+
     def _change_album_art(self):
         """Open artwork finder to search for new album cover."""
         if not self.player.album or not self.player.album.path:
+            return
+        if self._warn_if_playlist_art():
             return
         from artwork_finder import ArtworkFinderDialog
         t = self.effective_theme
         dialog = ArtworkFinderDialog(
             self.player.album.artist, self.player.album.title,
-            self.player.album.path, t, parent=self
+            self.player.album.path, t, parent=self, fs=self.font_size
         )
         dialog.artwork_saved.connect(self.player._on_artwork_saved)
         dialog.artwork_saved.connect(lambda _: self._update_accent_for_album(force=True))
@@ -731,7 +1112,11 @@ class App(QMainWindow):
         """Copy image files (back covers, inserts, lyric sheets...) into the
         album folder — they join the scrollable art gallery."""
         album = self.player.album
-        if not album or not hasattr(album, 'refresh_art'):
+        if not album:
+            return
+        if self._warn_if_playlist_art():
+            return
+        if not hasattr(album, 'refresh_art'):
             return
         import shutil
         paths, _ = QFileDialog.getOpenFileNames(
@@ -756,20 +1141,19 @@ class App(QMainWindow):
         """Search online for additional artwork — saved alongside the cover
         instead of replacing it."""
         album = self.player.album
-        if not album or not hasattr(album, 'refresh_art'):
+        if not album:
+            return
+        if self._warn_if_playlist_art():
+            return
+        if not hasattr(album, 'refresh_art'):
             return
         from artwork_finder import ArtworkFinderDialog
         dialog = ArtworkFinderDialog(
             album.artist, album.title, album.path,
-            self.effective_theme, parent=self, extra=True)
+            self.effective_theme, parent=self, extra=True, fs=self.font_size)
         dialog.artwork_saved.connect(
             lambda _: self.player.refresh_art_gallery())
         dialog.exec_()
-
-    def _color_icon(self, color, width=120, height=24):
-        pixmap = QPixmap(width, height)
-        pixmap.fill(QColor(color))
-        return QIcon(pixmap)
 
     # ── Session Persistence ─────────────────────────────────────────
 
@@ -790,26 +1174,15 @@ class App(QMainWindow):
         # Panel visibility + splitter sizes (PanelManager owns both;
         # first run without saved state gets the minimal default layout)
         self.panels.load(self.settings)
-        # Restore the app-wide text size (falls back to the old per-category
-        # 'controls' key from before the single-font simplification)
-        saved_sz = (self.settings.value('font_size', type=int)
-                    or self.settings.value('font_size_controls', type=int))
-        if saved_sz:
-            lo, hi = theme.SIZES[0], theme.SIZES[-1]
-            self.font_size = max(lo, min(hi, saved_sz))
-        saved_accent = self.settings.value('accent_color')
-        if saved_accent:
-            self.accent_color = saved_accent
-        saved_album_accents = self.settings.value('album_accents')
-        if saved_album_accents and isinstance(saved_album_accents, dict):
-            self._album_accents = saved_album_accents
-        if self.settings.value('dark_mode') == 'true':
-            self.apply_theme(theme.DARK)
-        else:
-            self.apply_theme(self.current_theme)
+        # Appearance (theme, accent, text size, opacity) was already
+        # restored in __init__, before the one initial apply_theme.
         # Restore app mode. _mode is cleared first so the mode switch does
         # not snapshot the just-loaded panel state as 'music' — the loaded
         # per-mode snapshots already hold each mode's remembered panels.
+        # Shuffle preference (setChecked routes through shuffle_toggled,
+        # which sets player.shuffle)
+        if self.settings.value('shuffle') == 'true':
+            self.favorites_view.shuffle_btn.setChecked(True)
         saved_mode = self.settings.value('app_mode', 'music')
         if saved_mode == 'podcast':
             self._mode = None
@@ -819,6 +1192,9 @@ class App(QMainWindow):
             self._mode = None
             self._set_mode('radio')
             self._restore_radio_state()
+        elif saved_mode == 'favorites':
+            self._mode = None
+            self._set_mode('favorites')
         else:
             self.panels.apply_mode('music')
             # Restore last music album
@@ -875,8 +1251,11 @@ class App(QMainWindow):
             ('1',       'Music mode',           lambda: self._set_mode('music')),
             ('2',       'Podcast mode',        lambda: self._set_mode('podcast')),
             ('3',       'Radio mode',          lambda: self._set_mode('radio')),
+            ('0',       'Favourites mode',     lambda: self._set_mode('favorites')),
+            ('Shift+H', 'Toggle favourite',   self._toggle_current_favorite),
             ('4',       'Toggle tracklist',    self._toggle_and_focus_tracklist),
             ('5',       'Toggle lyrics',       self.toggle_lyrics),
+            ('s',       'Toggle shuffle',      self._toggle_shuffle),
             ('/',       'Search',              self._open_search),
             ('m',       'Toggle mini mode',    self.toggle_minimode),
             ('Shift+M', 'Toggle max mode',    self.toggle_maxplayer),
@@ -965,55 +1344,97 @@ class App(QMainWindow):
             m = 8 if maximized else 0
             self.setContentsMargins(m, m, m, m)
 
+    def _max_key_map(self):
+        """Single-key shortcuts active in max mode. Shared by keyPressEvent
+        (App itself has focus) and eventFilter (a borrowed widget — the
+        tracklist, the lyrics pane — has focus and would otherwise swallow
+        the key before it ever reaches App, e.g. VimListWidget consuming
+        printable keys)."""
+        return {
+            Qt.Key_P: self._shortcut_play_pause,
+            Qt.Key_Greater: self._shortcut_next,
+            Qt.Key_Less: self._shortcut_prev,
+            Qt.Key_F: self._shortcut_seek_forward,
+            Qt.Key_B: self._shortcut_seek_back,
+            Qt.Key_Period: lambda: self._adjust_volume(0.05),
+            Qt.Key_Comma: lambda: self._adjust_volume(-0.05),
+            Qt.Key_4: self.toggle_tracklist,
+            Qt.Key_5: self.toggle_lyrics,
+            Qt.Key_S: self._toggle_shuffle,
+            Qt.Key_Left: lambda: self.player.step_art(-1),
+            Qt.Key_Right: lambda: self.player.step_art(1),
+            Qt.Key_Q: self.close,
+            Qt.Key_Question: self.show_help,
+        }
+
+    def _dispatch_max_key(self, key, mods):
+        """Try to handle a key press as a max-mode shortcut. Returns True if
+        handled. Shared by keyPressEvent and eventFilter — see
+        _max_key_map."""
+        if key == Qt.Key_Escape:
+            self.toggle_maxplayer()
+            return True
+        if key == Qt.Key_M and mods & Qt.ShiftModifier:
+            self.toggle_maxplayer()
+            return True
+        if key == Qt.Key_D and mods & Qt.ShiftModifier:
+            self.toggle_theme()
+            return True
+        if key == Qt.Key_H and mods & Qt.ShiftModifier:
+            self._toggle_current_favorite()
+            return True
+        if mods & Qt.ControlModifier:
+            # Text size works in every mode — no dropping back to the
+            # normal window just to resize
+            if key in (Qt.Key_Equal, Qt.Key_Plus):
+                self._step_font_size(1)
+                return True
+            if key == Qt.Key_Minus:
+                self._step_font_size(-1)
+                return True
+            return False
+        handler = self._max_key_map().get(key)
+        if handler:
+            handler()
+            return True
+        return False
+
     def keyPressEvent(self, event):
         """Handle key presses — dispatch shortcuts in max mode."""
-        if self.is_maxplayer:
-            key = event.key()
-            mods = event.modifiers()
-            if key == Qt.Key_Escape:
-                self.toggle_maxplayer()
-                return
-            if key == Qt.Key_M and mods & Qt.ShiftModifier:
-                self.toggle_maxplayer()
-                return
-            if key == Qt.Key_D and mods & Qt.ShiftModifier:
-                self.toggle_theme()
-                return
-            # Map single keys to shortcuts
-            _max_keys = {
-                Qt.Key_P: self._shortcut_play_pause,
-                Qt.Key_Greater: self._shortcut_next,
-                Qt.Key_Less: self._shortcut_prev,
-                Qt.Key_F: self._shortcut_seek_forward,
-                Qt.Key_B: self._shortcut_seek_back,
-                Qt.Key_Period: lambda: self._adjust_volume(0.05),
-                Qt.Key_Comma: lambda: self._adjust_volume(-0.05),
-                Qt.Key_4: self.toggle_tracklist,
-                Qt.Key_5: self.toggle_lyrics,
-                Qt.Key_Left: lambda: self.player.step_art(-1),
-                Qt.Key_Right: lambda: self.player.step_art(1),
-                Qt.Key_Q: self.close,
-                Qt.Key_Question: self.show_help,
-            }
-            handler = _max_keys.get(key)
-            if handler:
-                handler()
-                return
+        if self.is_maxplayer and self._dispatch_max_key(event.key(), event.modifiers()):
+            return
         super().keyPressEvent(event)
 
     def eventFilter(self, obj, event):
         """Intercept Tab/vim keys and suppress click-through on refocus."""
         t = event.type()
+        if (t == event.KeyPress and self.is_maxplayer and self._max_view is not None
+                and isinstance(obj, QWidget)
+                and (obj is self._max_view or self._max_view.isAncestorOf(obj))
+                and not isinstance(obj, QLineEdit)):
+            # A borrowed widget (the tracklist, the lyrics pane) has focus —
+            # key presses go to it first and e.g. VimListWidget swallows
+            # printable keys, so '4'/'5'/'p'/etc would never reach
+            # App.keyPressEvent. Intercept max-mode shortcuts here instead.
+            if self._dispatch_max_key(event.key(), event.modifiers()):
+                return True
         if t == event.KeyPress and not isinstance(self.focusWidget(), QLineEdit):
             key = event.key()
             if key == Qt.Key_Tab:
                 self._cycle_pane_focus()
                 return True
-            # h/l on album tracklist → switch to folder view
+            # h/l on album tracklist → switch to the library pane
             if obj is self.album_view.track_list_widget and key in (Qt.Key_H, Qt.Key_L):
                 if not self.panels.is_visible('library'):
                     self.toggle_library()
-                self.folder_view.view.setFocus()
+                self._library_focus_widget().setFocus()
+                return True
+            # l on a favourites collection → load it and jump to tracklist
+            if obj is self.favorites_view.coll_list and key == Qt.Key_L:
+                item = self.favorites_view.coll_list.currentItem()
+                if item is not None:
+                    self._load_favorites_collection(item.data(Qt.UserRole))
+                    self._focus_tracklist()
                 return True
             if obj is self.folder_view.view:
                 idx = self.folder_view.view.currentIndex()
@@ -1023,7 +1444,7 @@ class App(QMainWindow):
                     if self.folder_view._has_music(path):
                         self.album_view.load_album_listing(path)
                         self.panels.set_visible('tracklist', True)
-                        self.album_view.track_list_widget.setFocus()
+                        self._focus_tracklist()
                         return True
                 # h at top level → switch to tracklist
                 if key == Qt.Key_H:
@@ -1032,7 +1453,7 @@ class App(QMainWindow):
                                                    and idx.parent() == root)
                     if at_top:
                         self.panels.set_visible('tracklist', True)
-                        self.album_view.track_list_widget.setFocus()
+                        self._focus_tracklist()
                         return True
         return super().eventFilter(obj, event)
 
@@ -1042,15 +1463,9 @@ class App(QMainWindow):
             return
         self.toggle_library()
         if self.panels.is_visible('library'):
-            current = self.left_stack.currentWidget()
-            if current is self.podcast_view:
-                self.podcast_view.feed_list.setFocus()
-            elif current is self.radio_view:
-                self.radio_view.station_list.setFocus()
-            else:
-                self.folder_view.view.setFocus()
+            self._library_focus_widget().setFocus()
         elif self.panels.is_visible('tracklist'):
-            self.album_view.track_list_widget.setFocus()
+            self._focus_tracklist()
 
     def _toggle_and_focus_tracklist(self):
         """Toggle tracklist panel and focus it if shown."""
@@ -1058,9 +1473,22 @@ class App(QMainWindow):
             return
         self.toggle_tracklist()
         if self.panels.is_visible('tracklist'):
-            self.album_view.track_list_widget.setFocus()
+            self._focus_tracklist()
         elif self.panels.is_visible('library'):
             self.folder_view.view.setFocus()
+
+    def _focus_tracklist(self):
+        """Focus the tracklist, making sure a row is highlighted so the
+        focus jump is visible — the playing track if it's in this list,
+        otherwise the first track."""
+        lst = self.album_view.track_list_widget
+        lst.setFocus()
+        if lst.currentRow() < 0 and lst.count():
+            row = 0
+            if (self.player.current_track and self.player.playlist
+                    and self.player.playlist is self.album_view.album):
+                row = self.player.playlist_pos
+            lst.setCurrentRow(row)
 
     def _open_search(self):
         """Open the search bar of the focused pane (folder view by default)."""
@@ -1072,12 +1500,24 @@ class App(QMainWindow):
         bar.setFocus()
         bar.clear()
 
+    def _library_focus_widget(self):
+        """The focusable list of whichever library view is showing."""
+        current = self.left_stack.currentWidget()
+        if current is self.podcast_view:
+            return self.podcast_view.feed_list
+        if current is self.radio_view:
+            return self.radio_view.station_list
+        if current is self.favorites_view:
+            return self.favorites_view.coll_list
+        return self.folder_view.view
+
     def _cycle_pane_focus(self):
-        """Toggle focus between folder view and album view."""
-        if self.folder_view.view.hasFocus():
-            self.album_view.track_list_widget.setFocus()
+        """Toggle focus between the library pane and the tracklist."""
+        lib = self._library_focus_widget()
+        if lib.hasFocus():
+            self._focus_tracklist()
         else:
-            self.folder_view.view.setFocus()
+            lib.setFocus()
 
     def _on_focus_changed(self, old, new):
         """Flip the 'paneFocused' property on the panes whose state changed.
@@ -1144,15 +1584,12 @@ class App(QMainWindow):
     # ── Panel Visibility & Layout ────────────────────────────────────
 
     def _on_panel_visibility(self, name, visible):
-        """Mirror PanelManager state onto the toolbar toggle buttons."""
-        btn = {'library': self.toggle_library_btn,
-               'tracklist': self.toggle_tracklist_btn,
+        """Mirror PanelManager state onto the toolbar toggle buttons (they
+        hold no state of their own)."""
+        btn = {'tracklist': self.toggle_tracklist_btn,
                'lyrics': self.toggle_lyrics_btn}.get(name)
         if btn:
             btn.setChecked(visible)
-
-    def _on_toggle_library(self, checked):
-        self.panels.set_visible('library', checked)
 
     def _on_toggle_tracklist(self, checked):
         self.panels.set_visible('tracklist', checked)
@@ -1243,23 +1680,33 @@ class App(QMainWindow):
             track_mode = 'music'
         self._playing_mode = track_mode
         self._apply_controls_for_mode(track_mode)
-        if track_mode == 'music' and self.player.playlist and getattr(self.player.playlist, 'path', None):
-            self._playing_album_path = self.player.playlist.path
+        self._sync_favorite_heart(track, track_mode)
+        playlist = self.player.playlist
+        from_playlist = getattr(playlist, 'is_playlist', False)
+        if (track_mode == 'music' and playlist and not from_playlist
+                and getattr(playlist, 'path', None)):
+            self._playing_album_path = playlist.path
             self._playing_track_pos = self.player.playlist_pos
             self._playing_seek_pos = 0  # just started
+        if track_mode == 'music' and from_playlist and track.path:
+            # Playlist tracks span albums: point the playlist's path/art at
+            # this song's album folder so lyrics caching and per-album
+            # accents key exactly as if the album were playing, and show
+            # the album cover alone (never the folder's full art gallery)
+            folder = str(Path(track.path).parent)
+            playlist.path = folder
+            cover = Path(folder) / 'cover.jpg'
+            playlist.art = cover if cover.exists() else None
+            if folder != self._last_playlist_folder:
+                self._last_playlist_folder = folder
+                self.player.set_art_path(str(cover) if cover.exists() else None)
+                self._update_accent_for_album(force=True)
         # Podcast episodes show description instead of lyrics
         if track_mode == 'podcast' and hasattr(track, 'description'):
             self.lyrics_widget.set_description(track.description)
             return
 
-        if not self.player.album:
-            return
-        path = lyrics_path_for_track(track, self.player.album)
-
-        # Already cached on disk
-        if path.exists():
-            text = path.read_text(encoding='utf-8')
-            self.lyrics_widget.set_lyrics(text)
+        if not self.player.album or not getattr(self.player.album, 'path', None):
             return
 
         # Already tried and failed for this track
@@ -1269,11 +1716,20 @@ class App(QMainWindow):
             return
 
         self.lyrics_widget.set_lyrics('Fetching lyrics...')
-        # Stop any in-progress fetch before starting a new one
-        if self._lyrics_thread and self._lyrics_thread.isRunning():
-            self._lyrics_thread.lyrics_ready.disconnect(self._on_lyrics_fetched)
-            self._lyrics_thread.quit()
-            self._lyrics_thread.wait(2000)
+        # Supersede any in-progress fetch: disconnect its result and retire
+        # the thread. Never wait() here — that blocked the UI for up to 2s
+        # on every quick track switch, and when the wait timed out the
+        # replaced thread object could be destroyed mid-run (the QThread
+        # abort crash). The disk-cache check happens inside the thread too,
+        # so cached lyrics no longer cost a synchronous NAS read (plus a
+        # mkdir) on the UI thread for every track change.
+        old = self._lyrics_thread
+        if old is not None:
+            try:
+                old.lyrics_ready.disconnect(self._on_lyrics_fetched)
+            except TypeError:
+                pass
+            bg_threads.retire(old)
         self._lyrics_track_key = track_key
         self._lyrics_thread = LyricsFetchThread(
             track.artist, track.title, track.album, track, self.player.album,
@@ -1303,11 +1759,12 @@ class App(QMainWindow):
             self.lyrics_widget.update_position(self.player.playback.curr_pos)
 
     def _on_art_clicked(self):
-        """Handle album art click — max mode for music/podcast, art picker for radio."""
+        """Handle album art click — art picker for radio. Max mode is
+        entered only via its shortcut/toolbar icon, never by clicking the
+        art (art click still exits max mode itself — see enter_maxplayer's
+        wiring of self._max_view.art.clicked)."""
         if self._mode == 'radio':
             self._pick_station_art()
-        else:
-            self.toggle_maxplayer()
 
     # ── Max Mode (Fullscreen Art + Lyrics) ─────────────────────────
 
@@ -1334,13 +1791,23 @@ class App(QMainWindow):
 
         if self._max_view is None:
             self._max_view = MaxView(self.player)
+            # Art click still exits max mode (only entry-by-click is removed
+            # — see _on_art_clicked)
             self._max_view.art.clicked.connect(self.toggle_maxplayer)
             self._max_view.exit_requested.connect(self.toggle_maxplayer)
+            self._max_view.panel.prev_clicked.connect(self._shortcut_prev)
+            self._max_view.panel.play_clicked.connect(self._shortcut_play_pause)
+            self._max_view.panel.next_clicked.connect(self._shortcut_next)
+            self._max_view.panel.tracklist_clicked.connect(self._toggle_max_tracklist)
+            self._max_view.panel.lyrics_clicked.connect(self._toggle_max_lyrics)
+            self._max_view.panel.heart_clicked.connect(self._toggle_current_favorite)
             self.root_stack.addWidget(self._max_view)
 
         # Seed current state; player signals keep it in sync from here on
         track = self.player.current_track
         self._max_view.set_title(str(track.title) if track and track.title else '')
+        self._max_view.set_playing(self.player._is_playing)
+        self._sync_favorite_heart(track, self._playing_mode)
         art_px = self.player.album_widget.pixmap()
         if art_px:
             self._max_view.art.set_source(art_px)
@@ -1378,6 +1845,7 @@ class App(QMainWindow):
         """)
         self.lyrics_widget.set_theme(t, fs)
         self._max_view.set_close_icon_color(t['fg_dim'])
+        self._max_view.panel.set_theme(t, self.font_size)
 
     def exit_maxplayer(self):
         if not self.is_maxplayer:
@@ -1436,11 +1904,12 @@ class App(QMainWindow):
         if self._mini_view is None:
             mv = self._mini_view = MiniView(self.player)
             mv.exit_requested.connect(self.exit_minimode)
-            mv.prev_btn.clicked.connect(self._shortcut_prev)
-            mv.play_btn.clicked.connect(self._shortcut_play_pause)
-            mv.next_btn.clicked.connect(self._shortcut_next)
-            mv.tracklist_btn.clicked.connect(self._toggle_mini_tracklist)
-            mv.lyrics_btn.clicked.connect(self._toggle_mini_lyrics)
+            mv.panel.prev_clicked.connect(self._shortcut_prev)
+            mv.panel.play_clicked.connect(self._shortcut_play_pause)
+            mv.panel.next_clicked.connect(self._shortcut_next)
+            mv.panel.tracklist_clicked.connect(self._toggle_mini_tracklist)
+            mv.panel.lyrics_clicked.connect(self._toggle_mini_lyrics)
+            mv.panel.heart_clicked.connect(self._toggle_current_favorite)
             # Mini mode reuses the app's shortcut behaviors directly
             mv.set_key_handlers({
                 Qt.Key_P: self._shortcut_play_pause,
@@ -1453,20 +1922,33 @@ class App(QMainWindow):
                 Qt.Key_M: self.exit_minimode,
                 Qt.Key_4: self._toggle_mini_tracklist,
                 Qt.Key_5: self._toggle_mini_lyrics,
+                Qt.Key_S: self._toggle_shuffle,
                 Qt.Key_Left: lambda: self.player.step_art(-1),
                 Qt.Key_Right: lambda: self.player.step_art(1),
                 Qt.Key_Q: self.close,
             })
+            mv.set_shift_key_handlers({
+                Qt.Key_H: self._toggle_current_favorite,
+                Qt.Key_D: self.toggle_theme,
+            })
+            mv.set_ctrl_key_handlers({
+                Qt.Key_Equal: lambda: self._step_font_size(1),
+                Qt.Key_Plus: lambda: self._step_font_size(1),
+                Qt.Key_Minus: lambda: self._step_font_size(-1),
+            })
 
         mv = self._mini_view
-        mv.set_theme(self.effective_theme)
+        mv.setWindowOpacity(self.window_opacity / 100.0)
+        mv.set_theme(self.effective_theme, self.font_size)
         # Seed current state; player signals keep it in sync from here on
+        mv._on_track_changed(self.player.current_track)
         art_px = self.player.album_widget.pixmap()
         if art_px:
             mv.art.set_source(art_px)
         else:
             mv.art.clear()
         mv.set_playing(self.player._is_playing)
+        self._sync_favorite_heart(self.player.current_track, self._playing_mode)
 
         geometry = self.settings.value('mini/geometry')
         if geometry:
@@ -1523,13 +2005,10 @@ class App(QMainWindow):
         else:
             self._attach_mini_lyrics()
 
-    def _attach_mini_lyrics(self):
-        """Borrow the one true lyrics widget into the mini window."""
-        mv = self._mini_view
-        mv.lyrics_slot.addWidget(self.lyrics_widget)
-        self.lyrics_widget.setVisible(True)
-        # Reparented out of the main window, the widget falls outside the
-        # app stylesheet — style it directly (cleared again on return)
+    def _style_mini_lyrics(self):
+        """Inline QSS for the lyrics widget while borrowed into the mini
+        window (outside the app stylesheet). Called on attach and re-called
+        by apply_theme whenever theme/accent/font changes in mini mode."""
         t = self.effective_theme
         self.lyrics_widget.setStyleSheet(f"""
             #lyrics-text {{
@@ -1541,6 +2020,13 @@ class App(QMainWindow):
             {theme.minimal_scrollbar_qss(t)}
         """)
         self.lyrics_widget.set_theme(t, self.font_size)
+
+    def _attach_mini_lyrics(self):
+        """Borrow the one true lyrics widget into the mini window."""
+        mv = self._mini_view
+        mv.lyrics_slot.addWidget(self.lyrics_widget)
+        self.lyrics_widget.setVisible(True)
+        self._style_mini_lyrics()
         mv.set_lyrics_visible(True)
 
     def _return_lyrics_widget(self):
@@ -1558,15 +2044,19 @@ class App(QMainWindow):
         else:
             self._attach_mini_tracklist()
 
+    def _style_mini_tracklist(self):
+        """Inline QSS for the tracklist while borrowed into the mini window
+        (outside the app stylesheet). Called on attach and re-called by
+        apply_theme whenever theme/accent/font changes in mini mode."""
+        self.album_view.setStyleSheet(
+            theme.track_list_qss(self.effective_theme, self.font_size))
+
     def _attach_mini_tracklist(self):
         """Borrow the one true AlbumView/tracklist into the mini window."""
         mv = self._mini_view
         mv.tracklist_slot.addWidget(self.album_view)
         self.album_view.setVisible(True)
-        # Reparented out of the main window, it falls outside the app
-        # stylesheet — style it directly (cleared again on return)
-        t = self.effective_theme
-        self.album_view.setStyleSheet(theme.track_list_qss(t, self.font_size))
+        self._style_mini_tracklist()
         mv.set_tracklist_visible(True)
 
     def _return_tracklist_widget(self):
@@ -1592,10 +2082,8 @@ class App(QMainWindow):
         """
         if mode == self._mode:
             # Same mode clicked again — toggle the library panel
-            self.toggle_library()
-            self.mode_music_btn.setChecked(mode == 'music')
-            self.mode_podcast_btn.setChecked(mode == 'podcast')
-            self.mode_radio_btn.setChecked(mode == 'radio')
+            self._toggle_and_focus_library()
+            self._sync_mode_buttons(mode)
             self._update_radio_icon()
             return
         self._save_music_position()
@@ -1607,9 +2095,7 @@ class App(QMainWindow):
         if self._mode:
             self.panels.snapshot(self._mode)
         self._mode = mode
-        self.mode_music_btn.setChecked(mode == 'music')
-        self.mode_podcast_btn.setChecked(mode == 'podcast')
-        self.mode_radio_btn.setChecked(mode == 'radio')
+        self._sync_mode_buttons(mode)
         self._update_radio_icon()
 
         if mode == 'podcast':
@@ -1618,23 +2104,112 @@ class App(QMainWindow):
         elif mode == 'radio':
             self.left_stack.setCurrentWidget(self.radio_view)
             self.radio_view.load_saved_stations()
+        elif mode == 'favorites':
+            self.left_stack.setCurrentWidget(self.favorites_view)
+            self.favorites_view.refresh()
+            self._connect_music_tracklist()
+            self._load_favorites_collection(self.favorites_view.current_key())
         else:
             self.left_stack.setCurrentWidget(self.folder_view)
             self._restore_music_folder_position()
-            # Reconnect album_view click to music handler
-            try:
-                self.album_view.track_list_widget.itemClicked.disconnect()
-            except TypeError:
-                pass
-            self.album_view.track_list_widget.itemClicked.connect(
-                self.album_view.set_current_track)
-            self.album_view.track_list_widget.setContextMenuPolicy(Qt.NoContextMenu)
+            self._connect_music_tracklist()
 
         # The incoming mode's remembered panels (or first-visit defaults:
         # podcast shows the tracklist, radio shows neither)
         self.panels.apply_mode(mode)
         # Switching modes always reveals the new mode's library panel
         self.panels.set_visible('library', True, remember_size=False)
+
+    def _sync_mode_buttons(self, mode):
+        self.mode_music_btn.setChecked(mode == 'music')
+        self.mode_podcast_btn.setChecked(mode == 'podcast')
+        self.mode_radio_btn.setChecked(mode == 'radio')
+        self.mode_fav_btn.setChecked(mode == 'favorites')
+
+    def _connect_music_tracklist(self):
+        """Point the tracklist's click/context-menu at the music handlers
+        (music and favourites modes share them; podcast mode swaps in its
+        own — see _on_podcast_feed_selected)."""
+        widget = self.album_view.track_list_widget
+        try:
+            widget.itemClicked.disconnect()
+        except TypeError:
+            pass
+        widget.itemClicked.connect(self.album_view.set_current_track)
+        widget.setContextMenuPolicy(Qt.CustomContextMenu)
+        try:
+            widget.customContextMenuRequested.disconnect()
+        except TypeError:
+            pass
+        widget.customContextMenuRequested.connect(
+            self.album_view._open_context_menu)
+
+    # ── Favourites mode ───────────────────────────────────────────
+
+    def _load_favorites_collection(self, key):
+        """Show a favourites collection ('' = all) in the tracklist."""
+        records = self.fav_store.records_for(key)
+        name = key or 'Favourites'
+        playlist = Playlist(name, records, playlist_name=key)
+        self.album_view.load_playlist(playlist)
+        self.setWindowTitle(name)
+        self.panels.set_visible('tracklist', True, remember_size=False)
+
+    def _on_favorites_changed(self):
+        """A track was (un)favourited or moved between playlists."""
+        self.favorites_view.refresh()
+        # A displayed collection may now be stale — reload it in place
+        if (self._mode == 'favorites'
+                and getattr(self.album_view.album, 'is_playlist', False)):
+            self._load_favorites_collection(
+                self.album_view.album.playlist_name)
+        # The change may have been the currently playing track (e.g.
+        # (un)favourited from the tracklist's context menu) — keep every
+        # heart button in sync regardless of where the change came from
+        self._sync_favorite_heart(self.player.current_track, self._playing_mode)
+
+    def _sync_favorite_heart(self, track, track_mode):
+        """Keep every heart button (player column, max/mini overlay panels)
+        in sync with the playing track — visible for real music tracks
+        (incl. playlists/favourites, which are ordinary Track objects),
+        hidden for podcast episodes."""
+        favoritable = track_mode == 'music'
+        is_fav = bool(favoritable and track and track.path
+                      and self.fav_store.is_favorite(track.path))
+        self.player.heart_overlay.set_heart_visible(favoritable)
+        self.player.heart_overlay.set_favorited(is_fav)
+        if self._max_view:
+            self._max_view.set_heart_visible(favoritable)
+            self._max_view.set_favorited(is_fav)
+        if self._mini_view:
+            self._mini_view.set_heart_visible(favoritable)
+            self._mini_view.set_favorited(is_fav)
+
+    def _toggle_current_favorite(self):
+        """Heart button (player column, or the max/mini overlay panel) —
+        favourite/unfavourite the currently playing track. _on_favorites_changed
+        (called at the end) re-syncs every heart button via _sync_favorite_heart."""
+        track = self.player.current_track
+        if not track or not track.path or hasattr(track, 'audio_url'):
+            return
+        self.fav_store.toggle(track)
+        # Reflect on the tracklist too, if this track's album is loaded
+        # there (accent heart icon; playlist listings don't show one)
+        album = self.album_view.album
+        if (not getattr(album, 'is_playlist', False) and album is self.player.album):
+            pos = self.player.track_pos
+            item = self.album_view.track_list_widget.item(pos)
+            if item is not None:
+                self.album_view._apply_heart(item, track)
+        self._on_favorites_changed()
+
+    def _on_shuffle_toggled(self, on):
+        self.player.shuffle = on
+        self.settings.setValue('shuffle', 'true' if on else 'false')
+
+    def _toggle_shuffle(self):
+        # The FavoritesView button is the single source of shuffle state
+        self.favorites_view.shuffle_btn.toggle()
 
     def _restore_podcast_state(self):
         """Restore the last-played podcast feed and episode on startup."""
@@ -1820,7 +2395,8 @@ class App(QMainWindow):
 
     def _pick_station_art_for(self, station):
         """Open the station art picker dialog for any station."""
-        dlg = StationArtDialog(station.name, self.effective_theme, parent=self)
+        dlg = StationArtDialog(station.name, self.effective_theme, parent=self,
+                               fs=self.font_size)
         dlg.art_selected.connect(self._on_station_art_picked)
         dlg.exec_()
 
@@ -1842,11 +2418,12 @@ class App(QMainWindow):
             accent = t.get('accent_text', t['accent'])
             safe_title = html_mod.escape(title)
             safe_name = html_mod.escape(self._current_radio_station.name)
+            fs = self.font_size
             self.lyrics_widget.set_status_html(
                 f'<div style="text-align:center; padding:20px; font-family:{theme.FONT};">'
-                f'<p style="font-size:14pt; color:{fg}; opacity:0.6;">Now Playing</p>'
-                f'<p style="font-size:16pt; font-weight:bold; color:{accent};">{safe_title}</p>'
-                f'<p style="font-size:12pt; color:{fg}; opacity:0.5;">{safe_name}</p>'
+                f'<p style="font-size:{fs + 4}pt; color:{fg}; opacity:0.6;">Now Playing</p>'
+                f'<p style="font-size:{fs + 6}pt; font-weight:bold; color:{accent};">{safe_title}</p>'
+                f'<p style="font-size:{fs + 2}pt; color:{fg}; opacity:0.5;">{safe_name}</p>'
                 f'</div>')
 
     def _set_radio_art(self):
@@ -2169,6 +2746,8 @@ class App(QMainWindow):
         self.panels.save(self.settings)
         self.settings.setValue('dark_mode', 'true' if self.current_theme is theme.DARK else 'false')
         self.settings.setValue('font_size', self.font_size)
+        self.settings.setValue('overlay_opacity', self.overlay_opacity)
+        self.settings.setValue('window_opacity', self.window_opacity)
         self.settings.setValue('accent_color', self.accent_color)
         self.settings.setValue('album_accents', self._album_accents)
         self.settings.setValue('app_mode', self._playing_mode or self._mode)
@@ -2202,6 +2781,21 @@ class App(QMainWindow):
                                        self._mini_view.saveGeometry())
             self._mini_view.hide()
             self._mini_view.close()
+        # Give background threads (lyrics fetch, palette extraction, album
+        # loads — current and retired) a short window to finish; anything
+        # still running afterwards is handled by main()'s os._exit fallback
+        # so interpreter teardown never destroys a running QThread (abort).
+        # Settings are synced here because that fallback skips destructors.
+        self._lingering_threads = [
+            t for t in (self._lyrics_thread, self._palette_thread,
+                        self.player._art_thread,
+                        getattr(self.album_view, '_load_thread', None))
+            if t is not None]
+        for t in self._lingering_threads:
+            if t.isRunning():
+                t.wait(1500)
+        bg_threads.wait_all(1500)
+        self.settings.sync()
         super().closeEvent(event)
 
 def main():
@@ -2228,7 +2822,16 @@ def main():
     app_ui = App(media_signals=media_signals, media_backend=media_backend)
     app.installEventFilter(app_ui)
     app_ui.show()
-    sys.exit(app.exec_())
+    code = app.exec_()
+    # If a background thread outlived closeEvent's bounded waits (e.g. a
+    # lyrics fetch stuck on a slow network), skip interpreter teardown:
+    # destroying a running QThread is a hard abort, and everything that
+    # matters (settings, play log) was already flushed in closeEvent.
+    lingering = [t for t in getattr(app_ui, '_lingering_threads', [])
+                 if t.isRunning()]
+    if lingering or bg_threads.any_running():
+        os._exit(code)
+    sys.exit(code)
 
 if __name__ == '__main__':
     main()

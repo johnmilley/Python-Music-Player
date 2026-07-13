@@ -150,6 +150,7 @@ def track_list_qss(t, fs=None):
         #search-bar:focus {{
             border: 1px solid {accent};
         }}
+        {minimal_scrollbar_qss(t, '#track-list')}
     """
 
 
@@ -160,6 +161,10 @@ def minimal_scrollbar_qss(t, selector='#lyrics-text'):
     scrollbars everywhere else — see 'QScrollBar:vertical { width: 0; }' in
     build_qss); used for the lyrics pane in max/mini mode, where the pane is
     short enough that scrolling isn't otherwise obvious.
+
+    Covers both orientations so any horizontal scrolling in these views gets
+    the same treatment. Handles are square — no rounded corners, matching
+    the app's boxy visual language.
     """
     handle = _alpha(t['fg'], 40)
     handle_hover = _alpha(t['fg'], 90)
@@ -169,20 +174,37 @@ def minimal_scrollbar_qss(t, selector='#lyrics-text'):
             width: 8px;
             margin: 2px;
         }}
+        {selector} QScrollBar:horizontal {{
+            background: transparent;
+            height: 8px;
+            margin: 2px;
+        }}
         {selector} QScrollBar::handle:vertical {{
             background: {handle};
-            border-radius: 4px;
+            border-radius: 0px;
             min-height: 24px;
         }}
-        {selector} QScrollBar::handle:vertical:hover {{
+        {selector} QScrollBar::handle:horizontal {{
+            background: {handle};
+            border-radius: 0px;
+            min-width: 24px;
+        }}
+        {selector} QScrollBar::handle:vertical:hover,
+        {selector} QScrollBar::handle:horizontal:hover {{
             background: {handle_hover};
         }}
         {selector} QScrollBar::add-line:vertical,
         {selector} QScrollBar::sub-line:vertical {{
             height: 0px;
         }}
+        {selector} QScrollBar::add-line:horizontal,
+        {selector} QScrollBar::sub-line:horizontal {{
+            width: 0px;
+        }}
         {selector} QScrollBar::add-page:vertical,
-        {selector} QScrollBar::sub-page:vertical {{
+        {selector} QScrollBar::sub-page:vertical,
+        {selector} QScrollBar::add-page:horizontal,
+        {selector} QScrollBar::sub-page:horizontal {{
             background: transparent;
         }}
     """
@@ -389,11 +411,12 @@ def build_qss(t, fs=None):
             font-size: {fs_l}pt;
         }}
 
-        /* ── Podcast / radio panels: same list language ─────────── */
-        PodcastView, RadioView {{
+        /* ── Podcast / radio / favourites panels: same list language ── */
+        PodcastView, RadioView, FavoritesView {{
             background-color: {t['bg']};
         }}
-        PodcastView QListWidget, RadioView QListWidget {{
+        PodcastView QListWidget, RadioView QListWidget,
+        FavoritesView QListWidget {{
             font-size: {fs_t}pt;
             font-family: {FONT};
             color: {t['fg']};
@@ -401,13 +424,16 @@ def build_qss(t, fs=None):
             border: none;
             outline: none;
         }}
-        PodcastView QListWidget::item, RadioView QListWidget::item {{
+        PodcastView QListWidget::item, RadioView QListWidget::item,
+        FavoritesView QListWidget::item {{
             padding: {item_pad}px 4px;
         }}
-        PodcastView QListWidget::item:hover, RadioView QListWidget::item:hover {{
+        PodcastView QListWidget::item:hover, RadioView QListWidget::item:hover,
+        FavoritesView QListWidget::item:hover {{
             background-color: {accent_hover};
         }}
-        PodcastView QListWidget::item:selected, RadioView QListWidget::item:selected {{
+        PodcastView QListWidget::item:selected, RadioView QListWidget::item:selected,
+        FavoritesView QListWidget::item:selected {{
             background-color: {accent};
             color: {accent_fg};
         }}
@@ -422,7 +448,8 @@ def build_qss(t, fs=None):
         PodcastView QLineEdit:focus, RadioView QLineEdit:focus {{
             border: 1px solid {accent};
         }}
-        PodcastView QPushButton, RadioView QPushButton {{
+        PodcastView QPushButton, RadioView QPushButton,
+        FavoritesView QPushButton {{
             font-size: {fs_t}pt;
             font-family: {FONT};
             color: {t['fg']};
@@ -430,11 +457,16 @@ def build_qss(t, fs=None):
             border: none;
             padding: 5px 10px;
         }}
-        PodcastView QPushButton:hover, RadioView QPushButton:hover {{
+        PodcastView QPushButton:hover, RadioView QPushButton:hover,
+        FavoritesView QPushButton:hover {{
             background-color: {accent_soft};
             color: {t['fg']};
         }}
-        #podcast-status, #radio-status {{
+        FavoritesView QPushButton:checked {{
+            background-color: {accent};
+            color: {accent_fg};
+        }}
+        #podcast-status, #radio-status, #favorites-status {{
             font-size: {max(fs_t - 1, 7)}pt;
             font-family: {FONT};
             color: {t['fg_dim']};
@@ -448,12 +480,13 @@ def build_qss(t, fs=None):
         #max-divider {{
             background-color: {accent};
         }}
-        #max-track-label {{
+        #max-lyrics-title {{
             color: {t['fg']};
             background: transparent;
             font-family: {FONT};
-            font-size: {fs_c + 12}pt;
-            padding: 8px 20px 20px 0;
+            font-weight: bold;
+            font-size: {fs_c + 3}pt;
+            padding: 4px 4px 2px 0;
         }}
         #max-close-btn {{
             background: transparent;

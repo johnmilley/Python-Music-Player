@@ -46,11 +46,20 @@ class MarqueeLabel(QLabel):
         super().resizeEvent(event)
         self._check_overflow()
 
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._check_overflow()
+
+    def hideEvent(self, event):
+        # Don't keep repainting at 20fps while hidden behind max/mini mode
+        self._timer.stop()
+        super().hideEvent(event)
+
     def _check_overflow(self):
         fm = QFontMetrics(self.font())
         text_w = fm.horizontalAdvance(self._full_text)
         self._needs_scroll = text_w > self.width()
-        if self._needs_scroll:
+        if self._needs_scroll and self.isVisible():
             if not self._timer.isActive():
                 self._offset = 0
                 self._pause_counter = self.PAUSE_TICKS

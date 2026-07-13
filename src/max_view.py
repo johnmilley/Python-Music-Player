@@ -1,5 +1,7 @@
 # MaxView — fullscreen "max mode" page: large album art beside a side column
-# with the track title, and independently toggleable tracklist/lyrics panes.
+# with independently toggleable tracklist/lyrics panes, and the unified
+# ControlPanel (title, favourite, progress/time, transport, tracklist/lyrics
+# toggles, back) floating over the art on hover — same panel mini mode uses.
 #
 # Lives permanently as a page on the app's root QStackedWidget. It reuses
 # the player's art pipeline (via the art_changed signal) and borrows the
@@ -7,12 +9,14 @@
 # or rebuilt per entry, so there is no copy-over bookkeeping and no settle
 # timers.
 
-from PyQt5.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QToolButton
-from PyQt5.QtCore import Qt, QSize, pyqtSignal
+from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
+    QToolButton, QApplication)
+from PyQt5.QtCore import Qt, QSize, QEvent, QTimer, pyqtSignal
 from PyQt5.QtGui import QIcon
 
 from art_label import AlbumArtLabel
 from player import _render_svg
+import overlay_controls
 
 
 class MaxView(QWidget):
@@ -43,20 +47,16 @@ class MaxView(QWidget):
         self.art.setMinimumSize(300, 300)
         content.addWidget(self.art, stretch=2)
 
-        # Side column: track title (always visible) + a tracklist slot and a
-        # lyrics slot, each independently toggleable and each a reparenting
-        # slot for the app's one true AlbumView / LyricsWidget. The whole
-        # column hides itself when both slots are empty of content.
+        # Side column: a tracklist slot and a lyrics slot, each independently
+        # toggleable and each a reparenting slot for the app's one true
+        # AlbumView / LyricsWidget. The whole column hides itself when both
+        # slots are empty of content. The track title lives in the hover
+        # ControlPanel below, not here — same configuration in every mode.
         self.side_column = QWidget()
         self.side_column.setObjectName('max-lyrics-column')
         col = QVBoxLayout()
         col.setContentsMargins(0, 0, 0, 0)
         col.setSpacing(8)
-        self.track_label = QLabel()
-        self.track_label.setObjectName('max-track-label')
-        self.track_label.setWordWrap(True)
-        self.track_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-        col.addWidget(self.track_label)
 
         self.tracklist_on = False
         self.lyrics_on = True
@@ -69,6 +69,11 @@ class MaxView(QWidget):
         self.lyrics_wrap = QWidget()
         self.lyrics_slot = QVBoxLayout(self.lyrics_wrap)
         self.lyrics_slot.setContentsMargins(0, 0, 0, 0)
+        self.lyrics_slot.setSpacing(4)
+        self.lyrics_title = QLabel()
+        self.lyrics_title.setObjectName('max-lyrics-title')
+        self.lyrics_title.setWordWrap(True)
+        self.lyrics_slot.addWidget(self.lyrics_title)
         col.addWidget(self.lyrics_wrap, stretch=1)
 
         self.side_column.setLayout(col)
@@ -78,7 +83,9 @@ class MaxView(QWidget):
         self.setLayout(layout)
 
         # Corner close button — overlaid top-right, since there's no toolbar
-        # visible in fullscreen max mode to hold an exit control
+        # visible in fullscreen max mode to hold an exit control. Redundant
+        # with the panel's own back button, but stays reachable even while
+        # the hover panel is idle-hidden.
         self.close_btn = QToolButton(self)
         self.close_btn.setObjectName('max-close-btn')
         self.close_btn.setCursor(Qt.PointingHandCursor)
@@ -88,14 +95,87 @@ class MaxView(QWidget):
         self.close_btn.clicked.connect(self.exit_requested.emit)
         self.close_btn.raise_()
 
+        # Hover control panel: title/favourite, progress/time, transport +
+        # pane toggles + back — shown on mouse motion and auto-hidden after
+        # a few idle seconds (there is no toolbar in fullscreen, so this is
+        # the pointer's way in). Identical widget to mini mode's.
+        self.panel = overlay_controls.ControlPanel(self, show_back=True)
+        self.panel.back_btn.setToolTip('Back to normal window (Esc)')
+        self.panel.back_clicked.connect(self.exit_requested.emit)
+        self.panel.set_toggle_states(self.tracklist_on, self.lyrics_on)
+
+        self._idle_timer = QTimer(self)
+        self._idle_timer.setSingleShot(True)
+        self._idle_timer.setInterval(overlay_controls.IDLE_HIDE_MS)
+        self._idle_timer.timeout.connect(self._hide_hover_controls)
+        # Mouse-move never reaches this widget's own handlers while the
+        # cursor is over a child (the art, the borrowed panes) — watch
+        # application-wide, same trick as MiniView. Installed only while
+        # max mode is actually showing (see showEvent/hideEvent): an
+        # app-wide filter sees every event in the entire application, so
+        # leaving it installed permanently taxes normal-mode use for a
+        # mode that isn't on screen.
+
         player.art_changed.connect(self.art.set_source)
         player.track_changed.connect(self._on_track_changed)
+        player.play_state_changed.connect(self.set_playing)
         # Hover arrows scroll the album's art gallery here too
         player.register_art_label(self.art)
+        # Progress bar / time labels mirror the player column's own
+        player.register_progress_display(
+            self.panel.progress_bar, self.panel.pos_label, self.panel.len_label)
+
+    def set_playing(self, playing):
+        self.panel.set_playing(playing)
+
+    # ── Hover controls show/hide ────────────────────────────────────
+
+    def _position_controls(self):
+        overlay_controls.position_control_panel(
+            self.panel, self.art.x(), self.art.y(),
+            self.art.width(), self.art.height())
+
+    def _show_hover_controls(self):
+        # Runs on every app-wide MouseMove while max mode is up — only do
+        # the layout/stacking work on the hidden -> shown transition
+        if not self.panel.isVisible():
+            self._position_controls()
+            self.panel.show()
+            self.panel.raise_()
+        self._idle_timer.start()
+
+    def _hide_hover_controls(self):
+        self._idle_timer.stop()
+        self.panel.hide()
+
+    def eventFilter(self, obj, event):
+        if (event.type() == QEvent.MouseMove and self.isVisible()
+                and self.window().isActiveWindow()):
+            self._show_hover_controls()
+        return super().eventFilter(obj, event)
+
+    def showEvent(self, event):
+        app = QApplication.instance()
+        if app is not None:
+            app.installEventFilter(self)
+        super().showEvent(event)
+
+    def hideEvent(self, event):
+        app = QApplication.instance()
+        if app is not None:
+            app.removeEventFilter(self)
+        self._hide_hover_controls()
+        super().hideEvent(event)
+
+    def leaveEvent(self, event):
+        self._hide_hover_controls()
+        super().leaveEvent(event)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self.close_btn.move(self.width() - self.close_btn.width() - 12, 12)
+        if self.panel.isVisible():
+            self._position_controls()
 
     def set_close_icon_color(self, color):
         self.close_btn.setIcon(QIcon(_render_svg('close', color, 14)))
@@ -104,7 +184,14 @@ class MaxView(QWidget):
         self.set_title(str(getattr(track, 'title', '') or ''))
 
     def set_title(self, title):
-        self.track_label.setText(title)
+        self.panel.set_title(title)
+        self.lyrics_title.setText(title)
+
+    def set_favorited(self, on):
+        self.panel.set_favorited(on)
+
+    def set_heart_visible(self, visible):
+        self.panel.set_heart_visible(visible)
 
     def attach_lyrics(self, lyrics_widget):
         """Borrow the app's lyrics widget (reparents it into this view)."""
@@ -120,11 +207,13 @@ class MaxView(QWidget):
         self.lyrics_on = on
         self.lyrics_wrap.setVisible(on)
         self._update_side_column()
+        self.panel.set_toggle_states(self.tracklist_on, self.lyrics_on)
 
     def set_tracklist_visible(self, on):
         self.tracklist_on = on
         self.tracklist_wrap.setVisible(on)
         self._update_side_column()
+        self.panel.set_toggle_states(self.tracklist_on, self.lyrics_on)
 
     def _update_side_column(self):
         """Collapse the whole side column when neither pane is showing, so

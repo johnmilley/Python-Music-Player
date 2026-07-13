@@ -130,6 +130,137 @@ class DiscogsSearchThread(QThread):
             self.finished.emit([])
 
 
+def finder_dialog_qss(t, fs=None):
+    """One stylesheet for the artwork-search dialogs (album art, extra art,
+    and radio's station art picker): themed result rows with an accent-tint
+    hover, accent save buttons/checkboxes, and the app's minimal scrollbar.
+    Rows opt in via object names (#result-row, #row-thumb, #row-title,
+    #row-detail, #section-header, #status-label, #accent-btn).
+
+    fs is the app's text-size setting so these dialogs scale with it like
+    everything else (Ctrl+=/Ctrl+-, the Text Size dialog)."""
+    accent = t['accent']
+    fg_dim = t.get('fg_dim', t['fg'])
+    fs = fs or theme.DEFAULT_SIZE
+    return f"""
+        QDialog {{ background-color: {t['bg']}; }}
+        QScrollArea {{ border: none; background: {t['bg']}; }}
+        QWidget#results-container {{ background: {t['bg']}; }}
+        #result-row {{
+            background: transparent;
+            border-radius: 6px;
+        }}
+        #result-row:hover {{ background-color: {theme._alpha(accent, 22)}; }}
+        #row-thumb {{
+            background: {t['bg_alt']};
+            border: 1px solid {t['border']};
+            color: {fg_dim};
+            font-size: {fs + 4}pt;
+        }}
+        #row-title {{
+            color: {t['fg']}; background: transparent;
+            font-family: {theme.FONT}; font-size: {fs + 1}pt;
+        }}
+        #row-detail {{
+            color: {fg_dim}; background: transparent;
+            font-family: {theme.FONT}; font-size: {max(fs - 1, 7)}pt;
+        }}
+        #section-header {{
+            color: {fg_dim}; background: transparent;
+            font-family: {theme.FONT}; font-size: {max(fs - 1, 7)}pt;
+            font-weight: bold;
+            padding: 10px 8px 2px 8px;
+        }}
+        #status-label {{
+            color: {fg_dim};
+            font-family: {theme.FONT}; font-size: {fs}pt;
+        }}
+        QCheckBox {{ background: transparent; }}
+        QCheckBox::indicator {{
+            width: 18px; height: 18px;
+            border: 1px solid {t['border']};
+            border-radius: 4px;
+            background: {t['bg']};
+        }}
+        QCheckBox::indicator:hover {{ border-color: {accent}; }}
+        QCheckBox::indicator:checked {{
+            background-color: {accent};
+            border-color: {accent};
+        }}
+        QLineEdit {{
+            background-color: {t['bg_alt']};
+            color: {t['fg']};
+            border: 1px solid {t['border']};
+            font-family: {theme.FONT};
+            font-size: {fs + 1}pt;
+            padding: 6px;
+        }}
+        QLineEdit:focus {{ border: 1px solid {accent}; }}
+        #accent-btn {{
+            background: {accent};
+            color: {t['selection_text']};
+            border: none;
+            font-family: {theme.FONT};
+            font-size: {fs + 1}pt;
+            padding: 5px 14px;
+        }}
+        #accent-btn:hover {{ background: {theme._alpha(accent, 200)}; }}
+        #accent-btn:disabled {{ background: {t['bg_alt']}; color: {fg_dim}; }}
+        QProgressBar {{ border: none; background: {t['bg_alt']}; }}
+        QProgressBar::chunk {{ background-color: {accent}; }}
+        {theme.minimal_scrollbar_qss(t, 'QScrollArea')}
+    """
+
+
+def _build_result_row(row, title_html, detail_text, selectable, checked):
+    """Shared layout for a result row: thumbnail | title/detail | control.
+
+    All colors/fonts come from the dialog-level stylesheet via object names
+    (#result-row, #row-thumb, #row-title, #row-detail, #accent-btn), so the
+    rows stay visually consistent without per-widget style strings.
+    """
+    row.setObjectName('result-row')
+    row.setAttribute(Qt.WA_StyledBackground, True)
+    if selectable:
+        row.setCursor(Qt.PointingHandCursor)
+
+    layout = QHBoxLayout(row)
+    layout.setContentsMargins(8, 8, 8, 8)
+    layout.setSpacing(12)
+
+    row.thumb = QLabel('…')
+    row.thumb.setObjectName('row-thumb')
+    row.thumb.setFixedSize(120, 120)
+    row.thumb.setAlignment(Qt.AlignCenter)
+    layout.addWidget(row.thumb)
+
+    info_layout = QVBoxLayout()
+    info_layout.setSpacing(2)
+    title_label = QLabel(title_html)
+    title_label.setObjectName('row-title')
+    title_label.setWordWrap(True)
+    detail_label = QLabel(detail_text)
+    detail_label.setObjectName('row-detail')
+    info_layout.addWidget(title_label)
+    info_layout.addWidget(detail_label)
+    info_layout.addStretch()
+    layout.addLayout(info_layout, stretch=1)
+
+    if selectable:
+        row.checkbox = QCheckBox()
+        row.checkbox.setToolTip('Select for saving')
+        row.checkbox.setCursor(Qt.PointingHandCursor)
+        row.checkbox.setChecked(checked)
+        layout.addWidget(row.checkbox)
+        layout.addSpacing(4)
+    else:
+        row.save_btn = QPushButton('Save')
+        row.save_btn.setObjectName('accent-btn')
+        row.save_btn.setCursor(Qt.PointingHandCursor)
+        row.save_btn.setMinimumSize(70, 35)
+        layout.addWidget(row.save_btn)
+
+
 class ArtworkResult(QWidget):
     """Single artwork result row with thumbnail and download/select control.
 
@@ -142,75 +273,39 @@ class ArtworkResult(QWidget):
 
     def __init__(self, result, index, theme_dict, selectable=False, checked=False):
         super().__init__()
-        t = theme_dict
         self.result = result
         self.index = index
+        self._selectable = selectable
 
         # Build high-res URL (replace 100x100 with 3000x3000)
         art100 = result.get('artworkUrl100', '')
         self.hi_res_url = art100.replace('100x100bb', '3000x3000bb')
         self.preview_url = art100.replace('100x100bb', '300x300bb')
 
-        layout = QHBoxLayout()
-        layout.setContentsMargins(8, 8, 8, 8)
-
-        # Thumbnail placeholder
-        self.thumb = QLabel()
-        self.thumb.setFixedSize(120, 120)
-        self.thumb.setAlignment(Qt.AlignCenter)
-        self.thumb.setStyleSheet(f'background: {t["bg_alt"]}; border: 1px solid {t["border"]};')
-        self.thumb.setText('...')
-        layout.addWidget(self.thumb)
-
-        # Info
-        info_layout = QVBoxLayout()
         name = result.get('collectionName', 'Unknown')
         artist = result.get('artistName', 'Unknown')
         year = result.get('releaseDate', '')[:4]
         tracks = result.get('trackCount', '?')
 
-        title_label = QLabel(f'<b>{name}</b>')
-        title_label.setWordWrap(True)
-        title_label.setStyleSheet(f'color: {t["fg"]}; font-family: {theme.FONT}; font-size: 12pt; border: none;')
-        detail_label = QLabel(f'{artist} ({year}) - {tracks} tracks')
-        detail_label.setStyleSheet(f'color: {t["fg"]}; font-family: {theme.FONT}; font-size: 10pt; border: none;')
-
-        info_layout.addWidget(title_label)
-        info_layout.addWidget(detail_label)
-        info_layout.addStretch()
-        layout.addLayout(info_layout, stretch=1)
-
+        _build_result_row(self, f'<b>{name}</b>',
+                          f'{artist} ({year}) · {tracks} tracks',
+                          selectable, checked)
         if selectable:
-            self.checkbox = QCheckBox('Select')
-            self.checkbox.setStyleSheet(
-                f'color: {t["fg"]}; font-family: {theme.FONT}; font-size: 10pt; border: none;')
-            self.checkbox.setChecked(checked)
             self.checkbox.toggled.connect(
                 lambda on: self.selection_changed.emit(on, self.hi_res_url, name))
-            layout.addWidget(self.checkbox)
         else:
-            # Download button
-            dl_btn = QPushButton('Save')
-            dl_btn.setMinimumSize(70, 35)
-            dl_btn.setStyleSheet(f"""
-                QPushButton {{
-                    background: {t['accent']};
-                    color: {t['selection_text']};
-                    border: none;
-                    font-family: {theme.FONT};
-                    font-size: 11pt;
-                }}
-                QPushButton:hover {{ opacity: 0.8; }}
-            """)
-            dl_btn.clicked.connect(lambda: self.download_requested.emit(
-                self.hi_res_url, name
-            ))
-            layout.addWidget(dl_btn)
+            self.save_btn.clicked.connect(lambda: self.download_requested.emit(
+                self.hi_res_url, name))
 
-        self.setLayout(layout)
+    def mousePressEvent(self, event):
+        # The whole row is a click target in multi-select mode
+        if self._selectable and event.button() == Qt.LeftButton:
+            self.checkbox.toggle()
+        super().mousePressEvent(event)
 
     def set_thumbnail(self, pixmap):
         if not pixmap.isNull():
+            self.thumb.setText('')
             self.thumb.setPixmap(pixmap.scaled(
                 120, 120, Qt.KeepAspectRatio, Qt.SmoothTransformation
             ))
@@ -223,58 +318,26 @@ class DiscogsImageRow(QWidget):
 
     def __init__(self, img, index, theme_dict, selectable=False, checked=False):
         super().__init__()
-        t = theme_dict
         self.index = index
+        self._selectable = selectable
 
-        layout = QHBoxLayout()
-        layout.setContentsMargins(8, 8, 8, 8)
-
-        self.thumb = QLabel()
-        self.thumb.setFixedSize(120, 120)
-        self.thumb.setAlignment(Qt.AlignCenter)
-        self.thumb.setStyleSheet(f'background: {t["bg_alt"]}; border: 1px solid {t["border"]};')
-        self.thumb.setText('...')
-        layout.addWidget(self.thumb)
-
-        info_layout = QVBoxLayout()
-        title_label = QLabel(f'<b>{img["title"]}</b>')
-        title_label.setWordWrap(True)
-        title_label.setStyleSheet(f'color: {t["fg"]}; font-family: {theme.FONT}; font-size: 11pt; border: none;')
-        detail_label = QLabel(img['detail'])
-        detail_label.setStyleSheet(f'color: {t["fg"]}; font-family: {theme.FONT}; font-size: 10pt; border: none;')
-        info_layout.addWidget(title_label)
-        info_layout.addWidget(detail_label)
-        info_layout.addStretch()
-        layout.addLayout(info_layout, stretch=1)
-
+        _build_result_row(self, f'<b>{img["title"]}</b>', img['detail'],
+                          selectable, checked)
         if selectable:
-            self.checkbox = QCheckBox('Select')
-            self.checkbox.setStyleSheet(
-                f'color: {t["fg"]}; font-family: {theme.FONT}; font-size: 10pt; border: none;')
-            self.checkbox.setChecked(checked)
             self.checkbox.toggled.connect(
                 lambda on: self.selection_changed.emit(on, img['url'], img['title']))
-            layout.addWidget(self.checkbox)
         else:
-            save_btn = QPushButton('Save')
-            save_btn.setMinimumSize(70, 35)
-            save_btn.setStyleSheet(f"""
-                QPushButton {{
-                    background: {t['accent']};
-                    color: {t['selection_text']};
-                    border: none;
-                    font-family: {theme.FONT};
-                    font-size: 11pt;
-                }}
-            """)
-            save_btn.clicked.connect(lambda: self.download_requested.emit(
+            self.save_btn.clicked.connect(lambda: self.download_requested.emit(
                 img['url'], img['title']))
-            layout.addWidget(save_btn)
 
-        self.setLayout(layout)
+    def mousePressEvent(self, event):
+        if self._selectable and event.button() == Qt.LeftButton:
+            self.checkbox.toggle()
+        super().mousePressEvent(event)
 
     def set_thumbnail(self, pixmap):
         if not pixmap.isNull():
+            self.thumb.setText('')
             self.thumb.setPixmap(pixmap.scaled(
                 120, 120, Qt.KeepAspectRatio, Qt.SmoothTransformation
             ))
@@ -285,7 +348,7 @@ class ArtworkFinderDialog(QDialog):
     artwork_saved = pyqtSignal(str)  # path to saved file
 
     def __init__(self, artist, album_title, album_path, theme_dict, parent=None,
-                 extra=False):
+                 extra=False, fs=None):
         super().__init__(parent)
         self.artist = artist or ''
         self.album_title = album_title or ''
@@ -302,13 +365,7 @@ class ArtworkFinderDialog(QDialog):
         self.setMinimumSize(500, 400)
         self.resize(550, 500)
 
-        t = theme_dict
-        self.setStyleSheet(f"""
-            QDialog {{ background-color: {t['bg']}; }}
-            QScrollArea {{ border: none; background: {t['bg']}; }}
-            QWidget#results-container {{ background: {t['bg']}; }}
-        """)
-
+        self.setStyleSheet(finder_dialog_qss(theme_dict, fs))
         layout = QVBoxLayout()
 
         # Search bar
@@ -318,32 +375,15 @@ class ArtworkFinderDialog(QDialog):
         self.search_input.setText(
             f'{self._clean_query(self.artist)} {self._clean_query(self.album_title)}'.strip()
         )
-        self.search_input.setStyleSheet(f"""
-            QLineEdit {{
-                background-color: {t['bg_alt']};
-                color: {t['fg']};
-                border: 1px solid {t['border']};
-                font-family: {theme.FONT};
-                font-size: 11pt;
-                padding: 6px;
-            }}
-        """)
         self.search_input.returnPressed.connect(self._on_search_submit)
         # Prevent Enter from closing the dialog (QDialog default behaviour)
         self.search_input.installEventFilter(self)
         search_layout.addWidget(self.search_input)
 
         search_btn = QPushButton('Search')
-        search_btn.setFixedSize(70, 35)
-        search_btn.setStyleSheet(f"""
-            QPushButton {{
-                background: {t['accent']};
-                color: {t['selection_text']};
-                border: none;
-                font-family: {theme.FONT};
-                font-size: 11pt;
-            }}
-        """)
+        search_btn.setObjectName('accent-btn')
+        search_btn.setCursor(Qt.PointingHandCursor)
+        search_btn.setFixedSize(80, 35)
         search_btn.clicked.connect(self._on_search_submit)
         search_layout.addWidget(search_btn)
         layout.addLayout(search_layout)
@@ -353,31 +393,20 @@ class ArtworkFinderDialog(QDialog):
         if self.extra:
             select_row = QHBoxLayout()
             self.selected_label = QLabel('0 selected')
-            self.selected_label.setStyleSheet(
-                f'color: {t.get("fg_dim", t["fg"])}; '
-                f'font-family: {theme.FONT}; font-size: 10pt;')
+            self.selected_label.setObjectName('status-label')
             select_row.addWidget(self.selected_label)
             select_row.addStretch()
             self.save_selected_btn = QPushButton('Save Selected')
+            self.save_selected_btn.setObjectName('accent-btn')
+            self.save_selected_btn.setCursor(Qt.PointingHandCursor)
             self.save_selected_btn.setEnabled(False)
-            self.save_selected_btn.setStyleSheet(f"""
-                QPushButton {{
-                    background: {t['accent']};
-                    color: {t['selection_text']};
-                    border: none;
-                    font-family: {theme.FONT};
-                    font-size: 11pt;
-                    padding: 5px 14px;
-                }}
-                QPushButton:disabled {{ background: {t['bg_alt']}; color: {t['fg']}; }}
-            """)
             self.save_selected_btn.clicked.connect(self._save_selected)
             select_row.addWidget(self.save_selected_btn)
             layout.addLayout(select_row)
 
         # Status label
         self.status = QLabel()
-        self.status.setStyleSheet(f'color: {t["fg"]}; font-family: {theme.FONT}; font-size: 11pt;')
+        self.status.setObjectName('status-label')
         self.status.setWordWrap(True)
         layout.addWidget(self.status)
 
@@ -471,12 +500,8 @@ class ArtworkFinderDialog(QDialog):
         self.status.setText('  ·  '.join(parts))
 
     def _section_header(self, text):
-        t = self.theme_dict
-        label = QLabel(text)
-        label.setStyleSheet(
-            f'color: {t.get("grip", t["fg"])}; font-family: {theme.FONT}; '
-            f'font-size: 10pt; font-weight: bold; '
-            f'padding: 8px 8px 0 8px; border: none;')
+        label = QLabel(text.upper())
+        label.setObjectName('section-header')
         return label
 
     def _on_results(self, results):
@@ -565,15 +590,10 @@ class ArtworkFinderDialog(QDialog):
         self._save_done = 0
         self.save_selected_btn.setEnabled(False)
         self.search_input.setEnabled(False)
-        t = self.theme_dict
         self._dl_progress = QProgressBar()
         self._dl_progress.setRange(0, 100)
         self._dl_progress.setFixedHeight(14)
         self._dl_progress.setTextVisible(False)
-        self._dl_progress.setStyleSheet(f"""
-            QProgressBar {{ border: 1px solid {t['accent']}; background: {t['bg']}; }}
-            QProgressBar::chunk {{ background-color: {t['accent']}; }}
-        """)
         self.layout().addWidget(self._dl_progress)
         self._save_next()
 
@@ -599,16 +619,11 @@ class ArtworkFinderDialog(QDialog):
         self._save_next()
 
     def _download_artwork(self, url, album_name):
-        t = self.theme_dict
         self.status.setText('Downloading...')
         self._dl_progress = QProgressBar()
         self._dl_progress.setRange(0, 100)
         self._dl_progress.setFixedHeight(14)
         self._dl_progress.setTextVisible(False)
-        self._dl_progress.setStyleSheet(f"""
-            QProgressBar {{ border: 1px solid {t['accent']}; background: {t['bg']}; }}
-            QProgressBar::chunk {{ background-color: {t['accent']}; }}
-        """)
         self.layout().addWidget(self._dl_progress)
         self._dl_thread = DownloadThread(url, self.album_path, extra=self.extra)
         self._dl_thread.progress.connect(self._dl_progress.setValue)
