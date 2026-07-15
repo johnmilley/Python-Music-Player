@@ -13,6 +13,7 @@
 #   python src/media_server.py --root ~/Music --port 8642 --token test
 
 import argparse
+import email.utils
 import hashlib
 import hmac
 import ipaddress
@@ -52,6 +53,14 @@ STATIC_TYPES = {
 # One-at-a-time Deezer fetches: the stats page requests a handful of artist
 # images at once; the lock prevents duplicate downloads of the same artist.
 _ARTIST_FETCH_LOCK = threading.Lock()
+
+# Same idea for LRCLIB: a phone re-tapping "find lyrics" mustn't stack
+# duplicate searches for the same track.
+_LYRICS_FETCH_LOCK = threading.Lock()
+
+LRCLIB_GET = 'https://lrclib.net/api/get'
+LRCLIB_SEARCH = 'https://lrclib.net/api/search'
+LRCLIB_DURATION_TOLERANCE = 15  # seconds — mirrors lyrics_fetcher.py
 
 if getattr(sys, '_MEIPASS', None):
     WEBCLIENT_DIR = Path(sys._MEIPASS) / 'webclient'
@@ -173,6 +182,44 @@ class _LibraryCache:
         return albums
 
 
+class _AlbumCache:
+    """Parsed Album objects keyed by folder path, validated by folder mtime.
+
+    Album() runs mutagen over every track file — seconds on a NAS mount —
+    and the phone used to trigger a full re-parse per album open, per
+    favourite check (which fires on EVERY track change), and per heart
+    tap: the main source of web-client sluggishness. A cache hit is one
+    stat() instead. Folder mtime catches file adds/removes (art uploads,
+    new rips); in-place tag edits don't bump it, which is acceptable —
+    titles/lengths going briefly stale beats seconds of NAS parsing per
+    track change."""
+
+    MAX_ENTRIES = 32
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._entries = {}   # str(path) -> (mtime_ns, Album); dict order = LRU
+
+    def get(self, folder):
+        key = str(folder)
+        try:
+            mtime = folder.stat().st_mtime_ns
+        except OSError:
+            return None
+        with self._lock:
+            hit = self._entries.pop(key, None)
+            if hit is not None and hit[0] == mtime:
+                self._entries[key] = hit   # re-insert = mark most-recent
+                return hit[1]
+        album = Album(folder)   # outside the lock — parses can run in parallel
+        with self._lock:
+            self._entries.pop(key, None)
+            self._entries[key] = (mtime, album)
+            while len(self._entries) > self.MAX_ENTRIES:
+                self._entries.pop(next(iter(self._entries)))
+        return album
+
+
 class _Handler(BaseHTTPRequestHandler):
     protocol_version = 'HTTP/1.1'  # keep-alive; Content-Length always set
 
@@ -239,10 +286,29 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _send_file_ranged(self, path, ctype):
         try:
-            size = path.stat().st_size
+            st = path.stat()
+            size = st.st_size
         except OSError:
             self._send_error_json(404, 'not found')
             return
+        # Conditional GET: art files are multi-MB scans that the client
+        # re-requests on every album view — a 304 turns each into a
+        # header-only round trip while staying always-fresh (no max-age,
+        # so a cover replaced from the desktop shows up immediately).
+        last_modified = email.utils.formatdate(st.st_mtime, usegmt=True)
+        ims = self.headers.get('If-Modified-Since')
+        if ims and not self.headers.get('Range'):
+            try:
+                cached = email.utils.parsedate_to_datetime(ims)
+                ours = email.utils.parsedate_to_datetime(last_modified)
+                if cached >= ours:
+                    self.send_response(304)
+                    self.send_header('Last-Modified', last_modified)
+                    self.send_header('Cache-Control', 'no-cache')
+                    self.end_headers()
+                    return
+            except (TypeError, ValueError):
+                pass
         rng = self._parse_range(self.headers.get('Range'), size)
         if rng == 'invalid':
             self.send_response(416)
@@ -258,6 +324,8 @@ class _Handler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header('Content-Type', ctype)
         self.send_header('Accept-Ranges', 'bytes')
+        self.send_header('Last-Modified', last_modified)
+        self.send_header('Cache-Control', 'no-cache')
         self.send_header('Content-Length', str(length))
         if status == 206:
             self.send_header('Content-Range', f'bytes {start}-{end}/{size}')
@@ -332,12 +400,17 @@ class _Handler(BaseHTTPRequestHandler):
         try:
             url = urlparse(self.path)
             query = parse_qs(url.query)
-            if url.path not in ('/api/played', '/api/favorite'):
+            if url.path not in ('/api/played', '/api/favorite', '/api/art_upload',
+                                '/api/lyrics_fetch'):
                 return self._send_error_json(404, 'not found')
             if not self._check_token(query):
                 return self._send_error_json(401, 'unauthorized')
             if url.path == '/api/favorite':
                 return self._api_favorite_toggle()
+            if url.path == '/api/art_upload':
+                return self._api_art_upload(query)
+            if url.path == '/api/lyrics_fetch':
+                return self._api_lyrics_fetch()
             length = int(self.headers.get('Content-Length', 0))
             if not 0 < length <= 8192:
                 return self._send_error_json(400, 'bad body')
@@ -396,6 +469,126 @@ class _Handler(BaseHTTPRequestHandler):
                 pass
         return self._send_error_json(404, 'no lyrics')
 
+    # ── lyrics fetch (LRCLIB) ───────────────────────────────────────
+    # A POST twin of _api_lyrics: the GET stays read-only (never mkdirs
+    # into the library), while this explicitly-requested fetch mirrors
+    # lyrics_fetcher.py's LRCLIB logic and cache naming exactly — a fetch
+    # from the phone lands in <album>/lyrics/ where the desktop reads it,
+    # and vice versa. Re-implemented here rather than imported because
+    # lyrics_fetcher pulls in PyQt5.
+
+    @staticmethod
+    def _clean_lyrics_query(text):
+        """Strip edition tags, years, separators — lyrics_fetcher._clean."""
+        text = re.sub(r'\(.*?\)|\[.*?\]', '', text)
+        text = re.sub(r'\b(19|20)\d{2}\b', '', text)
+        text = re.sub(r'[-_]+', ' ', text)
+        return ' '.join(text.split()).strip()
+
+    @staticmethod
+    def _lrclib_duration_ok(result, duration):
+        if not duration:
+            return True
+        api_dur = result.get('duration')
+        if not api_dur:
+            return True
+        return abs(api_dur - duration) <= LRCLIB_DURATION_TOLERANCE
+
+    def _fetch_lyrics_from_lrclib(self, artist, title, album_title, duration):
+        """(synced, text) from LRCLIB, or (None, None). Same two-step
+        strategy as the desktop: exact /get first, /search fallback."""
+        import requests
+        headers = {'User-Agent': 'lp-music-player/1.0'}
+
+        try:
+            r = requests.get(LRCLIB_GET, params={
+                'artist_name': artist,
+                'track_name': title,
+                'album_name': self._clean_lyrics_query(album_title),
+            }, headers=headers, timeout=10)
+            if r.ok:
+                result = r.json()
+                if self._lrclib_duration_ok(result, duration):
+                    if result.get('syncedLyrics'):
+                        return True, result['syncedLyrics']
+                    if result.get('plainLyrics'):
+                        return False, result['plainLyrics']
+        except Exception:
+            pass
+
+        try:
+            clean_artist = self._clean_lyrics_query(artist)
+            q = f'{clean_artist} {self._clean_lyrics_query(title)}'.strip()
+            if not q:
+                return None, None
+            r = requests.get(LRCLIB_SEARCH, params={'q': q},
+                             headers=headers, timeout=10)
+            r.raise_for_status()
+            results = r.json()
+            artist_lower = clean_artist.lower()
+            # Prefer artist-name matches, then anything duration-plausible
+            for require_artist in (True, False):
+                for res in results:
+                    if require_artist and artist_lower and \
+                            artist_lower not in res.get('artistName', '').lower():
+                        continue
+                    if not self._lrclib_duration_ok(res, duration):
+                        continue
+                    if res.get('syncedLyrics'):
+                        return True, res['syncedLyrics']
+                    if res.get('plainLyrics'):
+                        return False, res['plainLyrics']
+        except Exception:
+            pass
+        return None, None
+
+    def _api_lyrics_fetch(self):
+        length = int(self.headers.get('Content-Length', 0))
+        if not 0 < length <= 2048:
+            return self._send_error_json(400, 'bad body')
+        try:
+            data = json.loads(self.rfile.read(length))
+        except (ValueError, json.JSONDecodeError):
+            return self._send_error_json(400, 'bad body')
+        rel = str(data.get('id', ''))
+        track = self._resolve_track(rel, data.get('n'))
+        if track is None:
+            return self._send_error_json(404, 'not found')
+        try:
+            folder = self._resolve(rel)
+        except (ValueError, OSError):
+            return self._send_error_json(400, 'bad id')
+
+        safe_title = re.sub(r'[\\/:*?"<>|]', '_', str(track.title) or 'unknown')
+        n = int(track.tracknumber or 0)
+        # Name concat, not with_suffix() — titles can contain dots
+        base = folder / 'lyrics' / f'{n:02d}_{safe_title}'
+        lrc = base.with_name(base.name + '.lrc')
+        txt = base.with_name(base.name + '.txt')
+
+        with _LYRICS_FETCH_LOCK:
+            # Re-check under the lock — a parallel fetch may have landed it
+            for path, synced in ((lrc, True), (txt, False)):
+                try:
+                    if path.is_file():
+                        return self._send_json({
+                            'synced': synced,
+                            'text': path.read_text(encoding='utf-8',
+                                                   errors='replace')})
+                except OSError:
+                    pass
+            synced, text = self._fetch_lyrics_from_lrclib(
+                str(track.artist or ''), str(track.title or ''),
+                str(track.album or ''), float(track.length or 0))
+            if text is None:
+                return self._send_error_json(404, 'no lyrics found')
+            try:
+                base.parent.mkdir(exist_ok=True)
+                (lrc if synced else txt).write_text(text, encoding='utf-8')
+            except OSError:
+                pass   # cache write failed (read-only mount?) — still serve it
+            return self._send_json({'synced': synced, 'text': text})
+
     def _resolve_track(self, rel, n):
         """The track at album `rel`, tracknumber `n` — same identity the
         desktop app keys favourites by (Track.path), resolved fresh from
@@ -408,7 +601,9 @@ class _Handler(BaseHTTPRequestHandler):
             return None
         if not folder.is_dir():
             return None
-        album = Album(folder)
+        album = self.server.album_cache.get(folder)
+        if album is None:
+            return None
         for t in album.tracklist:
             if int(t.tracknumber or 0) == n:
                 return t
@@ -436,6 +631,62 @@ class _Handler(BaseHTTPRequestHandler):
             return self._send_error_json(404, 'not found')
         store = FavoritesStore(self.server.favorites_path)
         self._send_json({'favorited': store.toggle(track)})
+
+    def _api_art_upload(self, query):
+        """Save a phone-camera photo as album art — mirrors the desktop's
+        'Change Cover Art...' (overwrite cover.jpg in place) by default, or
+        'Find More Album Art...'-style additions (next free art_N.jpg,
+        artwork_finder.py's exact naming) when mode=extra is passed."""
+        rel = (query.get('id') or [''])[0]
+        try:
+            folder = self._resolve(rel)
+        except (ValueError, OSError):
+            return self._send_error_json(400, 'bad id')
+        if not folder.is_dir():
+            return self._send_error_json(404, 'not found')
+        length = int(self.headers.get('Content-Length', 0))
+        MAX_UPLOAD = 12 * 1024 * 1024
+        if not 0 < length <= MAX_UPLOAD:
+            return self._send_error_json(400, 'bad body')
+        ctype = (self.headers.get('Content-Type') or '').split(';')[0].strip().lower()
+        ext = {'image/png': '.png', 'image/jpeg': '.jpg', 'image/jpg': '.jpg'}.get(ctype, '.jpg')
+        try:
+            data = self.rfile.read(length)
+        except OSError:
+            return self._send_error_json(400, 'bad body')
+        if (query.get('mode') or [''])[0] == 'extra':
+            n = 1
+            while (folder / f'art_{n}{ext}').exists():
+                n += 1
+            dest = folder / f'art_{n}{ext}'
+        else:
+            dest = folder / f'cover{ext}'
+            # A previous cover under a different extension would otherwise
+            # linger alongside the new one and still get picked up by
+            # Album.refresh_art's folder scan
+            for other_ext in ('.jpg', '.jpeg', '.png'):
+                if other_ext != ext:
+                    (folder / f'cover{other_ext}').unlink(missing_ok=True)
+        try:
+            dest.write_bytes(data)
+        except OSError:
+            return self._send_error_json(500, 'could not save')
+        # Rebuild the art list the same way Album.refresh_art does (cover
+        # first, then the rest by name) without the full mutagen tag parse
+        # a fresh Album(folder) would redo for every track
+        image_exts = ('.jpg', '.jpeg', '.png')
+        cover = next((folder / f'cover{e}' for e in image_exts
+                     if (folder / f'cover{e}').exists()), None)
+        try:
+            images = sorted(p for p in folder.iterdir() if p.suffix.lower() in image_exts)
+        except OSError:
+            images = []
+        if cover in images:
+            images.remove(cover)
+            images.insert(0, cover)
+        enc_id = quote(rel, safe='')
+        art = [f'/api/art/{enc_id}/{quote(p.name, safe="")}' for p in images]
+        self._send_json({'ok': True, 'art': art})
 
     def _api_stats(self, query):
         year_s = (query.get('year') or [''])[0]
@@ -524,8 +775,8 @@ class _Handler(BaseHTTPRequestHandler):
             return self._send_error_json(400, 'bad id')
         if not folder.is_dir():
             return self._send_error_json(404, 'not found')
-        album = Album(folder)
-        if not album.tracklist:
+        album = self.server.album_cache.get(folder)
+        if album is None or not album.tracklist:
             return self._send_error_json(404, 'no tracks')
         enc_id = quote(rel, safe='')
         art = [f'/api/art/{enc_id}/{quote(Path(p).name, safe="")}'
@@ -602,6 +853,7 @@ class MediaServer:
         httpd.library_root = self.library_root
         httpd.token = self.token
         httpd.cache = _LibraryCache()
+        httpd.album_cache = _AlbumCache()
         httpd.static_dir = WEBCLIENT_DIR
         httpd.plays_path = self.plays_path
         httpd.favorites_path = self.favorites_path

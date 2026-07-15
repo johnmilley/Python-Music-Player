@@ -10,18 +10,16 @@ from track import Track
 from album import Album
 from album_view import AlbumView
 from art_label import AlbumArtLabel
-from progress_bar import ClickableProgressBar
 from artwork_finder import ArtworkFinderDialog
 from color_extract import text_color_for
-from marquee_label import MarqueeLabel
 
 # media playback - find one that uses crossplat mediakeys out of the box
 from just_playback import Playback
 
 # pyqt5
 from PyQt5.QtWidgets import (QMainWindow, QApplication, QWidget, QHBoxLayout,
-    QPushButton, QLabel, QVBoxLayout, QSizePolicy)
-from PyQt5.QtCore import Qt, QTimer, QSize, QEvent, QThread, pyqtSignal, QByteArray
+    QVBoxLayout, QSizePolicy)
+from PyQt5.QtCore import Qt, QTimer, QThread, pyqtSignal, QByteArray
 from PyQt5.QtGui import QPixmap, QColor, QIcon, QImage, QPainter, QFontMetrics
 from PyQt5.QtSvg import QSvgRenderer
 
@@ -158,6 +156,10 @@ class Player(QWidget):
         self._shuffle_bag = []
         self._shuffle_history = []
         self._shuffle_for = None  # the playlist the bag was drawn for
+        # Repeat: 'off' (stop at album end), 'all' (wrap to track 0 at the
+        # end, incl. reshuffling when combined with shuffle), 'one' (replay
+        # the same track forever, ignoring shuffle/position entirely).
+        self.repeat_mode = 'off'
 
     def build_gui(self):
         """Build the player column: art on top, controls block below.
@@ -180,114 +182,53 @@ class Player(QWidget):
         # ALBUM ART — square footprint, cached scaling. Centered as a tight
         # unit with the controls (stretches above/below share the slack).
         self.layout_player.addStretch(1)
-        self.album_widget = AlbumArtLabel(square=True)
+        self.album_widget = AlbumArtLabel()
         self.album_widget.clicked.connect(self.art_clicked.emit)
         self.register_art_label(self.album_widget)
         self.layout_player.addWidget(self.album_widget)
 
-        # Big favourite heart over the art, shown only on hover (normal
-        # mode only; max/mini mode have their own separate art + full
-        # ControlPanel). Deferred import: overlay_controls imports
-        # _render_svg from this module.
+        # Controls — the same ControlPanel used by mini/max mode, always
+        # visible here (no hover/auto-hide) and without its own
+        # tracklist/lyrics toggles (those live in the toolbar in normal
+        # mode). Deferred import: overlay_controls imports _render_svg from
+        # this module.
         import overlay_controls
-        self.heart_overlay = overlay_controls.HeartOverlay(self.album_widget)
-        self.album_widget.installEventFilter(self)
+        self.panel = overlay_controls.ControlPanel(
+            show_back=False, show_side_toggles=False, scrim=False)
+        self.panel.setMaximumWidth(420)
+        self.panel.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.panel.progress_bar.seek_requested.connect(self.seek_to)
+        self.panel.progress_bar.start_playback.connect(self.resume)
+        self.panel.progress_bar.setRange(0, 1000)
+        self.panel.show()
 
-        # Controls container — fixed height, capped width, centered
-        self.controls_container = QWidget()
-        self.controls_container.setObjectName('player-controls')
-        self.controls_container.setMaximumWidth(420)
-        self.controls_container.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        controls_layout = QVBoxLayout()
-        controls_layout.setContentsMargins(0, 6, 0, 0)
-        controls_layout.setSpacing(6)
-        self.controls_layout = controls_layout
-
-        # SONG TITLE - ARTIST
-        self.track_info = MarqueeLabel('')
-        self.track_info.setObjectName('track-info')
-        self.track_info.setAlignment(Qt.AlignCenter)
-        self.track_info.setContentsMargins(0, 0, 0, 0)
-        self.track_info.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
-        controls_layout.addWidget(self.track_info)
-
-        # PROGRESS BAR
-        self.layout_track_progress = QHBoxLayout()
-        self.layout_track_progress.setContentsMargins(0, 0, 0, 0)
-
-        self.track_progress_label = QLabel('0:00')
-        self.track_progress_label.setObjectName('track-progress')
-        self.track_progress_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-
-        self.progress_bar = ClickableProgressBar(self)
-        self.progress_bar.seek_requested.connect(self.seek_to)
-        self.progress_bar.start_playback.connect(self.resume)
-        self.progress_bar.setRange(0, 1000)
-        self.progress_bar.setTextVisible(False)
-        self.progress_bar.setFixedHeight(8)
-
-        self.track_length_label = QLabel('0:00')
-        self.track_length_label.setObjectName('track-length')
+        # Aliases: main mode's "own" transport/progress widgets simply ARE
+        # the panel's now, so every existing call site (podcast/radio mode
+        # button re-wiring, progress mirroring, icon scaling) keeps working
+        # unchanged against these names.
+        self.progress_bar = self.panel.progress_bar
+        self.track_progress_label = self.panel.pos_label
+        self.track_length_label = self.panel.len_label
+        self.prev_track_button = self.panel.prev_btn
+        self.play_button = self.panel.play_btn
+        self.next_track_button = self.panel.next_btn
+        self._show_remaining = True
         self.track_length_label.setCursor(Qt.PointingHandCursor)
         self.track_length_label.mousePressEvent = lambda e: self._toggle_time_display()
-        self._show_remaining = True
 
-        self.layout_track_progress.addWidget(self.track_progress_label)
-        self.layout_track_progress.addWidget(self.progress_bar)
-        self.layout_track_progress.addWidget(self.track_length_label)
-        controls_layout.addLayout(self.layout_track_progress)
-
-        # TRACK CONTROL BUTTONS
-        self._icon_size = QSize(40, 40)
-        self.layout_player_buttons = QHBoxLayout()
-        self.layout_player_buttons.setSpacing(0)
-        self.layout_player_buttons.setContentsMargins(0, 2, 0, 0)
-
-        self.prev_track_button = QPushButton()
         self.prev_track_button.pressed.connect(self.prev_track)
-        self.prev_track_button.setObjectName('prev-button')
-        self.prev_track_button.setIconSize(self._icon_size)
-        self.prev_track_button.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
-
-        self.play_button = QPushButton()
         self.play_button.pressed.connect(self.toggle_play_pause_button_text)
-        self.play_button.setObjectName('play-button')
-        self.play_button.setIconSize(self._icon_size)
-        self.play_button.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
-
-        self.next_track_button = QPushButton()
         self.next_track_button.pressed.connect(self.next_track)
-        self.next_track_button.setObjectName('next-button')
-        self.next_track_button.setIconSize(self._icon_size)
-        self.next_track_button.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
 
         self._is_playing = False
         self.update_button_icons()
 
-        for btn in (self.prev_track_button, self.play_button, self.next_track_button):
-            btn.setMinimumWidth(20)
-            btn.setCursor(Qt.PointingHandCursor)
-
-        self._btn_container = QWidget()
-        btn_layout = QHBoxLayout()
-        btn_layout.setSpacing(4)
-        btn_layout.setContentsMargins(0, 0, 0, 0)
-        btn_layout.addWidget(self.prev_track_button)
-        btn_layout.addWidget(self.play_button)
-        btn_layout.addWidget(self.next_track_button)
-        self._btn_container.setLayout(btn_layout)
-        self.layout_player_buttons.addStretch()
-        self.layout_player_buttons.addWidget(self._btn_container)
-        self.layout_player_buttons.addStretch()
-        controls_layout.addLayout(self.layout_player_buttons)
-
-        self.controls_container.setLayout(controls_layout)
-
-        # Center the controls block; it caps at 420px wide
+        # Center the panel; it caps at 420px wide (same as the old controls
+        # block it replaces)
         controls_row = QHBoxLayout()
         controls_row.setContentsMargins(0, 0, 0, 0)
         controls_row.addStretch(1)
-        controls_row.addWidget(self.controls_container, stretch=8)
+        controls_row.addWidget(self.panel, stretch=8)
         controls_row.addStretch(1)
         self.layout_player.addLayout(controls_row)
         self.layout_player.addStretch(1)
@@ -299,32 +240,12 @@ class Player(QWidget):
         super().resizeEvent(event)
         self._update_compactness()
 
-    def eventFilter(self, obj, event):
-        """Show/hide/position the hover heart — Enter/Leave on the art
-        widget itself, since its child (the heart button) would otherwise
-        swallow those events before they reach it."""
-        if obj is self.album_widget:
-            t = event.type()
-            if t == QEvent.Enter:
-                self._position_heart_overlay()
-                self.heart_overlay.show()
-                self.heart_overlay.raise_()
-            elif t == QEvent.Leave:
-                self.heart_overlay.hide()
-            elif t == QEvent.Resize and self.heart_overlay.isVisible():
-                self._position_heart_overlay()
-        return super().eventFilter(obj, event)
-
-    def _position_heart_overlay(self):
-        hint = self.heart_overlay.sizeHint()
-        x = (self.album_widget.width() - hint.width()) // 2
-        y = (self.album_widget.height() - hint.height()) // 2
-        self.heart_overlay.setGeometry(x, y, hint.width(), hint.height())
-
     def _update_compactness(self):
-        """Shrink the controls block's chrome (margins, spacing, icon size,
-        progress bar thickness) as the column gets short — the album art
-        keeps first claim on vertical space instead of being squeezed."""
+        """Shrink the player column's outer margins/spacing as it gets
+        short — the album art keeps first claim on vertical space instead
+        of being squeezed. The controls panel itself is fixed-size (it
+        matches mini/max mode's ControlPanel), so it no longer needs its
+        own compactness scaling."""
         lo, hi = 240, 480
         t = max(0.0, min(1.0, (self.height() - lo) / (hi - lo)))
         if abs(t - self._compact_t) < 0.02:
@@ -333,9 +254,6 @@ class Player(QWidget):
         margin = round(4 + 8 * t)
         self.layout_player.setContentsMargins(margin, margin, margin, margin)
         self.layout_player.setSpacing(round(4 + 6 * t))
-        self.controls_layout.setSpacing(round(2 + 4 * t))
-        self.progress_bar.setFixedHeight(round(5 + 3 * t))
-        self.set_control_scale(self._last_font_size)
 
     def _toggle_time_display(self):
         self._show_remaining = not self._show_remaining
@@ -352,9 +270,6 @@ class Player(QWidget):
         self._set_btn_hover_icons(self.prev_track_button, 'skip_previous', color, hover_color)
         self._set_btn_hover_icons(self.next_track_button, 'skip_next', color, hover_color)
         self._set_play_icon()
-        if hasattr(self, 'heart_overlay'):
-            accent = getattr(self, '_accent_color', None) or color
-            self.heart_overlay.set_theme({'accent': accent})
 
     def _set_btn_hover_icons(self, btn, icon_name, color, hover_color):
         """Set normal icon and install enter/leave handlers for accent-contrast hover."""
@@ -435,13 +350,18 @@ class Player(QWidget):
             self.timer.stop()
             self._set_play_icon(False)
             self.track_finished.emit()
-            if self.playlist:
+            if self.repeat_mode == 'one' and self.playlist:
+                self.play(self.playlist, self.playlist_pos)
+            elif self.playlist:
                 if self.shuffle:
                     # Advance until the shuffled cycle has played every
-                    # track once (the bag refills on manual next)
-                    if self._shuffle_for is not self.playlist or self._shuffle_bag:
+                    # track once (the bag refills on manual next, and also
+                    # here on repeat-all once the bag empties)
+                    if (self._shuffle_for is not self.playlist or self._shuffle_bag
+                            or self.repeat_mode == 'all'):
                         self.next_track()
-                elif self.current_track != self.playlist.tracklist[-1]:
+                elif (self.current_track != self.playlist.tracklist[-1]
+                        or self.repeat_mode == 'all'):
                     self.next_track()
 
     def next_track(self):
@@ -508,7 +428,7 @@ class Player(QWidget):
         except Exception as e:
             print(f"LOG: Unable to play: {e}")
             self._set_play_icon(False)
-            self.track_info.setText(f"Error: could not play file")
+            self.panel.set_title(f"Error: could not play file")
 
         # Updates AlbumViewer with track currently playing
         if self.album_view:
@@ -562,9 +482,9 @@ class Player(QWidget):
         # Update TRACK TITLE
         title = str(self.current_track.title or '')
         if title:
-            self.track_info.setText(title)
+            self.panel.set_title(title)
         else:
-            self.track_info.setText(self.current_track.filename)
+            self.panel.set_title(self.current_track.filename)
 
         self._set_play_icon(True)
 
@@ -742,26 +662,20 @@ class Player(QWidget):
                 self.resume()
 
     def set_control_scale(self, font_size=None):
-        """Size icons and time labels from the controls font size, scaled
-        down further by the current compactness (see _update_compactness).
+        """Refresh transport icon colors and the time labels' stable width.
 
-        Called at build time, whenever the theme/font changes, and whenever
-        the column gets short enough to need tighter chrome.
+        The panel's buttons are fixed-size (matching mini/max mode's
+        ControlPanel) so this no longer scales icon dimensions — only the
+        font-driven bits: re-tinting icons (theme/accent changes) and
+        keeping the time labels wide enough that the progress bar doesn't
+        jitter as the digits change.
         """
         if font_size is None:
             import theme as theme_mod
             font_size = theme_mod.DEFAULT_SIZE
         self._last_font_size = font_size
-        compact_scale = 0.7 + 0.3 * self._compact_t  # 0.7 tight .. 1.0 roomy
-        icon_dim = max(22, min(56, int(font_size * 3.2 * compact_scale)))
-        icon_size = QSize(icon_dim, icon_dim)
-        for btn in (self.prev_track_button, self.play_button, self.next_track_button):
-            btn.setIconSize(icon_size)
-            btn.setFixedHeight(icon_dim + 8)
-            btn.setMinimumWidth(icon_dim + 20)
         if hasattr(self, '_icon_color'):
             self.update_button_icons()
-        # Time labels get a stable width so the progress bar doesn't jitter
         fm = QFontMetrics(self.track_length_label.font())
         time_w = fm.horizontalAdvance('-88:88') + 6
         self.track_progress_label.setFixedWidth(time_w)

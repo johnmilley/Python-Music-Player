@@ -17,18 +17,24 @@
 </head>
 <body>
 
-<!-- Full-bleed art viewport -->
+<!-- Stage: a flex column — the art area takes all space above the control
+     bar, so the art is centered in the actually-free region (never behind
+     the controls) and the whole stage lifts when a bottom sheet opens. -->
 <main id="stage">
-  <img id="art" alt="" draggable="false">
-  <div id="placeholder">lp</div>
+  <div id="art-area">
+    <img id="art" alt="" draggable="false">
+    <div id="placeholder"><img src="icon.png" alt=""></div>
+    <div id="title-scrim" class="chrome">
+      <div id="track-title"></div>
+      <div id="track-album"></div>
+    </div>
+  </div>
 
   <!-- chrome: everything that auto-hides together.
        Buttons carry lp's own SVG icons, injected by app.js. -->
   <button id="menu-btn" class="chrome" aria-label="Library"></button>
-  <div id="title-scrim" class="chrome">
-    <div id="track-title"></div>
-    <div id="track-album"></div>
-  </div>
+  <button id="camera-btn" class="chrome" aria-label="Upload album art from camera"></button>
+  <input id="camera-input" type="file" accept="image/*" capture="environment" hidden>
   <div id="bar" class="chrome">
     <div id="seek-row">
       <span id="time-cur">0:00</span>
@@ -36,10 +42,10 @@
       <span id="time-len">0:00</span>
     </div>
     <div id="buttons">
-      <button id="tracks-btn" aria-label="Tracklist"></button>
       <button id="prev-btn" aria-label="Previous"></button>
       <button id="play-btn" aria-label="Play"></button>
       <button id="next-btn" aria-label="Next"></button>
+      <button id="tracks-btn" aria-label="Tracklist"></button>
       <button id="lyrics-btn" aria-label="Lyrics"></button>
       <button id="fav-btn" aria-label="Favourite"></button>
     </div>
@@ -49,11 +55,14 @@
 <!-- Left drawer: library browser (artists collapse; tap a header to open) -->
 <div id="scrim"></div>
 <nav id="drawer">
-  <input id="filter" type="search" placeholder="Filter albums" autocomplete="off">
+  <div id="drawer-top">
+    <input id="filter" type="search" placeholder="Filter albums" autocomplete="off">
+    <button id="theme-btn" aria-label="Toggle light/dark"></button>
+  </div>
   <div id="album-list"></div>
 </nav>
 
-<!-- Tracklist / lyrics overlays (mutually exclusive, slide from the right) -->
+<!-- Tracklist / lyrics overlays (mutually exclusive, slide up as bottom sheets) -->
 <div id="tracklist"></div>
 <div id="lyrics"></div>
 
@@ -64,6 +73,32 @@
     <input id="token-input" autocomplete="off" autocapitalize="off" spellcheck="false">
     <button id="token-go">Connect</button>
     <p id="token-err"></p>
+  </div>
+</div>
+
+<!-- Camera crop screen: the whole photo fits on screen with an adjustable
+     crop box over it — drag inside to move, grab an edge/corner to resize
+     (free aspect, starts square) — before it's uploaded as additional
+     (non-cover) album art. -->
+<div id="crop-screen" hidden>
+  <button id="crop-cancel" aria-label="Cancel">&times;</button>
+  <div id="crop-frame">
+    <img id="crop-img" alt="" draggable="false">
+    <div id="crop-box">
+      <div class="crop-handle corner" data-handle="nw"></div>
+      <div class="crop-handle corner" data-handle="ne"></div>
+      <div class="crop-handle corner" data-handle="sw"></div>
+      <div class="crop-handle corner" data-handle="se"></div>
+      <div class="crop-handle edge" data-handle="n"></div>
+      <div class="crop-handle edge" data-handle="s"></div>
+      <div class="crop-handle edge" data-handle="w"></div>
+      <div class="crop-handle edge" data-handle="e"></div>
+    </div>
+  </div>
+  <p id="crop-hint">Drag the box to move &middot; pull an edge or corner to resize</p>
+  <div id="crop-actions">
+    <button id="crop-retake">Retake</button>
+    <button id="crop-use">Use Photo</button>
   </div>
 </div>
 

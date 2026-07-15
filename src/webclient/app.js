@@ -42,6 +42,20 @@ const ICONS24 = {
     + '10.94 6.14C10.02 5.09 8.79 4.5 7.5 4.5 5.24 4.5 3.5 6.24 3.5 8.5c0 '
     + '2.89 2.7 5.31 6.79 9.03L12 19.14l1.71-1.61C17.8 13.81 20.5 11.39 '
     + '20.5 8.5c0-2.26-1.74-4-4-4-1.29 0-2.52.59-3.44 1.64L12 5.09z"/>',
+  sun: '<path d="M12 7a5 5 0 100 10 5 5 0 000-10zm0-5a1 1 0 011 1v2a1 1 0 '
+    + '11-2 0V3a1 1 0 011-1zm0 18a1 1 0 011 1v2a1 1 0 11-2 0v-2a1 1 0 '
+    + '011-1zM4.22 4.22a1 1 0 011.42 0l1.42 1.42a1 1 0 11-1.42 1.42L4.22 '
+    + '5.64a1 1 0 010-1.42zm12.72 12.72a1 1 0 011.42 0l1.42 1.42a1 1 0 '
+    + '11-1.42 1.42l-1.42-1.42a1 1 0 010-1.42zM1 12a1 1 0 011-1h2a1 1 0 '
+    + '110 2H2a1 1 0 01-1-1zm18 0a1 1 0 011-1h2a1 1 0 110 2h-2a1 1 0 '
+    + '01-1-1zM4.22 19.78a1 1 0 010-1.42l1.42-1.42a1 1 0 111.42 1.42l-1.42 '
+    + '1.42a1 1 0 01-1.42 0zm12.72-12.72a1 1 0 010-1.42l1.42-1.42a1 1 0 '
+    + '111.42 1.42l-1.42 1.42a1 1 0 01-1.42 0z"/>',
+  moon: '<path d="M20.742 13.045A8.088 8.088 0 0110.955 3.258 8.5 8.5 0 '
+    + '1020.742 13.045z"/>',
+  camera: '<path d="M9 3 7.17 5H4a2 2 0 00-2 2v11a2 2 0 002 2h16a2 2 0 '
+    + '002-2V7a2 2 0 00-2-2h-3.17L15 3H9zm3 15a5 5 0 110-10 5 5 0 010 '
+    + '10zm0-2a3 3 0 100-6 3 3 0 000 6z"/>',
 };
 
 function setIcon(btn, name) {
@@ -57,6 +71,20 @@ setIcon($('prev-btn'), 'prev');
 setIcon($('play-btn'), 'play');
 setIcon($('next-btn'), 'next');
 setIcon($('fav-btn'), 'heart_outline');
+setIcon($('camera-btn'), 'camera');
+
+// ── theme (light/dark) ──────────────────────────────────────────────
+
+function applyTheme(light) {
+  document.body.classList.toggle('light', light);
+  setIcon($('theme-btn'), light ? 'sun' : 'moon');
+}
+applyTheme(localStorage.getItem('lp-theme') === 'light');
+$('theme-btn').addEventListener('click', () => {
+  const light = !document.body.classList.contains('light');
+  applyTheme(light);
+  localStorage.setItem('lp-theme', light ? 'light' : 'dark');
+});
 
 // ── token ─────────────────────────────────────────────────────────
 
@@ -152,7 +180,14 @@ function renderAlbumList(filter) {
     const row = document.createElement('div');
     row.className = 'album-row';
     if (current && a.id === current.id) row.classList.add('playing');
-    row.textContent = a.label;
+    const label = document.createElement('span');
+    label.className = 'label';
+    label.textContent = a.label;
+    label.style.overflow = 'hidden';
+    label.style.textOverflow = 'ellipsis';
+    label.style.whiteSpace = 'nowrap';
+    label.style.flex = '1';
+    row.appendChild(label);
     row.addEventListener('click', () => {
       closeDrawer();
       loadAlbum(a.id, true);   // tap = the user gesture that unlocks audio
@@ -198,7 +233,12 @@ function renderAlbumList(filter) {
 
 $('filter').addEventListener('input', () => renderAlbumList($('filter').value));
 
-function openDrawer() { document.body.classList.add('drawer-open'); }
+function openDrawer() {
+  // Deferred from updateNowPlaying — bring the playing-row highlight and
+  // auto-opened artist group up to date now that the list is visible.
+  renderAlbumList($('filter').value);
+  document.body.classList.add('drawer-open');
+}
 function closeDrawer() { document.body.classList.remove('drawer-open'); }
 $('menu-btn').addEventListener('click', () => {
   loadLibrary().catch(() => {});
@@ -313,13 +353,195 @@ $('fav-btn').addEventListener('click', async () => {
   }
 });
 
+// ── camera upload (additional album art) ────────────────────────────
+// Mirrors the desktop's "Find More Album Art..." extra-art flow — covers
+// are already handled elsewhere, so a phone photo is always saved under a
+// unique art_N name (mode=extra, artwork_finder.py's naming) rather than
+// overwriting cover.jpg. Before upload the user adjusts a crop box over
+// the whole photo — drag inside to move it, grab any edge or corner to
+// resize. Free aspect ratio; it starts as the largest centered square
+// (the most likely shape for album art) but doesn't have to stay one.
+
+const CROP_OUTPUT_MAX = 1600;   // cap the uploaded crop's longest edge
+const CROP_MIN_SIDE = 40;       // display px — keeps the box grabbable
+
+let cropScale = 1;              // source px per display px
+let cropBox = { x: 0, y: 0, w: 0, h: 0 };   // display px, relative to frame
+let cropFrameW = 0, cropFrameH = 0;
+let cropObjectUrl = null;
+let cropDrag = null;            // {mode, x, y, box0} during a drag
+
+function cropApplyBox() {
+  const el = $('crop-box');
+  el.style.left = cropBox.x + 'px';
+  el.style.top = cropBox.y + 'px';
+  el.style.width = cropBox.w + 'px';
+  el.style.height = cropBox.h + 'px';
+}
+
+async function openCropScreen(file) {
+  const img = $('crop-img');
+  if (cropObjectUrl) URL.revokeObjectURL(cropObjectUrl);   // failed prior load
+  cropObjectUrl = URL.createObjectURL(file);
+  await new Promise((resolve, reject) => {
+    img.onload = resolve;
+    img.onerror = reject;
+    img.src = cropObjectUrl;
+  });
+  $('crop-screen').hidden = false;
+  // Fit the whole photo on screen; the frame hugs the displayed image
+  // exactly, so box coordinates are image coordinates (just scaled).
+  const availW = Math.min(window.innerWidth * 0.92, 520);
+  const availH = window.innerHeight * 0.58;
+  const fit = Math.min(availW / img.naturalWidth, availH / img.naturalHeight);
+  cropFrameW = Math.round(img.naturalWidth * fit);
+  cropFrameH = Math.round(img.naturalHeight * fit);
+  cropScale = img.naturalWidth / cropFrameW;
+  const frame = $('crop-frame');
+  frame.style.width = cropFrameW + 'px';
+  frame.style.height = cropFrameH + 'px';
+  // Largest centered square as the starting box
+  const side = Math.min(cropFrameW, cropFrameH);
+  cropBox = {
+    x: (cropFrameW - side) / 2,
+    y: (cropFrameH - side) / 2,
+    w: side, h: side,
+  };
+  cropApplyBox();
+}
+
+function closeCropScreen() {
+  $('crop-screen').hidden = true;
+  $('crop-img').removeAttribute('src');
+  if (cropObjectUrl) { URL.revokeObjectURL(cropObjectUrl); cropObjectUrl = null; }
+  cropDrag = null;
+}
+
+async function confirmCrop() {
+  const img = $('crop-img');
+  const sx = cropBox.x * cropScale, sy = cropBox.y * cropScale;
+  const sw = cropBox.w * cropScale, sh = cropBox.h * cropScale;
+  const scale = Math.min(1, CROP_OUTPUT_MAX / Math.max(sw, sh));
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.round(sw * scale);
+  canvas.height = Math.round(sh * scale);
+  canvas.getContext('2d')
+    .drawImage(img, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
+  const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.9));
+  closeCropScreen();
+  if (blob) await uploadArtPhoto(blob);
+}
+
+async function uploadArtPhoto(blob) {
+  if (!current) return;
+  try {
+    const res = await fetch(
+      withToken('/api/art_upload?id=' + encodeURIComponent(current.id) + '&mode=extra'),
+      { method: 'POST', headers: { 'Content-Type': 'image/jpeg' }, body: blob });
+    if (res.ok) {
+      const d = await res.json();
+      current.art = d.art;
+      $('camera-btn').classList.add('saved');
+      setTimeout(() => $('camera-btn').classList.remove('saved'), 900);
+    }
+  } catch {
+    // offline/error — the tap just doesn't register, matches the
+    // favourite button's best-effort style above
+  }
+}
+
+// One pointer, mode picked by what was grabbed: a .crop-handle carries its
+// edges in data-handle ('nw'..'se'); anywhere else inside the box moves it.
+// Handles hang OUTSIDE the box edges so they stay grabbable even when the
+// box is pushed against the frame — pointer events are captured by the
+// frame, and moves are clamped to it.
+const cropFrame = $('crop-frame');
+
+function cropPointerPos(e) {
+  const rect = cropFrame.getBoundingClientRect();
+  return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+}
+
+cropFrame.addEventListener('pointerdown', e => {
+  if (cropDrag) return;                    // single-pointer interaction
+  const handle = e.target.closest('.crop-handle');
+  const mode = handle ? handle.dataset.handle
+    : (e.target.closest('#crop-box') ? 'move' : null);
+  if (!mode) return;
+  cropFrame.setPointerCapture(e.pointerId);
+  const p = cropPointerPos(e);
+  cropDrag = { mode, pointerId: e.pointerId, x: p.x, y: p.y, box0: { ...cropBox } };
+});
+
+cropFrame.addEventListener('pointermove', e => {
+  if (!cropDrag || e.pointerId !== cropDrag.pointerId) return;
+  const p = cropPointerPos(e);
+  const dx = p.x - cropDrag.x, dy = p.y - cropDrag.y;
+  const b0 = cropDrag.box0;
+  if (cropDrag.mode === 'move') {
+    cropBox.x = Math.min(cropFrameW - b0.w, Math.max(0, b0.x + dx));
+    cropBox.y = Math.min(cropFrameH - b0.h, Math.max(0, b0.y + dy));
+  } else {
+    // Edges move independently; each clamps to the frame on one side and
+    // to the opposite edge (minus the minimum size) on the other.
+    let x1 = b0.x, y1 = b0.y, x2 = b0.x + b0.w, y2 = b0.y + b0.h;
+    if (cropDrag.mode.includes('w')) x1 = Math.min(x2 - CROP_MIN_SIDE, Math.max(0, x1 + dx));
+    if (cropDrag.mode.includes('e')) x2 = Math.max(x1 + CROP_MIN_SIDE, Math.min(cropFrameW, x2 + dx));
+    if (cropDrag.mode.includes('n')) y1 = Math.min(y2 - CROP_MIN_SIDE, Math.max(0, y1 + dy));
+    if (cropDrag.mode.includes('s')) y2 = Math.max(y1 + CROP_MIN_SIDE, Math.min(cropFrameH, y2 + dy));
+    cropBox = { x: x1, y: y1, w: x2 - x1, h: y2 - y1 };
+  }
+  cropApplyBox();
+});
+
+function cropPointerEnd(e) {
+  if (cropDrag && e.pointerId === cropDrag.pointerId) cropDrag = null;
+}
+cropFrame.addEventListener('pointerup', cropPointerEnd);
+cropFrame.addEventListener('pointercancel', cropPointerEnd);
+
+$('crop-cancel').addEventListener('click', closeCropScreen);
+$('crop-retake').addEventListener('click', () => {
+  closeCropScreen();
+  $('camera-input').click();
+});
+$('crop-use').addEventListener('click', () => { confirmCrop().catch(() => {}); });
+
+$('camera-btn').addEventListener('click', () => {
+  if (current) $('camera-input').click();
+});
+$('camera-input').addEventListener('change', () => {
+  const file = $('camera-input').files[0];
+  $('camera-input').value = '';
+  if (!file || !current) return;
+  openCropScreen(file).catch(() => {});
+});
+
+// ── offline-downloads cleanup ───────────────────────────────────────
+// The per-album offline download feature is gone (needs a connection to
+// reach the app at all, and lossless albums are too big for Cache
+// Storage to be worth it). Unregister the old service worker and drop
+// its cache so previously-installed clients don't keep serving stale
+// audio/art from it.
+
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.getRegistrations()
+    .then(regs => regs.forEach(r => r.unregister()))
+    .catch(() => {});
+}
+if ('caches' in window) caches.delete('lp-downloads-v1').catch(() => {});
+
 function updateNowPlaying() {
   const t = tracks[idx];
   $('track-title').textContent = t ? t.title : '';
   $('track-album').textContent =
     current ? [current.artist, current.title].filter(Boolean).join(' — ') : '';
   renderTracklist();
-  renderAlbumList($('filter').value);
+  // The drawer rebuild (hundreds of rows for a big library) can wait
+  // until it's actually opened — openDrawer refreshes it anyway.
+  if (document.body.classList.contains('drawer-open')) {
+    renderAlbumList($('filter').value);
+  }
   refreshFavoriteState();
   if ('mediaSession' in navigator && current && t) {
     navigator.mediaSession.playbackState = 'playing';
@@ -377,11 +599,57 @@ audio.addEventListener('pause', () => {
   if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused';
 });
 
-// ── lyrics (cached .lrc/.txt served by /api/lyrics) ───────────────
+// ── lyrics ─────────────────────────────────────────────────────────
+// Cached .lrc/.txt served by GET /api/lyrics; on a cache miss the panel
+// asks the server to find them on LRCLIB (POST /api/lyrics_fetch — same
+// search logic and cache files as the desktop's lyrics_fetcher, so a
+// fetch from the phone shows up on the desktop too).
 
 let lyricLines = [];        // [{t: seconds|null, el}] for the loaded track
 let lyricActive = -1;
 let lyricTrackUrl = null;   // which track the panel currently shows
+
+function renderLyricsText(text) {
+  const panel = $('lyrics');
+  panel.textContent = '';
+  for (const raw of text.split('\n')) {
+    let time = null, line = raw;
+    const m = raw.match(/^\[(\d+):(\d+(?:\.\d+)?)\](.*)$/);
+    if (m) { time = parseInt(m[1], 10) * 60 + parseFloat(m[2]); line = m[3].trim(); }
+    const el = document.createElement('div');
+    el.className = 'lyric-line';
+    el.textContent = line;
+    panel.appendChild(el);
+    lyricLines.push({ t: time, el });
+  }
+}
+
+function lyricsMessage(text, retryTrack) {
+  const panel = $('lyrics');
+  panel.innerHTML = '';
+  const el = document.createElement('div');
+  el.className = 'none';
+  el.textContent = text;
+  if (retryTrack) {
+    el.textContent += ' — tap to search again';
+    el.addEventListener('click', () => {
+      lyricTrackUrl = null;
+      loadLyrics();
+    });
+  }
+  panel.appendChild(el);
+}
+
+async function fetchLyricsFromServer(t) {
+  // Server-side LRCLIB search; slow-ish (two API calls worst case)
+  const res = await fetch(withToken('/api/lyrics_fetch'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id: current.id, n: t.n }),
+  });
+  if (!res.ok) throw new Error('http ' + res.status);
+  return res.json();
+}
 
 async function loadLyrics() {
   const panel = $('lyrics');
@@ -399,20 +667,21 @@ async function loadLyrics() {
     const d = await api('/api/lyrics?id=' + encodeURIComponent(current.id)
       + '&n=' + encodeURIComponent(t.n)
       + '&title=' + encodeURIComponent(t.title));
-    panel.textContent = '';
-    for (const raw of d.text.split('\n')) {
-      let time = null, text = raw;
-      const m = raw.match(/^\[(\d+):(\d+(?:\.\d+)?)\](.*)$/);
-      if (m) { time = parseInt(m[1], 10) * 60 + parseFloat(m[2]); text = m[3].trim(); }
-      const line = document.createElement('div');
-      line.className = 'lyric-line';
-      line.textContent = text;
-      panel.appendChild(line);
-      lyricLines.push({ t: time, el: line });
-    }
+    renderLyricsText(d.text);
+    return;
+  } catch (e) {
+    if (e.message === 'unauthorized') { lyricTrackUrl = null; return; }
+    // fall through: not cached yet — try a live search
+  }
+  lyricsMessage('Searching for lyrics…');
+  try {
+    const d = await fetchLyricsFromServer(t);
+    if (lyricTrackUrl !== t.url) return;  // user skipped ahead meanwhile
+    renderLyricsText(d.text);
   } catch {
-    panel.innerHTML = '<div class="none">No lyrics for this track</div>';
-    lyricTrackUrl = null;   // allow retry (e.g. after desktop fetches them)
+    if (lyricTrackUrl !== t.url) return;
+    lyricsMessage('No lyrics found', true);
+    lyricTrackUrl = null;   // stale marker — a re-open retries
   }
 }
 
@@ -510,9 +779,9 @@ function renderTracklist() {
   });
 }
 
-// Tracklist and lyrics share the right-side slot — opening one closes the
-// other (mirrors max/mini mode's independent-but-tidy panes on a screen
-// with room for only one)
+// Tracklist and lyrics share the bottom-sheet slot — opening one closes
+// the other (mirrors max/mini mode's independent-but-tidy panes on a
+// screen with room for only one)
 $('tracks-btn').addEventListener('click', e => {
   e.stopPropagation();
   document.body.classList.remove('lyrics-open');
@@ -550,8 +819,8 @@ function showChrome() {
   document.addEventListener(ev, showChrome, { passive: true }));
 
 $('stage').addEventListener('click', e => {
-  if (e.target === $('stage') || e.target === $('art') ||
-      e.target === $('placeholder')) {
+  if (e.target === $('stage') || e.target === $('art-area') ||
+      e.target === $('art') || e.target === $('placeholder')) {
     document.body.classList.remove('tracks-open');
     document.body.classList.remove('lyrics-open');
     showChrome();

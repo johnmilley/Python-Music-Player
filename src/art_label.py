@@ -4,7 +4,11 @@
 # the full-resolution source pixmap (iTunes covers are 3000x3000) on every
 # paint. Here the source is downscaled once on load, a display-sized copy is
 # cached and refreshed on a debounce timer, and painting draws the cached
-# pixmap centered with aspect-ratio letterboxing and rounded corners.
+# pixmap centered with aspect-ratio letterboxing and rounded corners. The
+# widget footprint stays roughly square (heightForWidth) so a typical square
+# cover doesn't reserve extra vertical space, but non-square art (back
+# covers, inserts, portrait/landscape photos) is always shown in full,
+# letterboxed within that square rather than cropped.
 
 from PyQt5.QtWidgets import QWidget, QSizePolicy, QToolButton, QApplication
 from PyQt5.QtCore import Qt, QTimer, QRectF, pyqtSignal
@@ -19,11 +23,10 @@ class AlbumArtLabel(QWidget):
     MAX_SOURCE_SIDE = 1200   # downscale huge covers once on load
     RESCALE_DELTA = 16       # px change that triggers a fresh smooth rescale
 
-    def __init__(self, parent=None, square=False):
+    def __init__(self, parent=None):
         super().__init__(parent)
         self._source = None   # load-time downscaled original
         self._display = None  # cached display-sized copy
-        self._square = square  # center-crop sources to square (vinyl feel)
         self.setObjectName('album-art')
         self.setMinimumSize(80, 80)
         # Keep a square footprint so the art doesn't reserve a tall box and
@@ -133,12 +136,6 @@ class AlbumArtLabel(QWidget):
         if pixmap is None or pixmap.isNull():
             self.clear()
             return
-        if self._square and pixmap.width() != pixmap.height():
-            # Center-crop to square — keeps every image (back covers,
-            # inserts) reading like an LP sleeve
-            crop = min(pixmap.width(), pixmap.height())
-            pixmap = pixmap.copy((pixmap.width() - crop) // 2,
-                                 (pixmap.height() - crop) // 2, crop, crop)
         side = max(pixmap.width(), pixmap.height())
         if side > self.MAX_SOURCE_SIDE:
             pixmap = pixmap.scaled(

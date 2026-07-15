@@ -1,0 +1,2 @@
+- remove window opacity option. doesn't work.
+- keep the new controls in main mode player, but remove the background and the options for light/dark hover. the controls are necessary but the background is not and looks bad in main mode. i liked it better the way before.

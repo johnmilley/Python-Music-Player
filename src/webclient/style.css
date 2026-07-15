@@ -1,26 +1,94 @@
-/* lp remote — mini-mode aesthetic: black stage, letterboxed square art,
-   translucent floating chrome that fades out when idle. */
+/* lp remote — mini-mode aesthetic: full-bleed letterboxed square art,
+   translucent floating chrome that fades out when idle. Dark by default;
+   body.light switches the whole UI to a light skin (toggle button lives
+   in the drawer). Accent (#f2932c) stays fixed across both — it's the
+   one color that's meant to read the same regardless of theme. */
+
+:root {
+  --bg: #121212;
+  --fg: #eee;
+  --sub: #bbb;
+  --dim: #999;
+  --scrim: rgba(20, 20, 20, .55);
+  --panel-bg: #181818;
+  --input-bg: #262626;
+  --row-hover: #262626;
+  --header-color: #bbb;
+  --caret: #666;
+  --count-color: #666;
+  --error: #e57373;
+  --accent: #f2932c;
+  --placeholder-opacity: .5;
+  --panel-h: min(58vh, 460px);
+}
+
+body.light {
+  --bg: #f4f4f5;
+  --fg: #1a1a1a;
+  --sub: #555;
+  --dim: #888;
+  --scrim: rgba(255, 255, 255, .65);
+  --panel-bg: #ffffff;
+  --input-bg: #ececec;
+  --row-hover: #e8e8e8;
+  --header-color: #555;
+  --caret: #999;
+  --count-color: #999;
+  --error: #c62828;
+  --placeholder-opacity: .35;
+}
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
+/* html paints the whole browser canvas — black, matching the stage's
+   letterbox, so any sliver the fixed layers miss (dynamic URL-bar resize,
+   overscroll bounce) reads as letterbox instead of a white gap. */
+html { background: #000; }
+
 html, body {
   height: 100%;
-  background: #121212;
-  color: #eee;
+  overflow: hidden;
+  color: var(--fg);
   font: 16px/1.4 -apple-system, "Segoe UI", Roboto, sans-serif;
   overscroll-behavior: none;
   -webkit-tap-highlight-color: transparent;
   user-select: none;
   -webkit-user-select: none;
+  transition: color .2s ease;
 }
 
-/* ── stage: full-bleed art ─────────────────────────────────────── */
+/* Locks the document so it can never scroll or elastic-bounce — every
+   panel (#stage/#drawer/#tracklist/#lyrics/#token-screen) is already its
+   own position:fixed layer sized to the viewport, so body itself has
+   nothing to scroll. */
+body {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  background: var(--bg);
+}
 
-#stage { position: fixed; inset: 0; overflow: hidden; }
+/* ── stage: art above, controls pinned at the true bottom ────────
+   A flex column: #art-area soaks up everything above the (in-flow) #bar,
+   so the art is always centered in the actually-free space — it never
+   hides behind the controls, and there's no dead band below them. When a
+   bottom sheet opens, ONE rule lifts the whole stage; art re-centers in
+   the shrunken area and the bar rides just above the sheet. */
+
+#stage {
+  position: fixed; inset: 0;
+  overflow: hidden; background: #000;
+  display: flex; flex-direction: column;
+  transition: bottom .3s ease;
+}
+body.tracks-open #stage, body.lyrics-open #stage { bottom: var(--panel-h); }
+
+#art-area { position: relative; flex: 1; min-height: 0; }
 
 #art {
+  position: absolute; inset: 0;
   width: 100%; height: 100%;
-  object-fit: contain;          /* square cover, dark letterbox */
+  object-fit: contain;          /* full image, letterboxed — never cropped */
   display: none;
 }
 #art.loaded { display: block; }
@@ -28,7 +96,10 @@ html, body {
 #placeholder {
   position: absolute; inset: 0;
   display: flex; align-items: center; justify-content: center;
-  font-size: 64px; color: #333; letter-spacing: 2px;
+}
+#placeholder img {
+  width: 160px; height: 160px;
+  opacity: var(--placeholder-opacity);
 }
 
 /* ── auto-hiding chrome ────────────────────────────────────────── */
@@ -47,34 +118,64 @@ button svg { width: 22px; height: 22px; fill: currentColor; display: block;
   left: calc(env(safe-area-inset-left, 0px) + 10px);
   width: 44px; height: 44px;
   border: 0; border-radius: 10px;
-  background: rgba(20, 20, 20, .55);
-  color: #bbb;
+  background: var(--scrim);
+  color: var(--sub);
   backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
 }
 
+#theme-btn {
+  border: 0; background: var(--input-bg); color: var(--fg);
+  width: 44px; height: 44px; border-radius: 10px;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+#theme-btn svg { width: 20px; height: 20px; }
+
+#camera-btn {
+  position: absolute;
+  top: calc(env(safe-area-inset-top, 0px) + 10px);
+  right: calc(env(safe-area-inset-right, 0px) + 10px);
+  width: 44px; height: 44px;
+  border: 0; border-radius: 10px;
+  background: var(--scrim);
+  color: var(--sub);
+  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+  transition: color .2s ease;
+}
+#camera-btn svg { width: 20px; height: 20px; }
+#camera-btn.saved { color: var(--accent); }   /* brief confirmation flash */
+
+/* Anchored to the bottom of the art area — i.e. right above the bar */
 #title-scrim {
-  position: absolute; left: 0; right: 0;
-  bottom: calc(env(safe-area-inset-bottom, 0px) + 108px);
+  position: absolute; left: 0; right: 0; bottom: 0;
   padding: 8px 16px;
   text-align: center;
+  /* Always over album art, not the page — stays light-on-shadow
+     regardless of the light/dark UI theme so it reads on any cover. */
+  color: #fff;
   text-shadow: 0 1px 6px rgba(0, 0, 0, .9);
   pointer-events: none;
 }
 #track-title { font-size: 17px; font-weight: 600; }
-#track-album { font-size: 13px; color: #bbb; margin-top: 2px; }
+#track-album { font-size: 13px; color: #ddd; margin-top: 2px; }
 
+/* In flow at the bottom of the stage's flex column — not floated over
+   the art, so nothing ever hides behind it. */
 #bar {
-  position: absolute; left: 10px; right: 10px;
-  bottom: calc(env(safe-area-inset-bottom, 0px) + 10px);
+  flex-shrink: 0;
+  margin: 0 10px calc(env(safe-area-inset-bottom, 0px) + 10px);
   padding: 10px 14px;
   border-radius: 14px;
-  background: rgba(20, 20, 20, .55);
+  background: var(--scrim);
   backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
 }
+/* The sheet already covers the safe-area — drop that share of the margin
+   so the bar hugs the sheet's top edge instead of floating above it. */
+body.tracks-open #bar, body.lyrics-open #bar { margin-bottom: 10px; }
 
 #seek-row { display: flex; align-items: center; gap: 10px; }
 #seek-row span {
-  font-size: 12px; color: #bbb;
+  font-size: 12px; color: var(--sub);
   font-variant-numeric: tabular-nums;
   min-width: 38px; text-align: center;
 }
@@ -85,17 +186,21 @@ button svg { width: 22px; height: 22px; fill: currentColor; display: block;
   gap: 18px; margin-top: 2px;
 }
 #buttons button {
-  border: 0; background: none; color: #eee;
+  border: 0; background: none; color: var(--fg);
   width: 48px; height: 44px;
 }
 #play-btn svg { width: 32px; height: 32px; }
 /* panel toggles sit dim like lp's toolbar; accent when their panel is open.
    The heart is always accent-colored (hollow or filled) rather than
-   dim-until-active — a standalone action, not a panel-state indicator. */
-#tracks-btn, #lyrics-btn { color: #999; }
+   dim-until-active — a standalone action, not a panel-state indicator.
+   Tracklist/lyrics toggles sit together on the right (both open the same
+   bottom-sheet slot — see #tracklist/#lyrics — unlike mini mode's split
+   left/right panes), next to the favourite button — see index.html's
+   button order. */
+#tracks-btn, #lyrics-btn { color: var(--dim); }
 #tracks-btn svg, #lyrics-btn svg, #fav-btn svg { width: 19px; height: 19px; }
-body.tracks-open #tracks-btn, body.lyrics-open #lyrics-btn { color: #f2932c; }
-#fav-btn { color: #f2932c; }
+body.tracks-open #tracks-btn, body.lyrics-open #lyrics-btn { color: var(--accent); }
+#fav-btn { color: var(--accent); }
 
 /* ── left drawer: library ──────────────────────────────────────── */
 
@@ -110,23 +215,26 @@ body.drawer-open #scrim { opacity: 1; pointer-events: auto; }
 #drawer {
   position: fixed; top: 0; bottom: 0; left: 0;
   width: min(85vw, 340px);
-  background: #181818;
+  background: var(--panel-bg);
+  color: var(--fg);
   transform: translateX(-100%);
-  transition: transform .25s ease;
+  transition: transform .25s ease, background-color .2s ease;
   display: flex; flex-direction: column;
   padding-top: env(safe-area-inset-top, 0px);
   padding-bottom: env(safe-area-inset-bottom, 0px);
 }
 body.drawer-open #drawer { transform: translateX(0); }
 
+#drawer-top { display: flex; gap: 8px; margin: 12px; }
+
 #filter {
-  margin: 12px;
+  flex: 1;
   padding: 10px 12px;
   border: 0; border-radius: 8px;
-  background: #262626; color: #eee;
+  background: var(--input-bg); color: var(--fg);
   font-size: 15px;
 }
-#filter::placeholder { color: #777; }
+#filter::placeholder { color: var(--dim); }
 
 #album-list { flex: 1; overflow-y: auto; }
 
@@ -134,18 +242,18 @@ body.drawer-open #drawer { transform: translateX(0); }
   padding: 12px 16px;
   min-height: 44px;
   font-size: 13px; font-weight: 600;
-  color: #bbb; letter-spacing: .3px;
+  color: var(--header-color); letter-spacing: .3px;
   display: flex; align-items: center; gap: 10px;
   cursor: pointer;
 }
-.artist-header:active { background: #262626; }
+.artist-header:active { background: var(--row-hover); }
 .artist-header .caret {
-  color: #666; font-size: 10px;
+  color: var(--caret); font-size: 10px;
   transition: transform .15s ease;
   width: 12px; text-align: center;
 }
 .artist-group.open .caret { transform: rotate(90deg); }
-.artist-header .count { margin-left: auto; color: #666; font-size: 12px;
+.artist-header .count { margin-left: auto; color: var(--count-color); font-size: 12px;
   font-variant-numeric: tabular-nums; }
 .artist-group .albums { display: none; }
 .artist-group.open .albums { display: block; }
@@ -155,82 +263,194 @@ body.drawer-open #drawer { transform: translateX(0); }
   font-size: 15px;
   display: flex; align-items: center;
 }
-.album-row:active { background: #262626; }
-.album-row.playing { color: #fff; font-weight: 600; }
+.album-row:active { background: var(--row-hover); }
+.album-row.playing { color: var(--accent); font-weight: 600; }
 
-/* ── tracklist overlay ─────────────────────────────────────────── */
+/* ── tracklist / lyrics: bottom sheets ───────────────────────────
+   Both slide up from the bottom rather than in from the side, so they
+   never sit over the album art — the art (and controls) lift out of the
+   way instead (see body.tracks-open/.lyrics-open rules above). */
 
-#tracklist {
-  position: fixed; top: 0; bottom: 0; right: 0;
-  width: min(85vw, 320px);
-  background: rgba(24, 24, 24, .92);
-  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
-  transform: translateX(100%);
-  transition: transform .25s ease;
+#tracklist, #lyrics {
+  position: fixed; left: 0; right: 0; bottom: 0;
+  height: var(--panel-h);
+  background: var(--panel-bg);
+  color: var(--fg);
+  border-radius: 20px 20px 0 0;
+  box-shadow: 0 -8px 30px rgba(0, 0, 0, .35);
+  transform: translateY(100%);
+  transition: transform .3s ease;
   overflow-y: auto;
-  padding-top: calc(env(safe-area-inset-top, 0px) + 8px);
-  padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 130px);
+  padding: 10px 18px calc(env(safe-area-inset-bottom, 0px) + 16px);
 }
-body.tracks-open #tracklist { transform: translateX(0); }
+#tracklist::before, #lyrics::before {
+  content: '';
+  display: block;
+  width: 36px; height: 4px;
+  margin: 0 auto 10px;
+  border-radius: 2px;
+  background: var(--dim);
+  opacity: .4;
+}
+body.tracks-open #tracklist { transform: translateY(0); }
+body.lyrics-open #lyrics { transform: translateY(0); }
 
 .track-row {
-  padding: 12px 16px;
+  padding: 12px 6px;
   min-height: 44px;
   font-size: 15px;
   display: flex; gap: 10px; align-items: baseline;
 }
-.track-row:active { background: #262626; }
-.track-row.playing { color: #fff; font-weight: 600; }
-.track-row .n { color: #777; font-size: 13px; min-width: 22px; }
-.track-row .len { margin-left: auto; color: #777; font-size: 13px; }
-
-/* ── lyrics overlay (same slot as the tracklist) ───────────────── */
-
-#lyrics {
-  position: fixed; top: 0; bottom: 0; right: 0;
-  width: min(85vw, 320px);
-  background: rgba(24, 24, 24, .92);
-  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
-  transform: translateX(100%);
-  transition: transform .25s ease;
-  overflow-y: auto;
-  padding: calc(env(safe-area-inset-top, 0px) + 16px) 18px
-           calc(env(safe-area-inset-bottom, 0px) + 130px);
-}
-body.lyrics-open #lyrics { transform: translateX(0); }
+.track-row:active { background: var(--row-hover); }
+.track-row.playing { color: var(--accent); font-weight: 600; }
+.track-row .n { color: var(--dim); font-size: 13px; min-width: 22px; }
+.track-row .len { margin-left: auto; color: var(--dim); font-size: 13px; }
 
 .lyric-line {
   font-size: 15px; line-height: 1.5;
-  color: #999; padding: 4px 0;
+  color: var(--dim); padding: 4px 6px;
   transition: color .2s ease;
 }
-.lyric-line.active { color: #f2932c; font-weight: 600; }
+.lyric-line.active { color: var(--accent); font-weight: 600; }
 .lyric-line:empty { min-height: 12px; }
-#lyrics .none { color: #777; text-align: center; margin-top: 40vh; }
+#lyrics .none { color: var(--dim); text-align: center; margin-top: 25%; }
 
 /* ── token prompt ──────────────────────────────────────────────── */
 
 #token-screen {
   position: fixed; inset: 0;
-  background: #121212;
+  background: var(--bg);
   display: flex; align-items: center; justify-content: center;
   padding: 24px; text-align: center;
   z-index: 10;
 }
 #token-screen[hidden] { display: none; }
-#token-screen p { color: #bbb; margin-bottom: 16px; }
+#token-screen p { color: var(--sub); margin-bottom: 16px; }
 #token-input {
   padding: 12px; font-size: 18px; text-align: center;
   border: 0; border-radius: 8px;
-  background: #262626; color: #eee;
+  background: var(--input-bg); color: var(--fg);
   width: 220px; display: block; margin: 0 auto 12px;
 }
 #token-go {
   padding: 12px 28px; font-size: 16px;
   border: 0; border-radius: 8px;
-  background: #eee; color: #121212;
+  background: var(--fg); color: var(--bg);
 }
-#token-err { color: #e57373; margin-top: 12px; min-height: 1.4em; }
+#token-err { color: var(--error); margin-top: 12px; min-height: 1.4em; }
+
+/* ── camera crop screen ──────────────────────────────────────────
+   The whole photo, fit to screen (the frame is sized by JS to hug the
+   displayed image exactly), with an adjustable crop box over it: drag
+   inside to move, grab an edge/corner handle to resize. The area outside
+   the box is dimmed by the box's huge spread shadow, clipped by the
+   frame's overflow:hidden. */
+
+#crop-screen {
+  position: fixed; inset: 0;
+  background: #000;
+  z-index: 20;
+  display: flex; flex-direction: column; align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 16px)
+           env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 16px);
+}
+#crop-screen[hidden] { display: none; }
+
+#crop-cancel {
+  position: absolute;
+  top: calc(env(safe-area-inset-top, 0px) + 10px);
+  right: calc(env(safe-area-inset-right, 0px) + 10px);
+  width: 40px; height: 40px;
+  border: 0; border-radius: 20px;
+  background: rgba(255, 255, 255, .12);
+  color: #fff;
+  font-size: 22px; line-height: 1;
+  z-index: 1;   /* above the crop box's screen-wide dim shadow */
+}
+
+#crop-frame {
+  position: relative;
+  /* overflow stays visible: the handles hang OUTSIDE the box edges, and
+     the default box already touches the frame — clipping would eat their
+     hit areas exactly when the box is against an edge. The dim shadow
+     needs no clipping either: the screen behind the photo is pure black,
+     so dimming it is invisible. */
+  touch-action: none;   /* we own the drag — stop the page scrolling too */
+  /* width/height set inline by JS to the fitted photo's display size */
+}
+#crop-img {
+  position: absolute; inset: 0;
+  width: 100%; height: 100%;
+  display: block;
+  pointer-events: none;
+}
+
+#crop-box {
+  position: absolute;   /* left/top/width/height set inline by JS */
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, .55);   /* dims everything outside */
+  outline: 1px solid rgba(255, 255, 255, .9);
+  cursor: move;
+  /* rule-of-thirds guide */
+  background-image:
+    linear-gradient(rgba(255, 255, 255, .25) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, .25) 1px, transparent 1px);
+  background-size: 33.34% 33.34%;
+  background-position: -1px -1px;   /* hide the 0% lines under the outline */
+}
+
+/* Handles: ~32px touch targets centered on their edge/corner, visuals
+   drawn much smaller. Corner brackets + edge ticks, white with a hairline
+   dark rim so they read on any photo. */
+.crop-handle { position: absolute; width: 32px; height: 32px; }
+.crop-handle::after {
+  content: '';
+  position: absolute; inset: 0;
+  border: 0 solid #fff;
+  filter: drop-shadow(0 0 1px rgba(0, 0, 0, .8));
+}
+.crop-handle.corner[data-handle="nw"] { top: -12px; left: -12px; }
+.crop-handle.corner[data-handle="ne"] { top: -12px; right: -12px; }
+.crop-handle.corner[data-handle="sw"] { bottom: -12px; left: -12px; }
+.crop-handle.corner[data-handle="se"] { bottom: -12px; right: -12px; }
+.corner[data-handle="nw"]::after { inset: 9px auto auto 9px; width: 16px; height: 16px;
+  border-top-width: 3px; border-left-width: 3px; }
+.corner[data-handle="ne"]::after { inset: 9px 9px auto auto; width: 16px; height: 16px;
+  border-top-width: 3px; border-right-width: 3px; }
+.corner[data-handle="sw"]::after { inset: auto auto 9px 9px; width: 16px; height: 16px;
+  border-bottom-width: 3px; border-left-width: 3px; }
+.corner[data-handle="se"]::after { inset: auto 9px 9px auto; width: 16px; height: 16px;
+  border-bottom-width: 3px; border-right-width: 3px; }
+.crop-handle.edge[data-handle="n"] { top: -16px; left: 50%; margin-left: -16px; }
+.crop-handle.edge[data-handle="s"] { bottom: -16px; left: 50%; margin-left: -16px; }
+.crop-handle.edge[data-handle="w"] { left: -16px; top: 50%; margin-top: -16px; }
+.crop-handle.edge[data-handle="e"] { right: -16px; top: 50%; margin-top: -16px; }
+.edge[data-handle="n"]::after, .edge[data-handle="s"]::after {
+  inset: 14px 6px; border-top-width: 3px; height: 0; }
+.edge[data-handle="w"]::after, .edge[data-handle="e"]::after {
+  inset: 6px 14px; border-left-width: 3px; width: 0; }
+.edge[data-handle="n"] { cursor: ns-resize; }
+.edge[data-handle="s"] { cursor: ns-resize; }
+.edge[data-handle="w"] { cursor: ew-resize; }
+.edge[data-handle="e"] { cursor: ew-resize; }
+.corner[data-handle="nw"], .corner[data-handle="se"] { cursor: nwse-resize; }
+.corner[data-handle="ne"], .corner[data-handle="sw"] { cursor: nesw-resize; }
+
+/* Always dark, light-on-black text — like #title-scrim, this screen's
+   backdrop is fixed black (a viewfinder, not the app's own surface), so it
+   must not use the theme-reactive --sub (unreadable in the light skin). */
+#crop-hint { color: rgba(255, 255, 255, .7); font-size: 13px; text-align: center; }
+
+#crop-actions { display: flex; gap: 12px; width: min(88vw, 380px); }
+#crop-actions button {
+  flex: 1;
+  padding: 13px;
+  border: 0; border-radius: 10px;
+  font-size: 15px; font-weight: 600;
+}
+#crop-retake { background: var(--input-bg); color: var(--fg); }
+#crop-use { background: var(--accent); color: #1a1200; }
 
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; scroll-behavior: auto !important; }

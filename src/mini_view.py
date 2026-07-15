@@ -51,6 +51,7 @@ class MiniView(QWidget):
         self._resizing_self = False  # guard for programmatic resizes
         self.lyrics_on = False
         self.tracklist_on = False
+        self._left_pane_w = 0  # tracklist pane's current width, for _apply_side_layout
 
         layout = QHBoxLayout()
         layout.setContentsMargins(1, 1, 1, 1)  # keep the hairline border visible
@@ -73,7 +74,7 @@ class MiniView(QWidget):
         self.tracklist_wrap.hide()
         layout.addWidget(self.tracklist_wrap, stretch=1)
 
-        self.art = AlbumArtLabel(square=True)
+        self.art = AlbumArtLabel()
         self.art.setMinimumSize(120, 120)
         self.art.setCursor(Qt.ArrowCursor)
         self.art.installEventFilter(self)  # drag-to-move / double-click exit
@@ -195,18 +196,31 @@ class MiniView(QWidget):
         """Resize the window for the tracklist (left) / lyrics (right)
         panes' current visibility — the window widens on whichever side(s)
         are open rather than stealing width from the square art. Shared by
-        both since either, neither, or both can be open at once."""
+        both since either, neither, or both can be open at once.
+
+        Plain resize() leaves the window's top-left corner fixed on screen,
+        which is fine for the lyrics pane (added on the right, so the art
+        never moves) but not the tracklist pane: inserting it on the left
+        pushes the art's absolute screen position rightward, dragging it
+        out from under the user's cursor. setGeometry with a compensating
+        x-shift keeps the art anchored regardless of which side opens.
+        """
         side = self.height()
         self._resizing_self = True
         if self._any_side_visible():
             self.art.setFixedWidth(side - 2)
             pane_w = max(180, side // 2)
-            extra = (pane_w if self.tracklist_on else 0) + (pane_w if self.lyrics_on else 0)
-            self.resize(side + extra, side)
+            left_w = pane_w if self.tracklist_on else 0
+            extra = left_w + (pane_w if self.lyrics_on else 0)
+            width = side + extra
         else:
             self.art.setMinimumWidth(120)
             self.art.setMaximumWidth(16777215)
-            self.resize(side, side)
+            left_w = 0
+            width = side
+        dx = left_w - self._left_pane_w
+        self._left_pane_w = left_w
+        self.setGeometry(self.x() - dx, self.y(), width, side)
         self._resizing_self = False
         self._position_controls()
 

@@ -189,7 +189,7 @@ class AlbumView(QWidget):
                 self.player.album = self.album
                 self.player.load_album_art(self.player.album)
             if self.album.title and self.album.artist:
-                self.album_changed.emit(f"{self.album.title} - {self.album.artist}")
+                self.album_changed.emit(f"{self.album.artist}    {self.album.title}")
         else:
             self.track_list_widget.addItem("No music files found.")
 

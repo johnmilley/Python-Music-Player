@@ -107,15 +107,41 @@ def ensure_contrast(accent_hex, bg_hex, min_ratio=3.0):
     if _contrast(accent, bg) >= min_ratio:
         return accent_hex
 
-    # Shift value (brightness) up or down depending on background luminance
-    h, s, v, _ = accent.getHsv()
+    h, s, l, _ = accent.getHsl()
     bg_light = _luminance(bg) > 0.5
+
+    # Warm/yellow-ish hues (orange, gold) carry a disproportionate share of
+    # WCAG luminance in their green channel for how dark they actually look
+    # — matching a numeric contrast ratio by crushing lightness alone (the
+    # old approach: hold HSV saturation at max, walk value down) pushes
+    # them straight into "brown", since a saturated, near-black
+    # yellow-orange IS what brown looks like. Cooler hues (blue, rose,
+    # lavender) just read as a deeper version of themselves at low
+    # lightness, which is why this only ever showed up as an orange/gold
+    # bug. A small, FIXED (not scaling with how much correction is needed)
+    # nudge toward red trades a little hue for a lot of luminance headroom
+    # — red carries much less green — so the lightness ramp that follows
+    # needs to go much less far, keeping the result closer to its original
+    # brightness. Fixed rather than proportional so presets that started
+    # further apart in hue (e.g. Gold vs Orange) stay just as distinct
+    # afterward instead of converging on the same corrected color.
+    if bg_light and 15 <= h <= 70:
+        h = max(12, h - 15)
+        accent = QColor.fromHsl(round(h), s, l)
+        if _contrast(accent, bg) >= min_ratio:
+            return accent.name()
+
+    # Lightness ramp (not HSV value) for whatever contrast gap remains,
+    # tapering saturation down alongside it so the result reads as a
+    # deeper/lighter shade of the same hue rather than washing out.
     for step in range(1, 40):
         if bg_light:
-            new_v = max(0, v - step * 5)
+            new_l = max(0, l - step * 5)
         else:
-            new_v = min(255, v + step * 5)
-        candidate = QColor.fromHsv(h, s, new_v)
+            new_l = min(255, l + step * 5)
+        new_s = round(s * (new_l / l) ** 0.5) if l > 0 else s
+        new_s = max(0, min(255, new_s))
+        candidate = QColor.fromHsl(round(h), new_s, new_l)
         if _contrast(candidate, bg) >= min_ratio:
             return candidate.name()
 

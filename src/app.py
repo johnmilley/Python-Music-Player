@@ -206,9 +206,14 @@ class App(QMainWindow):
         self.player.art_clicked.connect(self._on_art_clicked)
         self.player.listen_ended.connect(self._on_listen_ended)
 
-        # Hover heart over the player-column art (normal mode only) — same
-        # handler as the shortcut so state always agrees
-        self.player.heart_overlay.heart_clicked.connect(self._toggle_current_favorite)
+        # Main-mode panel — same signals max/mini mode wire up, since it's
+        # the same ControlPanel class. Prev/play/next continue to route
+        # through the legacy pressed-based mode-swap wiring (see
+        # _set_music_controls/_set_podcast_controls/_set_radio_controls),
+        # so those aren't connected here.
+        self.player.panel.heart_clicked.connect(self._toggle_current_favorite)
+        self.player.panel.shuffle_clicked.connect(self._toggle_shuffle)
+        self.player.panel.repeat_clicked.connect(self._toggle_repeat)
 
         # Frameless custom window (own titlebar below), matching the
         # non-system window style of the sibling 'text' app
@@ -300,9 +305,11 @@ class App(QMainWindow):
         # Settings menus (Theme / Preferences / Help) — reached via the gear button
         # One font (Inter) and one size for the whole app
         self.font_size = theme.DEFAULT_SIZE
-        # Mini/max overlay panel + player-column art hover row scrim
-        # opacity — 0 (glassy/see-through) .. 100 (solid), floored in
-        # overlay_controls.scrim_alpha so text never gets unreadable
+        # Mini/max mode's floating ControlPanel scrim opacity — 0
+        # (glassy/see-through) .. 100 (solid), floored in
+        # overlay_controls.scrim_alpha so text never gets unreadable. The
+        # normal-mode player column's panel has no scrim, so this doesn't
+        # apply there.
         self.overlay_opacity = overlay_controls.DEFAULT_OPACITY
 
         self.prefs_menu = QMenu('Preferences', self)
@@ -312,9 +319,6 @@ class App(QMainWindow):
         self.opacity_action = QAction('Overlay Opacity...', self)
         self.opacity_action.triggered.connect(self._open_overlay_opacity)
         self.prefs_menu.addAction(self.opacity_action)
-        self.window_opacity_action = QAction('Window Opacity...', self)
-        self.window_opacity_action.triggered.connect(self._open_window_opacity)
-        self.prefs_menu.addAction(self.window_opacity_action)
         self.change_art_action = QAction('Change Cover Art...', self)
         self.change_art_action.triggered.connect(self._change_album_art)
         self.prefs_menu.addAction(self.change_art_action)
@@ -457,12 +461,6 @@ class App(QMainWindow):
         self.accent_color = ensure_contrast(self.accent_color,
                                             self.current_theme['bg'])
         self.apply_theme(self.current_theme)
-        # Whole-window opacity (distinct from the overlay scrim opacity):
-        # a translucent player, applied to the mini window too
-        saved_win_opacity = self.settings.value('window_opacity', type=int)
-        self.window_opacity = 100
-        if saved_win_opacity is not None:
-            self.set_window_opacity(saved_win_opacity)
 
         self.album_view.album_changed.connect(self._on_album_changed)
 
@@ -531,7 +529,7 @@ class App(QMainWindow):
         self.setStyleSheet(theme.build_qss(t, self.font_size))
         self.player.update_button_icons(t['fg'], hover_color=accent)
         self.player.set_control_scale(self.font_size)
-        self.player.heart_overlay.set_theme(t)
+        self.player.panel.set_theme(t, self.font_size)
         self.toolbar_widget.update_height(self.font_size)
         self._refresh_toolbar_icons()
         self.main_splitter.set_colors(t['hairline'], t['fg_dim'], accent)
@@ -621,19 +619,11 @@ class App(QMainWindow):
         t = dict(self.effective_theme)
         t['overlay_opacity'] = self.overlay_opacity
         self.effective_theme = t
+        self.player.panel.set_theme(t, self.font_size)
         if self._max_view:
             self._max_view.panel.set_theme(t, self.font_size)
         if self._mini_view:
             self._mini_view.panel.set_theme(t, self.font_size)
-
-    def set_window_opacity(self, value):
-        """Whole-window translucency — the entire player, not just the
-        overlay scrims. Floored at 30 so the window can't vanish. The mini
-        window follows the same setting."""
-        self.window_opacity = max(30, min(100, value))
-        self.setWindowOpacity(self.window_opacity / 100.0)
-        if self._mini_view:
-            self._mini_view.setWindowOpacity(self.window_opacity / 100.0)
 
     def _step_font_size(self, delta):
         sizes = theme.SIZES
@@ -728,10 +718,9 @@ class App(QMainWindow):
             self.set_font_size(original)
 
     def _open_overlay_opacity(self):
-        """Slider for the mini/max hover panel + player-column art hover
-        row's scrim darkness — glassy (see more art through it) to solid
-        (safer contrast for text). Changes apply immediately; Cancel puts
-        the original value back."""
+        """Slider for the mini/max hover panel's scrim darkness — glassy
+        (see more art through it) to solid (safer contrast for text).
+        Changes apply immediately; Cancel puts the original value back."""
         dlg = QDialog(self)
         dlg.setWindowTitle('Overlay Opacity')
         dlg.setMinimumWidth(320)
@@ -812,68 +801,6 @@ class App(QMainWindow):
 
         if dlg.exec_() != QDialog.Accepted and self.overlay_opacity != original:
             self.set_overlay_opacity(original)
-
-    def _open_window_opacity(self):
-        """Slider for whole-window translucency. The window itself is the
-        live preview; Cancel puts the original value back."""
-        dlg = QDialog(self)
-        dlg.setWindowTitle('Window Opacity')
-        dlg.setMinimumWidth(320)
-        dlg.setStyleSheet(theme.dialog_qss(self.effective_theme))
-        t = self.effective_theme
-        original = self.window_opacity
-        layout = QVBoxLayout(dlg)
-        layout.setSpacing(10)
-
-        value_label = QLabel()
-        value_label.setAlignment(Qt.AlignCenter)
-        value_label.setStyleSheet(f'color: {t["fg_dim"]};')
-
-        row = QHBoxLayout()
-        sheer = QLabel('Sheer')
-        sheer.setStyleSheet(f'color: {t["fg_dim"]};')
-        solid = QLabel('Solid')
-        solid.setStyleSheet(f'color: {t["fg_dim"]};')
-        slider = QSlider(Qt.Horizontal)
-        slider.setRange(30, 100)
-        slider.setValue(self.window_opacity)
-        slider.setPageStep(5)
-        slider.setStyleSheet(f"""
-            QSlider::groove:horizontal {{
-                height: 4px; background: {t['hover']}; border-radius: 2px;
-            }}
-            QSlider::sub-page:horizontal {{
-                background: {t['accent']}; border-radius: 2px;
-            }}
-            QSlider::handle:horizontal {{
-                width: 16px; height: 16px; margin: -6px 0;
-                border-radius: 8px; background: {t['accent']};
-            }}
-        """)
-        row.addWidget(sheer)
-        row.addWidget(slider, stretch=1)
-        row.addWidget(solid)
-
-        def _apply(value):
-            value_label.setText(f'{value}%')
-            if value != self.window_opacity:
-                self.set_window_opacity(value)
-        slider.valueChanged.connect(_apply)
-        _apply(slider.value())
-
-        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        reset_btn = buttons.addButton('Reset', QDialogButtonBox.ResetRole)
-        reset_btn.clicked.connect(lambda: slider.setValue(100))
-        buttons.accepted.connect(dlg.accept)
-        buttons.rejected.connect(dlg.reject)
-
-        layout.addLayout(row)
-        layout.addWidget(value_label)
-        layout.addSpacing(4)
-        layout.addWidget(buttons)
-
-        if dlg.exec_() != QDialog.Accepted and self.window_opacity != original:
-            self.set_window_opacity(original)
 
     def pick_custom_accent(self):
         """Colour dialog with live preview — the accent follows the dialog's
@@ -1183,6 +1110,10 @@ class App(QMainWindow):
         # which sets player.shuffle)
         if self.settings.value('shuffle') == 'true':
             self.favorites_view.shuffle_btn.setChecked(True)
+        saved_repeat = self.settings.value('repeat', 'off')
+        if saved_repeat in ('off', 'all', 'one'):
+            self.player.repeat_mode = saved_repeat
+            self._sync_repeat_state()
         saved_mode = self.settings.value('app_mode', 'music')
         if saved_mode == 'podcast':
             self._mode = None
@@ -1376,6 +1307,13 @@ class App(QMainWindow):
             return True
         if key == Qt.Key_M and mods & Qt.ShiftModifier:
             self.toggle_maxplayer()
+            return True
+        if key == Qt.Key_M and not mods & Qt.ShiftModifier:
+            # Plain 'm' -> mini mode. Normally reaches App via the regular
+            # QShortcut, but a borrowed widget with focus (e.g. the
+            # tracklist's VimListWidget, which swallows printable keys)
+            # would otherwise eat it before that shortcut ever fires.
+            self.toggle_minimode()
             return True
         if key == Qt.Key_D and mods & Qt.ShiftModifier:
             self.toggle_theme()
@@ -1782,6 +1720,12 @@ class App(QMainWindow):
     def enter_maxplayer(self):
         if self.is_maxplayer:
             return
+        if self.is_minimode:
+            # Mirrors enter_minimode's symmetric guard below — mini mode is
+            # a separate top-level window (self is hidden while it's up),
+            # so it has to be torn down properly (borrowed widgets
+            # returned, geometry saved) before max mode can take over.
+            self.exit_minimode()
         self.is_maxplayer = True
 
         # The normal page is untouched behind the stack — only the window
@@ -1801,6 +1745,8 @@ class App(QMainWindow):
             self._max_view.panel.tracklist_clicked.connect(self._toggle_max_tracklist)
             self._max_view.panel.lyrics_clicked.connect(self._toggle_max_lyrics)
             self._max_view.panel.heart_clicked.connect(self._toggle_current_favorite)
+            self._max_view.panel.shuffle_clicked.connect(self._toggle_shuffle)
+            self._max_view.panel.repeat_clicked.connect(self._toggle_repeat)
             self.root_stack.addWidget(self._max_view)
 
         # Seed current state; player signals keep it in sync from here on
@@ -1808,6 +1754,8 @@ class App(QMainWindow):
         self._max_view.set_title(str(track.title) if track and track.title else '')
         self._max_view.set_playing(self.player._is_playing)
         self._sync_favorite_heart(track, self._playing_mode)
+        self._sync_shuffle_state(self.player.shuffle)
+        self._sync_repeat_state()
         art_px = self.player.album_widget.pixmap()
         if art_px:
             self._max_view.art.set_source(art_px)
@@ -1910,6 +1858,8 @@ class App(QMainWindow):
             mv.panel.tracklist_clicked.connect(self._toggle_mini_tracklist)
             mv.panel.lyrics_clicked.connect(self._toggle_mini_lyrics)
             mv.panel.heart_clicked.connect(self._toggle_current_favorite)
+            mv.panel.shuffle_clicked.connect(self._toggle_shuffle)
+            mv.panel.repeat_clicked.connect(self._toggle_repeat)
             # Mini mode reuses the app's shortcut behaviors directly
             mv.set_key_handlers({
                 Qt.Key_P: self._shortcut_play_pause,
@@ -1930,6 +1880,7 @@ class App(QMainWindow):
             mv.set_shift_key_handlers({
                 Qt.Key_H: self._toggle_current_favorite,
                 Qt.Key_D: self.toggle_theme,
+                Qt.Key_M: self.toggle_maxplayer,
             })
             mv.set_ctrl_key_handlers({
                 Qt.Key_Equal: lambda: self._step_font_size(1),
@@ -1938,7 +1889,6 @@ class App(QMainWindow):
             })
 
         mv = self._mini_view
-        mv.setWindowOpacity(self.window_opacity / 100.0)
         mv.set_theme(self.effective_theme, self.font_size)
         # Seed current state; player signals keep it in sync from here on
         mv._on_track_changed(self.player.current_track)
@@ -1949,6 +1899,8 @@ class App(QMainWindow):
             mv.art.clear()
         mv.set_playing(self.player._is_playing)
         self._sync_favorite_heart(self.player.current_track, self._playing_mode)
+        self._sync_shuffle_state(self.player.shuffle)
+        self._sync_repeat_state()
 
         geometry = self.settings.value('mini/geometry')
         if geometry:
@@ -2176,8 +2128,8 @@ class App(QMainWindow):
         favoritable = track_mode == 'music'
         is_fav = bool(favoritable and track and track.path
                       and self.fav_store.is_favorite(track.path))
-        self.player.heart_overlay.set_heart_visible(favoritable)
-        self.player.heart_overlay.set_favorited(is_fav)
+        self.player.panel.set_heart_visible(favoritable)
+        self.player.panel.set_favorited(is_fav)
         if self._max_view:
             self._max_view.set_heart_visible(favoritable)
             self._max_view.set_favorited(is_fav)
@@ -2206,10 +2158,38 @@ class App(QMainWindow):
     def _on_shuffle_toggled(self, on):
         self.player.shuffle = on
         self.settings.setValue('shuffle', 'true' if on else 'false')
+        self._sync_shuffle_state(on)
+
+    def _sync_shuffle_state(self, on):
+        """Keep every panel's shuffle button (player column, max/mini) in
+        sync — FavoritesView.shuffle_btn stays the single source of truth,
+        this just mirrors it visually wherever else it's shown."""
+        self.player.panel.set_shuffle_state(on)
+        if self._max_view:
+            self._max_view.panel.set_shuffle_state(on)
+        if self._mini_view:
+            self._mini_view.panel.set_shuffle_state(on)
 
     def _toggle_shuffle(self):
         # The FavoritesView button is the single source of shuffle state
         self.favorites_view.shuffle_btn.toggle()
+
+    def _toggle_repeat(self):
+        """Cycle repeat off -> all -> one -> off, from any panel's repeat
+        button (player column, max/mini)."""
+        order = ('off', 'all', 'one')
+        self.player.repeat_mode = order[(order.index(self.player.repeat_mode) + 1) % 3]
+        self.settings.setValue('repeat', self.player.repeat_mode)
+        self._sync_repeat_state()
+
+    def _sync_repeat_state(self):
+        """Keep every panel's repeat button in sync with player.repeat_mode."""
+        mode = self.player.repeat_mode
+        self.player.panel.set_repeat_state(mode)
+        if self._max_view:
+            self._max_view.panel.set_repeat_state(mode)
+        if self._mini_view:
+            self._mini_view.panel.set_repeat_state(mode)
 
     def _restore_podcast_state(self):
         """Restore the last-played podcast feed and episode on startup."""
@@ -2368,7 +2348,7 @@ class App(QMainWindow):
         self._apply_controls_for_mode('radio')
         self._current_radio_station = station
         self._radio_now_playing = ''
-        self.player.track_info.setText(station.name)
+        self.player.panel.set_title(station.name)
         self.player._set_play_icon(True)
         self._load_station_art(station.name)
 
@@ -2410,7 +2390,7 @@ class App(QMainWindow):
         self._radio_now_playing = title
         if self._current_radio_station:
             display = f'{self._current_radio_station.name}  \u2022  {title}'
-            self.player.track_info.setText(display)
+            self.player.panel.set_title(display)
             # Show now-playing in the lyrics panel (set HTML directly)
             import html as html_mod
             t = self.effective_theme
@@ -2464,7 +2444,7 @@ class App(QMainWindow):
         self._current_radio_station = RadioStation(name, url)
         self._playing_mode = 'radio'
         self._apply_controls_for_mode('radio')
-        self.player.track_info.setText(name)
+        self.player.panel.set_title(name)
         self.player._set_play_icon(False)
         self._load_station_art(name)
 
@@ -2711,7 +2691,7 @@ class App(QMainWindow):
         self.player.track_changed.emit(ep)
 
         # Update player UI
-        self.player.track_info.setText(ep.title)
+        self.player.panel.set_title(ep.title)
         self.player._set_play_icon(True)
         self.player._update_time_label(0)
 
@@ -2747,7 +2727,6 @@ class App(QMainWindow):
         self.settings.setValue('dark_mode', 'true' if self.current_theme is theme.DARK else 'false')
         self.settings.setValue('font_size', self.font_size)
         self.settings.setValue('overlay_opacity', self.overlay_opacity)
-        self.settings.setValue('window_opacity', self.window_opacity)
         self.settings.setValue('accent_color', self.accent_color)
         self.settings.setValue('album_accents', self._album_accents)
         self.settings.setValue('app_mode', self._playing_mode or self._mode)
