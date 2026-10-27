@@ -98,59 +98,134 @@ def load(path=None):
 # ── aggregation (pure) ─────────────────────────────────────────────
 
 def _top(counter, n):
-    return sorted(counter.values(),
-                  key=lambda v: (-v['plays'], -v.get('minutes', 0)))[:n]
+    ranked = sorted(counter.values(),
+                    key=lambda v: (-v['plays'], -v.get('minutes', 0)))
+    return ranked if n is None else ranked[:n]
 
 
-def aggregate(records, year=None):
+def album_key(r):
+    """Stable drill-down key: the library album id, or (for plays logged
+    without one — phone/Subsonic) the artist + album name."""
+    return r.get('album_id') or ('name:%s/%s' % (r.get('artist') or 'Unknown',
+                                                 r.get('album') or ''))
+
+
+def matches(r, period=None, artist=None, album=None, title=None):
+    """Filter predicate shared by the stats and history APIs. `period` is a
+    prefix of the ISO timestamp: '2026', '2026-03' or '2026-03-14'."""
+    if period and not r['ts'].startswith(period):
+        return False
+    if artist is not None and (r.get('artist') or 'Unknown') != artist:
+        return False
+    if album is not None and album_key(r) != album:
+        return False
+    if title is not None and (r.get('title') or '') != title:
+        return False
+    return True
+
+
+def history(records, offset=0, limit=50, **filters):
+    """Newest-first slice of individual plays matching `filters`."""
+    hits = [r for r in records if matches(r, **filters)]
+    hits.sort(key=lambda r: r['ts'], reverse=True)
+    return {'total': len(hits),
+            'plays': [dict(r, album_key=album_key(r))
+                      for r in hits[offset:offset + limit]]}
+
+
+def _round(d, *keys):
+    return dict(d, **{k: round(d[k], 1) for k in keys})
+
+
+def aggregate(records, year=None, *, period=None, artist=None, album=None,
+              title=None, limit=None):
     """The /stats payload. 'minutes' is summed *listened* time — what was
-    actually heard, not track lengths."""
+    actually heard, not track lengths. Filters narrow the records (the
+    drill-down views); `limit` overrides the default top-N list sizes."""
     available_years = sorted({r['ts'][:4] for r in records}, reverse=True)
     available_years = [int(y) for y in available_years if y.isdigit()]
-    if year is not None:
-        records = [r for r in records if r['ts'][:4] == str(year)]
+    if year is not None and not period:
+        period = str(year)
+
+    # First-ever play per artist, over the *unfiltered* log, so "new
+    # artists this year" means new to you, not new to the filtered slice.
+    first_seen = {}
+    for r in records:
+        a = r.get('artist') or 'Unknown'
+        if a not in first_seen or r['ts'] < first_seen[a]:
+            first_seen[a] = r['ts']
+
+    records = [r for r in records
+               if matches(r, period, artist, album, title)]
 
     artists = {}
     albums = {}
     tracks = {}
     minutes_by_month = [0.0] * 12
+    minutes_by_year = defaultdict(float)
     plays_by_hour = [0] * 24
+    plays_by_weekday = [0] * 7          # Monday first
     day_minutes = defaultdict(float)
+    by_source = defaultdict(int)
+    completion = []
+
+    def touch(d, ts):
+        if not d.get('first') or ts < d['first']:
+            d['first'] = ts
+        if not d.get('last') or ts > d['last']:
+            d['last'] = ts
 
     for r in records:
         mins = (r.get('listened') or 0) / 60.0
-        artist = r.get('artist') or 'Unknown'
-        album_key = r.get('album_id') or (artist, r.get('album') or '')
-        track_key = (artist, r.get('title') or '')
+        artist_name = r.get('artist') or 'Unknown'
+        akey = album_key(r)
+        track_key = (artist_name, r.get('title') or '')
 
-        a = artists.setdefault(artist, {
-            'name': artist, 'plays': 0, 'minutes': 0.0, 'album_ids': []})
+        a = artists.setdefault(artist_name, {
+            'name': artist_name, 'plays': 0, 'minutes': 0.0, 'album_ids': [],
+            'albums': set(), 'tracks': set()})
         a['plays'] += 1
         a['minutes'] += mins
+        a['albums'].add(akey)
+        a['tracks'].add(track_key)
         if r.get('album_id') and r['album_id'] not in a['album_ids']:
             a['album_ids'].append(r['album_id'])
+        touch(a, r['ts'])
 
-        al = albums.setdefault(album_key, {
-            'id': r.get('album_id'), 'title': r.get('album') or '',
-            'artist': artist, 'plays': 0, 'minutes': 0.0})
+        al = albums.setdefault(akey, {
+            'key': akey, 'id': r.get('album_id'),
+            'title': r.get('album') or '', 'artist': artist_name,
+            'plays': 0, 'minutes': 0.0, 'tracks': set()})
         al['plays'] += 1
         al['minutes'] += mins
+        al['tracks'].add(track_key)
+        touch(al, r['ts'])
 
         t = tracks.setdefault(track_key, {
-            'title': r.get('title') or '', 'artist': artist, 'plays': 0,
-            'album_id': r.get('album_id')})
+            'title': r.get('title') or '', 'artist': artist_name, 'plays': 0,
+            'minutes': 0.0, 'album_id': r.get('album_id'), 'album_key': akey,
+            'album': r.get('album') or '', 'n': r.get('n') or 0})
         t['plays'] += 1
+        t['minutes'] += mins
+        touch(t, r['ts'])
+
+        by_source[r.get('src') or 'other'] += 1     # pre-src logs, Subsonic tee
+        length = r.get('length') or 0
+        if length > 0:
+            completion.append(min(1.0, (r.get('listened') or 0) / length))
 
         try:
             ts = datetime.fromisoformat(r['ts'])
             minutes_by_month[ts.month - 1] += mins
+            minutes_by_year[ts.year] += mins
             plays_by_hour[ts.hour] += 1
+            plays_by_weekday[ts.weekday()] += 1
             day_minutes[ts.date()] += mins
         except ValueError:
             pass
 
-    top_artists = _top(artists, 8)
-    top_tracks = _top(tracks, 10)
+    top_artists = _top(artists, limit or 8)
+    top_tracks = _top(tracks, limit or 10)
 
     peak_day = None
     if day_minutes:
@@ -172,25 +247,55 @@ def aggregate(records, year=None):
         streak = {'days': best_len, 'start': best_start.isoformat(),
                   'end': (best_start + timedelta(days=best_len - 1)).isoformat()}
 
-    top_artist_names = {a['name'] for a in top_artists}
-    deep_cut = next((t for t in _top(tracks, len(tracks))
+    top_artist_names = {a['name'] for a in top_artists[:8]}
+    deep_cut = next((t for t in _top(tracks, None)
                      if t['artist'] not in top_artist_names), None)
+
+    stamps = [r['ts'] for r in records]
+    new_artists = sorted((a for a in artists.values()
+                          if first_seen.get(a['name']) == a['first']),
+                         key=lambda a: a['first'])
+    total_minutes = sum((r.get('listened') or 0) for r in records) / 60.0
+
+    def artist_out(a):
+        return dict(_round(a, 'minutes'), albums=len(a['albums']),
+                    tracks=len(a['tracks']))
+
+    def album_out(al):
+        return dict(_round(al, 'minutes'), tracks=len(al['tracks']))
 
     return {
         'year': year,
+        'period': period,
+        'filters': {'artist': artist, 'album': album, 'title': title},
         'available_years': available_years,
         'totals': {
             'plays': len(records),
-            'minutes': round(sum((r.get('listened') or 0) for r in records) / 60.0, 1),
+            'minutes': round(total_minutes, 1),
             'artists': len(artists),
             'albums': len(albums),
             'tracks': len(tracks),
+            'active_days': len(day_minutes),
+            'new_artists': len(new_artists),
+            'first': min(stamps) if stamps else None,
+            'last': max(stamps) if stamps else None,
+            'completion': (round(sum(completion) / len(completion), 3)
+                           if completion else None),
         },
-        'top_artists': [dict(a, minutes=round(a['minutes'], 1)) for a in top_artists],
-        'top_albums': [dict(a, minutes=round(a['minutes'], 1)) for a in _top(albums, 12)],
-        'top_tracks': top_tracks,
+        'top_artists': [artist_out(a) for a in top_artists],
+        'top_albums': [album_out(a) for a in _top(albums, limit or 12)],
+        'top_tracks': [_round(t, 'minutes') for t in top_tracks],
+        'new_artists': [{'name': a['name'], 'first': a['first'],
+                         'plays': a['plays'], 'album_ids': a['album_ids']}
+                        for a in new_artists[:limit or 12]],
         'minutes_by_month': [round(m, 1) for m in minutes_by_month],
+        'minutes_by_year': {str(y): round(m, 1)
+                            for y, m in sorted(minutes_by_year.items())},
+        'minutes_by_day': {d.isoformat(): round(m, 1)
+                           for d, m in sorted(day_minutes.items())},
         'plays_by_hour': plays_by_hour,
+        'plays_by_weekday': plays_by_weekday,
+        'by_source': dict(by_source),
         'peak_day': peak_day,
         'streak': streak,
         'deep_cut': deep_cut,

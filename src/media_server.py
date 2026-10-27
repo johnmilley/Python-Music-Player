@@ -386,6 +386,8 @@ class _Handler(BaseHTTPRequestHandler):
             return self._api_album(query)
         if segments[1:] == ['stats']:
             return self._api_stats(query)
+        if segments[1:] == ['history']:
+            return self._api_history(query)
         if segments[1:] == ['lyrics']:
             return self._api_lyrics(query)
         if segments[1:] == ['artist_image']:
@@ -688,14 +690,45 @@ class _Handler(BaseHTTPRequestHandler):
         art = [f'/api/art/{enc_id}/{quote(p.name, safe="")}' for p in images]
         self._send_json({'ok': True, 'art': art})
 
-    def _api_stats(self, query):
-        year_s = (query.get('year') or [''])[0]
+    @staticmethod
+    def _stats_filters(query):
+        """period/artist/album/title from the query string — shared by
+        /api/stats and /api/history. Raises ValueError on a bad period."""
+        q = lambda k: (query.get(k) or [None])[0]
+        period = q('period') or q('year') or None
+        if period and not re.fullmatch(r'\d{4}(-\d{2}(-\d{2})?)?', period):
+            raise ValueError('bad period')
+        return {'period': period, 'artist': q('artist'),
+                'album': q('album'), 'title': q('title')}
+
+    @staticmethod
+    def _int_param(query, key, default, hi):
         try:
-            year = int(year_s) if year_s else None
+            return max(0, min(hi, int((query.get(key) or [default])[0])))
         except ValueError:
-            return self._send_error_json(400, 'bad year')
+            return default
+
+    def _api_stats(self, query):
+        try:
+            filters = self._stats_filters(query)
+        except ValueError:
+            return self._send_error_json(400, 'bad period')
+        limit = self._int_param(query, 'limit', 0, 2000) or None
         records = play_log.load(self.server.plays_path)
-        self._send_json(play_log.aggregate(records, year))
+        year = int(filters['period']) if filters['period'] and \
+            len(filters['period']) == 4 else None
+        self._send_json(play_log.aggregate(records, year, limit=limit,
+                                           **filters))
+
+    def _api_history(self, query):
+        try:
+            filters = self._stats_filters(query)
+        except ValueError:
+            return self._send_error_json(400, 'bad period')
+        records = play_log.load(self.server.plays_path)
+        self._send_json(play_log.history(
+            records, offset=self._int_param(query, 'offset', 0, 10 ** 7),
+            limit=self._int_param(query, 'limit', 50, 500), **filters))
 
     def _api_artist_image(self, query):
         name = (query.get('name') or [''])[0].strip()

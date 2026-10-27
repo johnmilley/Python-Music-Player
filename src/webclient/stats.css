@@ -10,6 +10,7 @@ html, body {
   font: 16px/1.5 -apple-system, "Segoe UI", Roboto, sans-serif;
   -webkit-tap-highlight-color: transparent;
 }
+a { color: inherit; text-decoration: none; }
 
 /* ── header ────────────────────────────────────────────────────── */
 
@@ -30,6 +31,7 @@ html, body {
   white-space: nowrap; cursor: pointer;
 }
 .year-chip.active { background: #eee; border-color: #eee; color: #121212; }
+.year-chip:not(.active):hover { border-color: #777; color: #eee; }
 
 /* ── layout ────────────────────────────────────────────────────── */
 
@@ -40,6 +42,11 @@ h2 {
   color: #777; text-transform: uppercase; letter-spacing: .8px;
   margin-bottom: 16px;
 }
+.h2row { display: flex; align-items: baseline; justify-content: space-between;
+  gap: 12px; }
+.h2row .more, .h2row .count { font-size: 13px; color: #bbb; white-space: nowrap; }
+.h2row .more:hover { color: #eee; }
+.h2row .count { color: #777; }
 
 /* ── hero ──────────────────────────────────────────────────────── */
 
@@ -52,10 +59,26 @@ h2 {
 }
 #hero-sub { color: #777; margin-top: 2px; }
 #kpis {
-  display: grid; grid-template-columns: repeat(4, 1fr);
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
   gap: 10px; margin-top: 28px;
 }
 .kpi { background: #181818; border-radius: 12px; padding: 12px 6px; }
+a.kpi:hover, a.fact:hover { background: #202020; }
+
+/* drill-down heroes: cover / round artist photo, kicker, byline links */
+#hero-art img, #hero-art .letter {
+  width: 168px; height: 168px; border-radius: 10px;
+  object-fit: cover; display: block; margin: 0 auto 18px;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, .5); font-size: 56px;
+}
+#hero-art.round img, #hero-art.round .letter { border-radius: 50%; }
+#hero-kicker { font-size: 12px; color: #777; text-transform: uppercase;
+  letter-spacing: .8px; margin-bottom: 4px; }
+#hero-kicker:empty { display: none; }
+#hero-byline { color: #bbb; margin-top: 4px; }
+#hero-byline a:hover { color: #eee; text-decoration: underline; }
+#hero.compact #hero-title, #hero.detail #hero-title {
+  font-size: 28px; font-weight: 700; color: #eee; line-height: 1.2; }
 .kpi .v { font-size: 22px; font-weight: 600; }
 .kpi .l { font-size: 12px; color: #777; margin-top: 2px; }
 
@@ -73,8 +96,11 @@ h2 {
 }
 #top-artist-name { font-size: 26px; font-weight: 700; }
 #top-artist-meta { color: #bbb; margin-top: 4px; }
-#runners { display: flex; gap: 16px; margin-top: 22px; flex-wrap: wrap; }
-.runner { text-align: center; width: 72px; }
+#top-artist:hover #top-artist-name { text-decoration: underline; }
+#runners, #new-list { display: flex; gap: 16px; flex-wrap: wrap; }
+#runners { margin-top: 22px; }
+.runner:hover .n, .album-tile:hover .t { text-decoration: underline; }
+.runner { text-align: center; width: 72px; display: block; }
 .runner img, .runner .letter {
   width: 64px; height: 64px; border-radius: 50%;
   object-fit: cover; margin: 0 auto; font-size: 22px;
@@ -88,7 +114,7 @@ h2 {
 #album-grid {
   display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px;
 }
-.album-tile { position: relative; }
+.album-tile { position: relative; display: block; min-width: 0; }
 .album-tile img, .album-tile .letter {
   width: 100%; aspect-ratio: 1; border-radius: 8px;
   object-fit: cover; font-size: 34px;
@@ -108,22 +134,52 @@ h2 {
 
 /* ── tracks ────────────────────────────────────────────────────── */
 
-#track-list { list-style: none; }
-.track-row {
-  position: relative; display: flex; align-items: baseline; gap: 12px;
-  padding: 10px 12px; border-radius: 8px; overflow: hidden;
+/* .row is shared by top tracks, the full lists and play history */
+#track-list, #full-list, #history { list-style: none; }
+.row-link {
+  position: relative; display: flex; align-items: center; gap: 12px;
+  padding: 9px 12px; border-radius: 8px; overflow: hidden;
 }
-.track-row .fill {
+.row-link:hover { background: #1a1a1a; }
+.row .fill {
   position: absolute; inset: 0; border-radius: 8px;
   background: #cc7511; opacity: .13;         /* data wash, not a block */
   transform-origin: left; z-index: 0;
 }
-.track-row > span { position: relative; z-index: 1; }
-.track-row .r { color: #777; font-size: 13px; min-width: 20px; }
-.track-row .t { flex: 1; min-width: 0;
+.row-link > span { position: relative; z-index: 1; }
+.row .r { color: #777; font-size: 13px; min-width: 22px;
+  font-variant-numeric: tabular-nums; white-space: nowrap; }
+#history .r { min-width: 92px; }
+.row .thumb img, .row .thumb .letter {
+  width: 36px; height: 36px; border-radius: 4px;
+  object-fit: cover; display: flex; font-size: 15px;
+}
+.row.round .thumb img, .row.round .thumb .letter { border-radius: 50%; }
+.row .t { flex: 1; min-width: 0;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.track-row .t small { color: #777; font-size: 12px; margin-left: 8px; }
-.track-row .p { color: #bbb; font-size: 13px; font-variant-numeric: tabular-nums; }
+.row .t small { color: #777; font-size: 12px; margin-left: 8px; }
+.row .p { color: #bbb; font-size: 13px; font-variant-numeric: tabular-nums;
+  white-space: nowrap; }
+.none { color: #777; padding: 12px; }
+
+/* full-list tools */
+#list-tools { display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
+  margin-bottom: 14px; }
+#list-filter {
+  flex: 1 1 180px; min-width: 0;
+  background: #181818; color: #eee; border: 1px solid #333;
+  border-radius: 999px; padding: 6px 14px; font: inherit; font-size: 14px;
+}
+#list-filter:focus { outline: none; border-color: #777; }
+#list-sort { display: flex; gap: 6px; flex-wrap: wrap; }
+
+#history-more {
+  display: block; margin: 14px auto 0;
+  background: none; color: #bbb; border: 1px solid #333;
+  border-radius: 999px; padding: 6px 18px; font: inherit; font-size: 14px;
+  cursor: pointer;
+}
+#history-more:hover { color: #eee; border-color: #777; }
 
 /* ── charts ────────────────────────────────────────────────────── */
 
@@ -135,6 +191,8 @@ h2 {
 }
 .bar-slot { flex: 1; display: flex; align-items: flex-end; justify-content: center;
   height: 100%; cursor: default; }
+.bar-slot.pick { cursor: pointer; }
+.bar-slot.pick:hover .bar { filter: brightness(1.2); }
 .bar {
   width: 100%; max-width: 24px;                     /* mark cap */
   background: #cc7511;
@@ -159,6 +217,24 @@ h2 {
   transform: translate(-50%, calc(-100% - 8px));
 }
 
+/* calendar: weeks as columns, Mon–Sun rows; scrolls sideways on phones */
+.cal-scroll { overflow-x: auto; scrollbar-width: thin; padding-bottom: 4px; }
+.cal-months, .cal-grid {
+  display: grid; grid-template-columns: repeat(54, minmax(8px, 1fr));
+  column-gap: 2px;              /* min track width only scrolls on phones */
+}
+.cal-months { font-size: 11px; color: #777; margin-bottom: 4px; }
+.cal-months span { white-space: nowrap; width: 0; overflow: visible; }  /* don't widen columns */
+.cal-grid { grid-template-rows: repeat(7, auto); grid-auto-flow: column; row-gap: 2px; }
+.cal-cell { aspect-ratio: 1; border-radius: 2px; background: #222; display: block; }
+.cal-cell.pad { background: none; }
+.cal-cell.future { opacity: .35; }
+a.cal-cell:hover { outline: 1px solid #eee; }
+.cal-key { display: flex; align-items: center; justify-content: flex-end;
+  gap: 3px; margin-top: 10px; font-size: 11px; color: #777; }
+.cal-key .cal-cell { width: 10px; height: 10px; }
+.cal-key span { margin: 0 4px; }
+
 /* ── facts ─────────────────────────────────────────────────────── */
 
 #facts { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
@@ -176,7 +252,9 @@ h2 {
 
 @media (max-width: 420px) {
   #album-grid { grid-template-columns: repeat(2, 1fr); }
-  #facts { grid-template-columns: 1fr; }
+  #facts { grid-template-columns: repeat(2, 1fr); }
+  #hero-art img, #hero-art .letter { width: 136px; height: 136px; }
+  #history .r { min-width: 80px; font-size: 12px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -1,7 +1,10 @@
 <!doctype html>
 <!-- lp stats — year-in-review listening page, served at /stats.
-     Data from /api/stats; artist photos via /api/artist_image (Deezer,
-     cached server-side); covers via the existing /api/art routes. -->
+     Data from /api/stats (+ /api/history for individual plays); artist
+     photos via /api/artist_image (Deezer, cached server-side); covers via
+     the existing /api/art routes. Every artist / album / track / month /
+     day drills into its own view; the view lives in the URL hash
+     (#period=2026&artist=…) so back/forward and bookmarks just work. -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -21,51 +24,92 @@
 <main id="page" hidden>
   <!-- hero -->
   <section id="hero">
+    <div id="hero-art"></div>
+    <div id="hero-kicker"></div>
     <h1 id="hero-title"></h1>
+    <div id="hero-byline"></div>
     <div id="hero-minutes"></div>
     <div id="hero-sub">minutes with your music</div>
     <div id="kpis"></div>
   </section>
 
+  <!-- full ranked list (#list=artists|albums|tracks|new) -->
+  <section id="list-section" hidden>
+    <div id="list-tools">
+      <input id="list-filter" type="search" placeholder="Filter…" autocomplete="off">
+      <div id="list-sort"></div>
+    </div>
+    <ol id="full-list"></ol>
+  </section>
+
   <!-- top artist -->
   <section id="artist-section" hidden>
-    <h2>Top artist</h2>
-    <div id="top-artist">
+    <div class="h2row"><h2>Top artist</h2><a class="more" data-list="artists"></a></div>
+    <a id="top-artist">
       <div id="top-artist-img"></div>
       <div id="top-artist-info">
         <div id="top-artist-name"></div>
         <div id="top-artist-meta"></div>
       </div>
-    </div>
+    </a>
     <div id="runners"></div>
   </section>
 
   <!-- top albums -->
   <section id="albums-section" hidden>
-    <h2>Top albums</h2>
+    <div class="h2row"><h2 id="albums-h">Top albums</h2><a class="more" data-list="albums"></a></div>
     <div id="album-grid"></div>
   </section>
 
   <!-- top tracks -->
   <section id="tracks-section" hidden>
-    <h2>Top tracks</h2>
+    <div class="h2row"><h2 id="tracks-h">Top tracks</h2><a class="more" data-list="tracks"></a></div>
     <ol id="track-list"></ol>
   </section>
 
+  <!-- new discoveries -->
+  <section id="new-section" hidden>
+    <div class="h2row"><h2>New to you</h2><a class="more" data-list="new"></a></div>
+    <div id="new-list"></div>
+  </section>
+
   <!-- charts -->
+  <section id="years-section" hidden>
+    <h2>Minutes by year</h2>
+    <div class="chart" id="year-chart"></div>
+  </section>
   <section id="months-section" hidden>
     <h2>Minutes by month</h2>
     <div class="chart" id="month-chart"></div>
   </section>
+  <section id="days-section" hidden>
+    <h2>Minutes by day</h2>
+    <div class="chart" id="day-chart"></div>
+  </section>
+  <section id="calendar-section" hidden>
+    <h2>Every day</h2>
+    <div class="chart" id="calendar"></div>
+  </section>
   <section id="hours-section" hidden>
     <h2>Listening clock</h2>
     <div class="chart" id="hour-chart"></div>
+  </section>
+  <section id="weekdays-section" hidden>
+    <h2>Day of the week</h2>
+    <div class="chart" id="weekday-chart"></div>
   </section>
 
   <!-- fun facts -->
   <section id="facts-section" hidden>
     <h2>Highlights</h2>
     <div id="facts"></div>
+  </section>
+
+  <!-- individual plays -->
+  <section id="history-section" hidden>
+    <div class="h2row"><h2 id="history-h">Recent plays</h2><span class="count" id="history-count"></span></div>
+    <ol id="history"></ol>
+    <button id="history-more" hidden>Show more</button>
   </section>
 </main>
 
