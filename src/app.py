@@ -34,7 +34,7 @@ from library_pane import LibraryPane, LyricsPane
 from quick_switcher import QuickSwitcher
 from media_server import LibraryCache
 from album import Album, same_listing
-from window_chrome import WindowGrips
+from window_chrome import WindowGrips, PaneDivider
 from version import __version__
 import play_log
 import theme
@@ -103,6 +103,10 @@ class AccentSwatchGrid(QWidget):
 # Default first-run window side, and the narrowest a side pane opens to
 DEFAULT_SIDE = 400
 PANE_MIN_W = 200
+# Narrowest a pane can be dragged to (the panes' own minimumWidth), and the
+# widest — past this a 'side pane' is just a second window
+PANE_HARD_MIN_W = 180
+PANE_MAX_W = 1200
 
 
 class App(QMainWindow):
@@ -239,11 +243,33 @@ class App(QMainWindow):
         stage_layout.addWidget(self.library_pane, stretch=1)
         stage_layout.addWidget(self.player)
         stage_layout.addWidget(self.lyrics_pane, stretch=1)
+        self._stage_layout = stage_layout
         self.library_pane.hide()
         self.lyrics_pane.hide()
 
+        # Side-pane widths (px; None = default, half the art). The panes
+        # split the window's non-art width in proportion to these (layout
+        # stretch), so a window resize keeps their ratio; a divider drag
+        # sets one exactly (_pane_drag). Remembered across sessions.
+        # (loaded from settings in _restore_state)
+        self._pane_w = {'library': None, 'lyrics': None}
+        self._pane_drag_state = None
+        # Draggable dividers between each pane and the art: the grab zone
+        # sits mostly over the art (never over a pane's scrollbar)
+        self._dividers = {
+            'library': PaneDivider(self.stage, line_offset=1),
+            'lyrics': PaneDivider(self.stage, line_offset=PaneDivider.HIT_W - 3),
+        }
+        for which, div in self._dividers.items():
+            div.drag_started.connect(lambda x, w=which: self._pane_drag_start(w, x))
+            div.dragged.connect(lambda x, w=which: self._pane_drag(w, x))
+            div.drag_finished.connect(self._pane_drag_end)
+            div.reset_requested.connect(lambda w=which: self._reset_pane_width(w))
+        for pane in (self.library_pane, self.lyrics_pane, self.player):
+            pane.installEventFilter(self)
+
         # Panel buttons that only exist on the stage's own panel
-        self.player.panel.tracklist_btn.setToolTip('Library / tracklist (4)')
+        self.player.panel.tracklist_btn.setToolTip('Library / tracklist')
         self.player.panel.tracklist_clicked.connect(self._toggle_and_focus_tracklist)
         self.player.panel.lyrics_clicked.connect(self.toggle_lyrics)
         self.player.panel.more_clicked.connect(self._popup_menu_at_more)
@@ -431,6 +457,8 @@ class App(QMainWindow):
         self.folder_view.view.installEventFilter(self)
         self.album_view.track_list_widget.installEventFilter(self)
         self.favorites_view.coll_list.installEventFilter(self)
+        self.podcast_view.feed_list.installEventFilter(self)
+        self.radio_view.station_list.installEventFilter(self)
 
         # Keyboard shortcuts
         self._setup_shortcuts()
@@ -481,6 +509,8 @@ class App(QMainWindow):
         # accent too
         self.album_view.set_heart_color(accent, t['accent_fg'])
         self.album_view.set_playing_color(t['accent_text'])
+        for div in self._dividers.values():
+            div.set_color(accent)
         self.favorites_view.set_heart_color(accent, t['accent_fg'])
         if self.is_maxplayer:
             self._style_max_mode()
@@ -997,6 +1027,13 @@ class App(QMainWindow):
     # ── Session Persistence ─────────────────────────────────────────
 
     def _restore_state(self):
+        # Side-pane widths (see _pane_w)
+        for which in ('library', 'lyrics'):
+            try:
+                w = int(self.settings.value(f'stage/{which}_w', 0) or 0)
+            except (TypeError, ValueError):
+                w = 0
+            self._pane_w[which] = w if w >= PANE_HARD_MIN_W else None
         library_root = self.settings.value('library_root')
         if library_root:
             self.folder_view.set_root(library_root)
@@ -1121,10 +1158,9 @@ class App(QMainWindow):
             ('1',       'Music (again: hide)', lambda: self._mode_key('music')),
             ('2',       'Podcasts',            lambda: self._mode_key('podcast')),
             ('3',       'Radio',               lambda: self._mode_key('radio')),
-            ('0',       'Favourites',          lambda: self._mode_key('favorites')),
+            ('4',       'Favourites',          lambda: self._mode_key('favorites')),
             ('Shift+H', 'Toggle favourite',   self._toggle_current_favorite),
-            ('4',       'Library: tracklist',  self._toggle_and_focus_tracklist),
-            ('5',       'Toggle lyrics',       self.toggle_lyrics),
+            ('0',       'Toggle lyrics pane',  self.toggle_lyrics),
             ('n',       'Show now playing',    self._show_now_playing),
             ('s',       'Toggle shuffle',      self._toggle_shuffle),
             ('/',       'Search',              self._open_search),
@@ -1229,6 +1265,12 @@ class App(QMainWindow):
         opens — setGeometry with a compensating x-shift keeps the art
         anchored under the cursor. Maximized windows just reflow.
         """
+        # A pane being closed remembers the width it had (a window resize
+        # may have changed it since it was opened or dragged)
+        if library is False and self._library_on:
+            self._remember_pane_width('library')
+        if lyrics is False and self._lyrics_on:
+            self._remember_pane_width('lyrics')
         if library is not None:
             self._library_on = library
         if lyrics is not None:
@@ -1236,18 +1278,18 @@ class App(QMainWindow):
         self.library_pane.setVisible(self._library_on)
         self.lyrics_pane.setVisible(self._lyrics_on)
         self.player.panel.set_toggle_states(self._library_on, self._lyrics_on)
-        side = self.height() - 2  # inside root_stack's 1px border
-        pane_w = max(PANE_MIN_W, side // 2)
-        left_w = pane_w if self._library_on else 0
+        left_w = self._pane_width('library') if self._library_on else 0
+        right_w = self._pane_width('lyrics') if self._lyrics_on else 0
+        self._apply_pane_sizing()
         if self._edgeless() or self.is_maxplayer:
             self._unpin_art_width()
             self._left_pane_w = left_w
             return
+        side = self.height() - 2  # inside root_stack's 1px border
         if not resize_window:
             self._left_pane_w = left_w
             self._pin_art_width()
             return
-        right_w = pane_w if self._lyrics_on else 0
         dx = left_w - self._left_pane_w
         self._left_pane_w = left_w
         x = self.x() - dx
@@ -1258,6 +1300,116 @@ class App(QMainWindow):
         self._pin_art_width()
         self.setGeometry(x, self.y(), side + left_w + right_w + 2, self.height())
         self._resizing_self = False
+
+    # ── Side-pane widths & dividers ─────────────────────────────────
+
+    def _pane_widget(self, which):
+        return self.library_pane if which == 'library' else self.lyrics_pane
+
+    def _default_pane_w(self):
+        return max(PANE_MIN_W, (self.height() - 2) // 2)
+
+    def _pane_width(self, which):
+        return self._pane_w.get(which) or self._default_pane_w()
+
+    def _remember_pane_width(self, which):
+        pane = self._pane_widget(which)
+        if pane.isVisible() and pane.width() >= PANE_HARD_MIN_W:
+            self._pane_w[which] = pane.width()
+
+    def _apply_pane_sizing(self):
+        """Normal window: panes flex, splitting the non-art width in
+        proportion to their widths (exact when the window was sized for
+        them). Maximized/fullscreen: the art can't stay square anyway, so
+        panes hold their exact widths and the art takes the rest."""
+        edgeless = self._edgeless() and not getattr(self, 'is_maxplayer', False)
+        for idx, which in ((0, 'library'), (2, 'lyrics')):
+            pane = self._pane_widget(which)
+            w = self._pane_width(which)
+            if edgeless:
+                pane.setFixedWidth(w)
+            else:
+                pane.setMinimumWidth(PANE_HARD_MIN_W)
+                pane.setMaximumWidth(16777215)
+            self._stage_layout.setStretch(idx, max(1, w))
+        self._stage_layout.setStretch(1, 1 if edgeless else 0)
+
+    def _place_dividers(self):
+        for which, div in self._dividers.items():
+            pane = self._pane_widget(which)
+            on = (self._library_on if which == 'library' else self._lyrics_on)
+            if not on or not pane.isVisibleTo(self.stage) or getattr(self, 'is_maxplayer', False):
+                div.hide()
+                continue
+            g = pane.geometry()
+            hit = PaneDivider.HIT_W
+            # zone: 2px over the pane, the rest over the art
+            x = g.right() - 1 if which == 'library' else g.left() - hit + 2
+            div.setGeometry(x, 0, hit, self.stage.height())
+            div.show()
+            div.raise_()
+
+    def _pane_drag_start(self, which, gx):
+        self._pane_drag_state = {
+            'gx': gx,
+            'w': self._pane_widget(which).width(),
+            'geo': self.geometry(),
+        }
+
+    def _pane_drag(self, which, gx):
+        """The divider follows the cursor. Normal window: the art keeps its
+        square size, the pane's outer edge stays put and the window grows
+        or shrinks on the far side (library: right edge; lyrics: left
+        edge). Maximized: the pane trades width with the art."""
+        d = self._pane_drag_state
+        if d is None:
+            return
+        dx = gx - d['gx']
+        w = d['w'] + dx if which == 'library' else d['w'] - dx
+        w = max(PANE_HARD_MIN_W, min(PANE_MAX_W, w))
+        if self._edgeless():
+            other = 'lyrics' if which == 'library' else 'library'
+            other_on = self._lyrics_on if which == 'library' else self._library_on
+            other_w = self._pane_widget(other).width() if other_on else 0
+            w = min(w, self.stage.width() - other_w - 240)  # keep some art
+            self._pane_w[which] = max(PANE_HARD_MIN_W, w)
+            self._apply_pane_sizing()
+            return
+        geo = d['geo']
+        screen = self.screen()
+        avail = screen.availableGeometry() if screen is not None else None
+        delta = w - d['w']
+        if which == 'library':
+            x = geo.x()
+            if avail is not None:  # don't grow past the screen's right edge
+                delta = min(delta, avail.right() + 1 - geo.right() - 1)
+        else:
+            if avail is not None:  # ...or its left edge
+                delta = min(delta, geo.x() - avail.left())
+            x = geo.x() - delta
+        w = d['w'] + delta
+        self._pane_w[which] = w
+        if which == 'library':
+            self._left_pane_w = w
+        self._apply_pane_sizing()
+        self._resizing_self = True
+        self._pin_art_width()
+        self.setGeometry(x, geo.y(), geo.width() + delta, geo.height())
+        self._resizing_self = False
+
+    def _pane_drag_end(self):
+        self._pane_drag_state = None
+        self._save_pane_widths()
+
+    def _reset_pane_width(self, which):
+        """Divider double-click: back to the default width."""
+        self._pane_w[which] = None
+        self._set_side_panes()
+        self._save_pane_widths()
+
+    def _save_pane_widths(self):
+        for which in ('library', 'lyrics'):
+            self.settings.setValue(f'stage/{which}_w', self._pane_w.get(which) or 0)
 
     def _pin_art_width(self):
         """Art column square, panes take whatever width remains."""
@@ -1308,6 +1460,7 @@ class App(QMainWindow):
         maximized = self.isMaximized()
         edgeless = self._edgeless()
         self._grips.set_enabled(not edgeless)
+        self._apply_pane_sizing()
         if edgeless:
             self._unpin_art_width()
         elif not self.is_maxplayer:
@@ -1378,8 +1531,11 @@ class App(QMainWindow):
             Qt.Key_Period: lambda: self._adjust_volume(0.05),
             Qt.Key_Comma: lambda: self._adjust_volume(-0.05),
             Qt.Key_M: self._toggle_mute,
+            Qt.Key_1: self.toggle_tracklist,
+            Qt.Key_2: self.toggle_tracklist,
+            Qt.Key_3: self.toggle_tracklist,
             Qt.Key_4: self.toggle_tracklist,
-            Qt.Key_5: self.toggle_lyrics,
+            Qt.Key_0: self.toggle_lyrics,
             Qt.Key_S: self._toggle_shuffle,
             Qt.Key_Left: lambda: self.player.step_art(-1),
             Qt.Key_Right: lambda: self.player.step_art(1),
@@ -1431,6 +1587,9 @@ class App(QMainWindow):
     def eventFilter(self, obj, event):
         """Intercept Tab/vim keys and suppress click-through on refocus."""
         t = event.type()
+        if (t in (QEvent.Resize, QEvent.Move, QEvent.Show, QEvent.Hide)
+                and obj in (self.library_pane, self.lyrics_pane, self.player)):
+            self._place_dividers()
         if (t == event.KeyPress and self.is_maxplayer and self._max_view is not None
                 and isinstance(obj, QWidget)
                 and (obj is self._max_view or self._max_view.isAncestorOf(obj))
@@ -1446,27 +1605,43 @@ class App(QMainWindow):
             if key == Qt.Key_Tab:
                 self._cycle_pane_focus()
                 return True
-            # h/l on the tracklist → up to the library page
-            if obj is self.album_view.track_list_widget and key in (Qt.Key_H, Qt.Key_L):
-                self._show_library_page()
+            # One movement scheme for every list (see _nav_keys): forward
+            # (→ / l) opens, back (← / h / Backspace) backs out; Enter is
+            # handled by the views themselves (opens / plays)
+            fwd = key in (Qt.Key_Right, Qt.Key_L)
+            back = key in (Qt.Key_Left, Qt.Key_H, Qt.Key_Backspace)
+            # Tracklist: back → up to the library page (forward: nothing
+            # deeper — Enter plays)
+            if obj is self.album_view.track_list_widget and (fwd or back):
+                if back:
+                    self._show_library_page()
                 return True
-            # l on a favourites collection → load it and drill down
-            if obj is self.favorites_view.coll_list and key == Qt.Key_L:
-                item = self.favorites_view.coll_list.currentItem()
-                if item is not None:
-                    self._load_favorites_collection(item.data(Qt.UserRole))
+            # Flat library lists (feeds, stations, collections): forward
+            # opens the selected item exactly like a click/Enter (a feed or
+            # collection drills down to its tracks, a station plays); back
+            # returns to the open tracklist, like h at the folder tree's top
+            if obj in (self.podcast_view.feed_list, self.radio_view.station_list,
+                       self.favorites_view.coll_list) and (fwd or back):
+                if fwd:
+                    item = obj.currentItem()
+                    if item is not None:
+                        obj.itemClicked.emit(item)
+                elif self.album_view.album is not None and obj is not self.radio_view.station_list:
+                    self._drill_to_tracks()
                 return True
             if obj is self.folder_view.view:
                 idx = self.folder_view.view.currentIndex()
-                # l on a music directory → load album and drill down
-                if key == Qt.Key_L and idx.isValid():
+                # forward on a music directory → load album and drill down
+                # (other folders: the tree's own expand / first child)
+                if fwd and idx.isValid():
                     path = self.folder_view.model.filePath(idx)
                     if self.folder_view._has_music(path):
                         self.album_view.load_album_listing(path)
                         self._drill_to_tracks()
                         return True
-                # h at top level → back down to the tracklist
-                if key == Qt.Key_H and self.album_view.album is not None:
+                # back at top level → over to the open tracklist (below the
+                # top level: the tree's own collapse / parent)
+                if back and key != Qt.Key_Backspace and self.album_view.album is not None:
                     root = self.folder_view.view.rootIndex()
                     at_top = not idx.isValid() or (not self.folder_view.view.isExpanded(idx)
                                                    and idx.parent() == root)
@@ -1508,7 +1683,7 @@ class App(QMainWindow):
             self._library_focus_widget().setFocus()
 
     def _toggle_and_focus_tracklist(self):
-        """'4' / the panel's tracklist button: close the pane if it's
+        """The panel's tracklist button: close the pane if it's
         already showing tracks, otherwise open it on the tracks page (or
         the library page when nothing has been opened yet)."""
         if self.is_maxplayer:
@@ -1793,8 +1968,9 @@ class App(QMainWindow):
         ('Scroll over the art', 'Volume'),
     )
     TIPS_KEYS = (
-        ('1  2  3  0', 'Music · podcasts · radio · favourites'),
-        ('4  /  5', 'Tracklist pane / lyrics pane'),
+        ('1  2  3  4', 'Music · podcasts · radio · favourites (again: hide)'),
+        ('0', 'Lyrics / show-info pane'),
+        ('→  ←', 'Open the selected item · back out (any list)'),
         ('p  ·  <  >', 'Play/pause · previous / next'),
         ('n', 'Back to what\'s playing'),
         ('Ctrl+K', 'Jump to any album'),
@@ -1901,7 +2077,7 @@ class App(QMainWindow):
             self._set_side_panes(lyrics=not self._lyrics_on)
 
     def toggle_tracklist(self):
-        """Max mode's tracklist toggle ('4' while in max)."""
+        """Max mode's tracklist toggle (any of 1-4 while in max)."""
         if self.is_maxplayer:
             self._toggle_max_tracklist()
         else:
@@ -2186,14 +2362,17 @@ class App(QMainWindow):
                    'radio': 'Radio', 'favorites': 'Favourites'}
 
     def _mode_key(self, mode):
-        """1/2/3/0. Max mode has no library pane to switch, so they're
-        ignored there rather than changing a pane nobody can see."""
-        if not self.is_maxplayer:
+        """1/2/3/4. Max mode has no library pane to switch modes in — its
+        left pane is the tracklist, so any mode key toggles that (the same
+        way the active mode's key toggles the library pane here)."""
+        if self.is_maxplayer:
+            self._toggle_max_tracklist()
+        else:
             self._set_mode(mode)
 
     def _set_mode(self, mode, reveal=True):
         """Switch the library pane between music, podcast, radio and
-        favourites (the mode tabs, or 1/2/3/0).
+        favourites (the mode tabs, or 1/2/3/4).
 
         Picking the mode that's already active toggles the library pane
         instead: closed → open on the library page; open on the tracks
@@ -2886,6 +3065,10 @@ class App(QMainWindow):
         else:
             self.settings.setValue('stage/geometry', self.saveGeometry())
         self.settings.setValue('stage/library', 'true' if self._library_on else 'false')
+        if not self._edgeless() and not self.is_maxplayer:
+            for which in ('library', 'lyrics'):
+                self._remember_pane_width(which)
+        self._save_pane_widths()
         self.settings.setValue('stage/lyrics', 'true' if self._lyrics_on else 'false')
         self.settings.setValue('dark_mode', 'true' if self.current_theme is theme.DARK else 'false')
         self.settings.setValue('font_size', self.font_size)

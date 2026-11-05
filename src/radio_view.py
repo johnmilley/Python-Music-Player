@@ -8,6 +8,7 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt, QSettings, pyqtSignal
 
 from radio_station import RadioStation
+from vim_views import VimListWidget
 
 
 class RadioView(QWidget):
@@ -33,7 +34,8 @@ class RadioView(QWidget):
         layout.addWidget(self.url_input)
 
         # Station list
-        self.station_list = QListWidget()
+        # Vim list: j/k, Enter plays; App adds →/l (play) like every list
+        self.station_list = VimListWidget()
         self.station_list.setObjectName('radio-station-list')
         self.station_list.itemClicked.connect(self._on_station_clicked)
         self.station_list.setContextMenuPolicy(Qt.CustomContextMenu)

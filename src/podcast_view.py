@@ -8,6 +8,7 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt, QSettings, pyqtSignal
 
 from podcast_feed import PodcastFeed, FeedFetchThread
+from vim_views import VimListWidget
 
 
 class PodcastView(QWidget):
@@ -33,7 +34,8 @@ class PodcastView(QWidget):
         layout.addWidget(self.url_input)
 
         # Feed list
-        self.feed_list = QListWidget()
+        # Vim list: j/k, Enter opens; App adds →/l (open) and ←/h like every list
+        self.feed_list = VimListWidget()
         self.feed_list.setObjectName('podcast-feed-list')
         self.feed_list.itemClicked.connect(self._on_feed_clicked)
         self.feed_list.setContextMenuPolicy(Qt.CustomContextMenu)

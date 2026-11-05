@@ -11,6 +11,7 @@ lp uses Qt's built-in `QSettings` to persist user preferences. On Linux this wri
 | `library_root` | string | Path to the music library folder |
 | `stage/geometry` | bytes | Window position and size (v2; falls back to v1's `mini/geometry`) |
 | `stage/library` / `stage/lyrics` | `"true"` / `"false"` | Whether the library / lyrics pane is open |
+| `stage/library_w` / `stage/lyrics_w` | int (px) | Side-pane widths set by dragging their dividers (0 = default) |
 | `stage/on_top` | `"true"` / `"false"` | Always-on-top pin |
 | `stage/pin_controls` | `"true"` / `"false"` | Control panel pinned (never auto-hides) |
 | `volume` | float 0..1 | Playback volume (music, podcasts and radio) |

@@ -238,7 +238,7 @@ class ControlPanel(QWidget):
         row3.setSpacing(2)
         self.tracklist_btn = None
         if show_side_toggles:
-            self.tracklist_btn = self._make_button('tracklist', 'Toggle tracklist (4)')
+            self.tracklist_btn = self._make_button('tracklist', 'Toggle tracklist (1-4)')
             self.tracklist_btn.clicked.connect(self.tracklist_clicked.emit)
             row3.addWidget(self.tracklist_btn)
         row3.addStretch(1)
@@ -272,7 +272,7 @@ class ControlPanel(QWidget):
             row3.addWidget(self.back_btn)
         self.lyrics_btn = None
         if show_side_toggles:
-            self.lyrics_btn = self._make_button('lyrics', 'Toggle lyrics / show info (5)')
+            self.lyrics_btn = self._make_button('lyrics', 'Toggle lyrics / show info (0)')
             self.lyrics_btn.clicked.connect(self.lyrics_clicked.emit)
             row3.addWidget(self.lyrics_btn)
         outer.addLayout(row3)

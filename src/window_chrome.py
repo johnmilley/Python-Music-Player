@@ -1,4 +1,5 @@
-# Frameless-window chrome: invisible edge-resize grips.
+# Frameless-window chrome: invisible edge-resize grips, plus the draggable
+# side-pane dividers (PaneDivider).
 #
 # The main window runs with Qt.FramelessWindowHint (no OS titlebar — it's
 # moved by dragging the album art). Content runs edge to edge (just a 1px
@@ -10,7 +11,8 @@
 # multi-monitor and Wayland all behave like a normal titled window even
 # though decorations are off.
 
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, pyqtSignal
+from PyQt5.QtGui import QColor, QPainter
 from PyQt5.QtWidgets import QWidget
 
 GRIP_SIZE = 7     # thickness of the edge strips
@@ -81,3 +83,78 @@ class WindowGrips:
     def set_enabled(self, enabled):
         for grip in self._grips:
             grip.setVisible(enabled)
+
+
+class PaneDivider(QWidget):
+    """Draggable boundary between a side pane and the art (App owns the
+    geometry — see App._pane_drag). Invisible until hovered/dragged, then a
+    thin accent line; double-click resets the pane to its default width.
+
+    Signals carry the cursor's global x so the drag math is independent of
+    the widget moving under the cursor as the window resizes."""
+
+    drag_started = pyqtSignal(int)
+    dragged = pyqtSignal(int)
+    drag_finished = pyqtSignal()
+    reset_requested = pyqtSignal()
+
+    HIT_W = 7       # grab zone width
+    LINE_W = 2      # hover/drag indicator
+
+    def __init__(self, parent, line_offset):
+        super().__init__(parent)
+        # x of the indicator line within the grab zone: the zone sits mostly
+        # over the art so it never covers the pane's scrollbar
+        self._line_x = line_offset
+        self._hover = False
+        self._dragging = False
+        self._color = QColor('orange')
+        self.setCursor(Qt.SplitHCursor)
+        self.setToolTip('Drag to resize · double-click to reset')
+        self.hide()
+
+    def set_color(self, color):
+        self._color = QColor(color)
+        self.update()
+
+    def enterEvent(self, event):
+        self._hover = True
+        self.update()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self._hover = False
+        self.update()
+        super().leaveEvent(event)
+
+    def paintEvent(self, event):
+        if self._hover or self._dragging:
+            p = QPainter(self)
+            p.fillRect(self._line_x, 0, self.LINE_W, self.height(), self._color)
+            p.end()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._dragging = True
+            self.update()
+            self.drag_started.emit(event.globalPos().x())
+            event.accept()
+        else:
+            super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self._dragging:
+            self.dragged.emit(event.globalPos().x())
+            event.accept()
+
+    def mouseReleaseEvent(self, event):
+        if self._dragging and event.button() == Qt.LeftButton:
+            self._dragging = False
+            self.update()
+            self.drag_finished.emit()
+            event.accept()
+
+    def mouseDoubleClickEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.reset_requested.emit()
+            event.accept()

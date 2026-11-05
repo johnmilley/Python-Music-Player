@@ -18,7 +18,7 @@ fullscreen view.
  │                  │ │ ≡ ⤮ ◀ ▶ ▶ ↻   ⋯ 💬│ │                │
  │                  │ └───────────────────┘ │                │
  └──────────────────┴───────────────────────┴────────────────┘
-   library pane (4)        the stage          lyrics pane (5)
+  library pane (1-4)       the stage          lyrics pane (0)
 ```
 
 - **The art stays square.** With no panes open the window keeps itself
@@ -31,6 +31,11 @@ fullscreen view.
   (`Shift+P`). The two pane toggles sit at the panel's outer edges, on the
   side their pane opens: `≡` (left) the library pane, the speech bubble
   (right) the lyrics / show-info pane; `⋯` opens the menu.
+- **Panes are resizable**: drag the boundary between a pane and the art
+  (an accent line appears on hover). The art keeps its size and the window
+  grows or shrinks on the far side, so you never have to resize the whole
+  window for a wider pane; maximized, the pane trades width with the art.
+  Double-click the boundary to reset. Widths are remembered.
 - **Drag the art** to move the (frameless) window; drag any edge to resize.
   **Double-click the art** for max mode; **right-click** it for the menu;
   **scroll** over it for volume (a readout flashes over the art). The
@@ -104,11 +109,11 @@ Station Art (radio), Help, Quit.
 ## Max mode (`Shift+M`, or double-click the art)
 
 Fullscreen art beside a side column with the tracklist and lyrics panes
-(`4` / `5`), borrowed from the main window — same content, same highlight.
+(any of `1`-`4` / `0`), borrowed from the main window — same content, same highlight.
 The same control panel floats over the art on mouse movement, ⋯ menu
 included (also on right-click); `Esc`, the corner ✕ or the panel's ✕ exits.
 
 Library actions carry on in max mode, landing in its tracklist pane:
 `Ctrl+K` to jump to any album, `n` for now playing, `/` to search the
-tracklist. Mode keys (`1`/`2`/`3`/`0`) and always-on-top only apply to the
+tracklist. Mode switching and always-on-top only apply to the
 main window.

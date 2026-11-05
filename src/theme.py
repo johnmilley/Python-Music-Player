@@ -54,10 +54,17 @@ for _t in (LIGHT, DARK):
     _t['selection_text'] = _t['accent_fg']
     _t['scrollbar_bg'] = _t['bg']
 
-# One font for the entire application: Inter, bundled in src/fonts/ and
-# registered at startup by resolve_fonts(). If the bundled files are ever
-# missing, resolve_fonts falls back to the best available system sans.
+# One font for the entire application: SF Pro wherever it's installed
+# (macOS's system UI font; on Linux/Windows only if the user installed it —
+# Apple's licence forbids bundling/redistributing it, so it is never
+# shipped), otherwise Inter, bundled in src/fonts/ and registered at
+# startup by resolve_fonts(). If even Inter is missing, resolve_fonts falls
+# back to the best available system sans.
 FONT = "'Inter'"
+
+# Preferred over Inter when present, in order. '.AppleSystemUIFont' is how
+# Qt names the SF Pro system font on macOS when no 'SF Pro' family is listed.
+_PREFERRED_FONTS = ['SF Pro Text', 'SF Pro', 'SF Pro Display', '.AppleSystemUIFont']
 
 # One size scale for the whole app — everything steps together.
 SIZES = [8, 9, 10, 11, 12, 13, 14, 15, 16, 18, 20]
@@ -67,8 +74,9 @@ _FALLBACK_FONTS = ['Noto Sans', 'Segoe UI', 'Helvetica Neue', 'Ubuntu', 'Arial']
 
 
 def resolve_fonts():
-    """Register the bundled Inter files with Qt; fall back to a system sans
-    only if they're missing. Must run after QApplication exists."""
+    """Pick the app font: an installed SF Pro first, else the bundled
+    Inter (registered here), else a system sans. Must run after
+    QApplication exists."""
     global FONT
     import sys
     from pathlib import Path
@@ -80,7 +88,10 @@ def resolve_fonts():
         for f in sorted(fonts_dir.glob('*.ttf')):
             QFontDatabase.addApplicationFont(str(f))
     families = set(QFontDatabase().families())
-    if 'Inter' in families:
+    preferred = next((f for f in _PREFERRED_FONTS if f in families), None)
+    if preferred:
+        FONT = f"'{preferred}'"
+    elif 'Inter' in families:
         FONT = "'Inter'"
     else:
         fallback = next((f for f in _FALLBACK_FONTS if f in families), 'sans-serif')

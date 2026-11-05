@@ -6,10 +6,9 @@ All global shortcuts are `QShortcut` instances that are suppressed when a `QLine
 
 | Key | Action |
 |-----|--------|
-| `j` / `k` | Navigate down / up |
-| `Enter` / `l` | Open the album / feed / collection (drills down to its tracks); in the tracklist, `Enter` plays |
-| `h` | Folder view: collapse node; at top level: back down to the open tracklist |
-| `h` / `l` | In the tracklist: back up to the library |
+| `j` / `k` or `↓` / `↑` | Navigate down / up |
+| `Enter`, `l` or `→` | Open the selected item: an album, feed or collection drills down to its tracks; a station plays; a folder that isn't an album expands. In the tracklist, `Enter` plays |
+| `←`, `h` or `Backspace` | In the tracklist: back up to the library. In the folder tree: collapse / go to parent; at the top level (and in the feed/collection lists), `←`/`h` go over to the open tracklist |
 | `Tab` | Flip between the library and tracklist pages |
 | `n` | Go back to what's playing, in any mode — selects it on the library page and lists it (also in max mode) |
 | `Ctrl+K` | Jump to any album: type part of the artist/album, `↑`/`↓` (or `Ctrl+J`/`Ctrl+K`), `Enter` opens, `Esc` cancels. Works in max mode too (opens in max's tracklist) |
@@ -34,9 +33,8 @@ All global shortcuts are `QShortcut` instances that are suppressed when a `QLine
 
 | Key | Action |
 |-----|--------|
-| `1` / `2` / `3` / `0` | Music / Podcasts / Radio / Favourites (the active one again: toggle the library pane; not in max mode) |
-| `4` | Library pane on its tracklist (again: close it) |
-| `5` | Toggle the lyrics pane |
+| `1` / `2` / `3` / `4` | Music / Podcasts / Radio / Favourites (the active one again: toggle the library pane; in max mode: toggle the tracklist pane) |
+| `0` | Toggle the lyrics / show-info pane |
 | `Shift+M` | Toggle max mode (also: double-click the art) |
 | `Shift+T` | Toggle always on top (not in max mode) |
 | `Shift+P` | Pin / unpin the playback controls (also in max mode) |

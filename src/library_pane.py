@@ -27,7 +27,7 @@ MODES = (
     ('music', 'music_note', 'Music (1)'),
     ('podcast', 'podcast', 'Podcasts (2)'),
     ('radio', 'radio_waves', 'Radio (3)'),
-    ('favorites', 'heart', 'Favourites (0)'),
+    ('favorites', 'heart', 'Favourites (4)'),
 )
 
 LIBRARY_PAGE, TRACKS_PAGE = 0, 1
