@@ -7,9 +7,10 @@ from pathlib import Path
 
 # pyqt5
 from PyQt5.QtWidgets import (
-    QApplication, QWidget, QVBoxLayout, QListWidgetItem, QMenu
+    QApplication, QWidget, QVBoxLayout, QListWidgetItem, QMenu,
+    QStyledItemDelegate, QStyleOptionViewItem, QStyle
 )
-from PyQt5.QtCore import Qt, QUrl, pyqtSignal, QThread
+from PyQt5.QtCore import Qt, QUrl, pyqtSignal, QThread, QRect
 from PyQt5.QtGui import QDesktopServices, QIcon, QPainter
 
 # local
@@ -39,6 +40,60 @@ class AlbumLoadThread(QThread):
             self.album_ready.emit(album)
 
 
+# Item data role marking the row that is actually playing (set by
+# AlbumView.set_playing_row) — distinct from the selection, which is just
+# the keyboard/browse cursor
+PLAYING_ROLE = Qt.UserRole + 1
+
+
+class TrackDelegate(QStyledItemDelegate):
+    """Draws the playing row bold with an accent equalizer marker at its
+    right edge, so 'what's playing' never depends on the selection
+    highlight (row 0 of a merely browsed album is selected too).
+
+    The playing row paints in two passes: the row background (hover /
+    selection) across the full width, then icon + bold text in a rect
+    narrowed by MARKER_W so wrapped or elided text never runs under the
+    marker. Every other row paints normally."""
+
+    MARKER_W = 22
+    MARKER_SIZE = 12
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.marker = QIcon()
+
+    def _is_playing(self, index):
+        return bool(index.data(PLAYING_ROLE))
+
+    def paint(self, painter, option, index):
+        if not self._is_playing(index):
+            super().paint(painter, option, index)
+            return
+        widget = option.widget
+        style = widget.style() if widget else QApplication.style()
+        bg = QStyleOptionViewItem(option)
+        self.initStyleOption(bg, index)
+        bg.text = ''
+        bg.icon = QIcon()
+        bg.features &= ~QStyleOptionViewItem.HasDecoration
+        style.drawControl(QStyle.CE_ItemViewItem, bg, painter, widget)
+
+        fg = QStyleOptionViewItem(option)
+        self.initStyleOption(fg, index)
+        fg.rect = fg.rect.adjusted(0, 0, -self.MARKER_W, 0)
+        # Background is already down — this pass must only add icon + text
+        fg.state &= ~(QStyle.State_Selected | QStyle.State_MouseOver
+                      | QStyle.State_HasFocus)
+        fg.font.setBold(True)
+        style.drawControl(QStyle.CE_ItemViewItem, fg, painter, widget)
+
+        r = option.rect
+        s = self.MARKER_SIZE
+        self.marker.paint(painter, QRect(r.right() - self.MARKER_W + (self.MARKER_W - s) // 2,
+                                         r.center().y() - s // 2, s, s))
+
+
 class AlbumView(QWidget):
     album_changed = pyqtSignal(str)
     favorites_changed = pyqtSignal()  # a favourite/playlist mutation happened
@@ -52,6 +107,10 @@ class AlbumView(QWidget):
         self.fav_store = None  # FavoritesStore, attached at the App level
         self.heart_color = None  # accent color, set by App.apply_theme
         self.heart_sel_color = None  # accent_fg — rim color on selected rows
+        self._playing_row = -1
+        # App sets this: called after every (re)listing so the playing-row
+        # marker follows the new items (see App._mark_playing_row)
+        self.on_listing_changed = None
         self.init_gui()
         self.player = player
 
@@ -64,6 +123,8 @@ class AlbumView(QWidget):
         self.track_list_widget = VimListWidget()
         self.track_list_widget.addItem("No album loaded")
         self.track_list_widget.setObjectName('track-list')
+        self.track_delegate = TrackDelegate(self.track_list_widget)
+        self.track_list_widget.setItemDelegate(self.track_delegate)
         # Wrap long titles onto extra lines so as much text fits as reasonable;
         # a single unbreakable run still elides. Full text is in the tooltip.
         self.track_list_widget.setWordWrap(True)
@@ -151,6 +212,32 @@ class AlbumView(QWidget):
         else:
             item.setIcon(QIcon())
 
+    # ── Playing-row marker ──────────────────────────────────────────
+
+    def listing_changed(self):
+        """The rows were rebuilt — let App re-mark the playing row."""
+        self._playing_row = -1
+        if self.on_listing_changed:
+            self.on_listing_changed()
+
+    def set_playing_row(self, row):
+        """Mark the row that's actually playing (-1: none listed here)."""
+        lst = self.track_list_widget
+        old = self._playing_row
+        if old == row and (row < 0 or (lst.item(row) and lst.item(row).data(PLAYING_ROLE))):
+            return
+        if 0 <= old < lst.count():
+            lst.item(old).setData(PLAYING_ROLE, None)
+        self._playing_row = row
+        if 0 <= row < lst.count():
+            lst.item(row).setData(PLAYING_ROLE, True)
+
+    def set_playing_color(self, color):
+        """Accent changed — re-tint the playing-row equalizer marker."""
+        from player import _render_svg
+        self.track_delegate.marker = QIcon(_render_svg('now_playing', color, 24))
+        self.track_list_widget.viewport().update()
+
     def set_heart_color(self, color, selected_color=None):
         """Accent changed — re-tint the heart icons on favourited rows.
         selected_color (accent_fg) rims the heart on selected rows so it
@@ -195,6 +282,7 @@ class AlbumView(QWidget):
             item.setToolTip(label)
             self._apply_heart(item, track)
             self.track_list_widget.addItem(item)
+        self.listing_changed()
 
     def _on_album_loaded(self, album):
         """Populate track list after background loading completes."""
@@ -232,6 +320,7 @@ class AlbumView(QWidget):
             item.setToolTip(label)
             self.track_list_widget.addItem(item)
         self.track_list_widget.setCurrentRow(0)
+        self.listing_changed()
 
     @staticmethod
     def _playlist_item_text(track):

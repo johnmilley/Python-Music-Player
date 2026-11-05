@@ -117,6 +117,7 @@ def track_list_qss(t, fs=None):
     accent = t['accent']
     accent_fg = t['accent_fg']
     accent_hover = _alpha(accent, 22)
+    accent_cursor = _alpha(accent, 64)
     item_pad = max(3, (fs_t - 10) // 2 + 3)
     return f"""
         #track-list {{
@@ -136,8 +137,11 @@ def track_list_qss(t, fs=None):
             color: {t['fg']};
         }}
         #track-list[paneFocused="true"]::item:selected {{
-            background-color: {accent};
-            color: {accent_fg};
+            /* The selection is only the browse cursor — a tint, not the
+               solid accent bar, so it never reads as "playing" (the playing
+               row is bold with an equalizer marker: AlbumView.TrackDelegate) */
+            background-color: {accent_cursor};
+            color: {t['fg']};
         }}
         #search-bar {{
             background-color: {t['bg_elevated']};

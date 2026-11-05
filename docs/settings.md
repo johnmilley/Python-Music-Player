@@ -12,6 +12,10 @@ lp uses Qt's built-in `QSettings` to persist user preferences. On Linux this wri
 | `stage/geometry` | bytes | Window position and size (v2; falls back to v1's `mini/geometry`) |
 | `stage/library` / `stage/lyrics` | `"true"` / `"false"` | Whether the library / lyrics pane is open |
 | `stage/on_top` | `"true"` / `"false"` | Always-on-top pin |
+| `stage/pin_controls` | `"true"` / `"false"` | Control panel pinned (never auto-hides) |
+| `volume` | float 0..1 | Playback volume (music, podcasts and radio) |
+| `muted` | `"true"` / `"false"` | Muted |
+| `hints/show_tips` | `"true"` / `"false"` | Show Quick Tips at startup (unticked via the card's checkbox) |
 | `dark_mode` | `"true"` / `"false"` | Whether dark theme is active |
 | `font_size` | int | Font size in points |
 | `font_family` | string | Font name (e.g. `Consolas`) |

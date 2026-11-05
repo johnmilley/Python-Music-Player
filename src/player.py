@@ -84,6 +84,8 @@ class Player(QWidget):
     art_menu_requested = pyqtSignal(QPoint)
     art_changed = pyqtSignal(QPixmap)
     play_state_changed = pyqtSignal(bool)
+    # Mouse wheel over the art/panel: +n / -n notches (App owns volume)
+    volume_wheel = pyqtSignal(int)
     # (track, seconds actually listened) — emitted by flush_listen() when a
     # track is about to be replaced (or the app closes). Player stays
     # log-agnostic: thresholds and persistence live in play_log/App.
@@ -123,6 +125,9 @@ class Player(QWidget):
 
         # just_playback: see notes/just_played_usage.png
         self.playback = Playback()
+        # Playback volume 0..1 (App sets it, mute included) — re-applied
+        # after every load_file+play, since a fresh load starts at full
+        self.volume = 1.0
         self._time_elapsed = 0
         # Seconds of *actual* playback for the current track: ticked in
         # check_track_pos only while playing, untouched by seeks, reset by
@@ -208,6 +213,11 @@ class Player(QWidget):
         self._idle_timer.setSingleShot(True)
         self._idle_timer.setInterval(overlay_controls.IDLE_HIDE_MS)
         self._idle_timer.timeout.connect(self._hide_hover_controls)
+        # Pinned (⋯ → Pin Controls / Shift+P): the panel stays up; only the
+        # gallery hover arrows still come and go
+        self.controls_pinned = False
+        self._wheel_acc = 0
+        self.volume_osd = overlay_controls.VolumeOSD(self)
         watched = [self, self.album_widget, self.panel]
         watched += self.album_widget.findChildren(QWidget)
         watched += self.panel.findChildren(QWidget)
@@ -235,14 +245,48 @@ class Player(QWidget):
 
     def _hide_hover_controls(self):
         self._idle_timer.stop()
-        self.panel.hide()
+        if not self.controls_pinned and not self.panel.volume_popup_open():
+            self.panel.hide()
         self.album_widget._hide_nav()
+
+    def set_controls_pinned(self, on):
+        """Keep the control panel up permanently (on) or back to
+        hover/idle auto-hide (off — it hides after the usual idle delay)."""
+        self.controls_pinned = on
+        if on:
+            self._position_controls()
+            self.panel.show()
+            self.panel.raise_()
+        else:
+            self._idle_timer.start()
 
     def _cursor_inside(self):
         return self.rect().contains(self.mapFromGlobal(QCursor.pos()))
 
+    def apply_volume(self):
+        try:
+            if self.playback.active:
+                self.playback.set_volume(self.volume)
+        except Exception as e:
+            print(f'LOG: set_volume failed: {e}')
+
+    def set_volume(self, volume):
+        self.volume = max(0.0, min(1.0, volume))
+        self.apply_volume()
+
+    def flash_volume(self, volume, muted):
+        self.volume_osd.flash(volume, muted, self.album_widget.geometry())
+
     def eventFilter(self, obj, event):
         t = event.type()
+        if t == QEvent.Wheel:
+            # Wheel anywhere on the stage (art or panel) is volume
+            self._wheel_acc += event.angleDelta().y()
+            steps = int(self._wheel_acc / 120)
+            if steps:
+                self._wheel_acc -= steps * 120
+                self.volume_wheel.emit(steps)
+            return True
         if t in (QEvent.MouseMove, QEvent.Enter) and self.window().isActiveWindow():
             self._show_hover_controls()
         elif t == QEvent.Leave and obj is self and not self._cursor_inside():
@@ -264,7 +308,9 @@ class Player(QWidget):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        if self.panel.isVisible():
+        # isHidden, not isVisible: a pinned panel must also follow resizes
+        # that happen before the window is first shown
+        if not self.panel.isHidden():
             self._position_controls()
 
     def _toggle_time_display(self):
@@ -413,6 +459,7 @@ class Player(QWidget):
         try:
             self.playback.load_file(self.current_track.path)
             self.playback.play()
+            self.apply_volume()
         except Exception as e:
             print(f"LOG: Unable to play: {e}")
             self._set_play_icon(False)
@@ -443,6 +490,7 @@ class Player(QWidget):
         try:
             self.playback.load_file(self.current_track.path)
             self.playback.play()
+            self.apply_volume()
             self.playback.pause()
             if seek_to > 0:
                 self.playback.seek(seek_to)

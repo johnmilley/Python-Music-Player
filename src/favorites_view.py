@@ -58,6 +58,13 @@ class FavoritesView(QWidget):
         item = self.coll_list.currentItem()
         return item.data(Qt.UserRole) if item else ''
 
+    def select_key(self, key):
+        """Highlight a collection ('' = All Favourites) without loading it."""
+        for i in range(self.coll_list.count()):
+            if self.coll_list.item(i).data(Qt.UserRole) == key:
+                self.coll_list.setCurrentRow(i)
+                return
+
     def set_heart_color(self, color, selected_color=None):
         """Accent changed — re-tint the All Favourites heart icon.
         selected_color (accent_fg) rims the heart on the selected row so it

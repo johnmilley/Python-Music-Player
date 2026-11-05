@@ -8,14 +8,14 @@ fullscreen view.
 
 ```
  ┌──────────────────┬───────────────────────┬────────────────┐
- │ ♪  🎙  〰  ♥      │                       │ Track title    │
+ │ ♪  🎙  〰  ♥   ▮▮▮ │                       │ Track title    │
  │ ‹  Artist — Album│                       │                │
  │──────────────────│       ALBUM ART       │ lyrics…        │
  │ 1. Track one     │   (always square)     │ ▶ active line  │
  │ 2. Track two     │ ┌───────────────────┐ │ lyrics…        │
  │ 3. Track three   │ │ title           ♥ │ │                │
  │                  │ │ 0:42 ━━━━━━━ 3:10 │ │                │
- │                  │ │ ≡ ⤮ ◀ ▶ ▶ ↻   ¶ ⋯ │ │                │
+ │                  │ │ ≡ ⤮ ◀ ▶ ▶ ↻   ⋯ 💬│ │                │
  │                  │ └───────────────────┘ │                │
  └──────────────────┴───────────────────────┴────────────────┘
    library pane (4)        the stage          lyrics pane (5)
@@ -27,10 +27,17 @@ fullscreen view.
   window left so the art doesn't move under the cursor. Maximized windows
   just reflow.
 - **Controls float over the art**, shown on hover and hidden after 2.5s
-  without mouse movement. `≡` toggles the library pane, `¶` the lyrics
-  pane, `⋯` opens the menu.
+  without mouse movement — or always, with ⋯ → **Pin Controls**
+  (`Shift+P`). The two pane toggles sit at the panel's outer edges, on the
+  side their pane opens: `≡` (left) the library pane, the speech bubble
+  (right) the lyrics / show-info pane; `⋯` opens the menu.
 - **Drag the art** to move the (frameless) window; drag any edge to resize.
-  **Double-click the art** for max mode; **right-click** it for the menu.
+  **Double-click the art** for max mode; **right-click** it for the menu;
+  **scroll** over it for volume (a readout flashes over the art). The
+  panel's speaker button opens a volume slider with mute; `m` mutes.
+- **Quick Tips** (the gestures above plus the key shortcuts that matter
+  most) pop up at launch until you tick "Don't show this at startup";
+  Help → Quick Tips brings them back.
 
 ## Library pane
 
@@ -45,8 +52,15 @@ Opening something (`Enter`, `l`, or a click) drills down; `h` or `‹` goes
 back up; `Tab` flips between the two pages.
 
 **Browsing never touches playback.** Opening another album while one plays
-leaves the art, accent and lyrics on the playing album; a **Now playing**
-link (or `n`) jumps the tracks page back to what's playing.
+leaves the art, accent and lyrics on the playing album. In the tracklist,
+the playing track is **bold with an equalizer marker**; the light tint is
+just your cursor. Whenever the pane
+is showing anything other than what's playing — another album, the library
+page, another mode — a **Now playing** link (equalizer icon, right of the
+mode tabs; its tooltip names what's playing) appears. It (or `n`) goes back
+to it in any mode: switches to the playing mode, selects the playing
+folder / collection / feed / station on the library page, and lists it on
+the tracks page with the playing track highlighted.
 
 **Jump to any album with `Ctrl+K`**: a search box over the art lists every
 album in the library; type a few letters of the artist and/or album
@@ -83,7 +97,9 @@ All Favourites plus your playlists, and the shuffle switch.
 
 Theme (dark/light, accent), Preferences (text size, overlay opacity, album
 art, library, remote access, listening stats), **Max Mode**, **Always on
-Top** (off by default, remembered), Change Station Art (radio), Help, Quit.
+Top** (off by default, remembered), **Pin Controls** (keep the control panel
+up instead of auto-hiding — main window and max mode; remembered), Change
+Station Art (radio), Help, Quit.
 
 ## Max mode (`Shift+M`, or double-click the art)
 

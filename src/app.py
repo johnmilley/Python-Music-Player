@@ -44,7 +44,7 @@ from PyQt5.QtWidgets import (QMainWindow, QApplication, QWidget, QHBoxLayout,
     QAction, QStackedWidget, QColorDialog, QShortcut, QDialog, QMenu,
     QVBoxLayout, QLabel, QLineEdit, QListWidgetItem, QSizePolicy, QFileDialog,
     QPushButton, QToolButton, QSlider, QDialogButtonBox, QMessageBox,
-    QWidgetAction, QGridLayout)
+    QWidgetAction, QGridLayout, QCheckBox)
 from PyQt5.QtCore import Qt, QEvent, QSettings, QTimer, QUrl, QPoint, pyqtSignal
 from PyQt5.QtGui import QColor, QPixmap, QIcon, QKeySequence, QDesktopServices
 
@@ -124,6 +124,7 @@ class App(QMainWindow):
 
         self.player = Player()
         self.album_view = AlbumView()
+        self.album_view.on_listing_changed = self._mark_playing_row
         self.lyrics_widget = LyricsWidget()
         self.folder_view = FolderView(self.album_view)
         self.podcast_view = PodcastView()
@@ -185,6 +186,9 @@ class App(QMainWindow):
         self.player.panel.heart_clicked.connect(self._toggle_current_favorite)
         self.player.panel.shuffle_clicked.connect(self._toggle_shuffle)
         self.player.panel.repeat_clicked.connect(self._toggle_repeat)
+        self.player.panel.volume_changed.connect(lambda v: self._set_volume(v / 100, flash=False))
+        self.player.panel.mute_clicked.connect(self._toggle_mute)
+        self.player.volume_wheel.connect(lambda n: self._adjust_volume(0.05 * n))
 
         # Frameless custom window (own titlebar below), matching the
         # non-system window style of the sibling 'text' app
@@ -212,6 +216,7 @@ class App(QMainWindow):
         self.library_pane.mode_clicked.connect(self._set_mode)
         self.library_pane.back_clicked.connect(self._show_library_page)
         self.library_pane.now_playing_clicked.connect(self._show_now_playing)
+        self.library_pane.page_changed.connect(self._update_now_playing_link)
         self.folder_view.album_opened.connect(lambda _: self._drill_to_tracks())
 
         # Lyrics pane (right)
@@ -327,6 +332,9 @@ class App(QMainWindow):
         self.shortcuts_action.setShortcut(QKeySequence('Shift+?'))
         self.shortcuts_action.triggered.connect(self.show_help)
         self.help_menu.addAction(self.shortcuts_action)
+        self.tips_action = QAction('Quick Tips', self)
+        self.tips_action.triggered.connect(lambda: self.show_tips(startup=False))
+        self.help_menu.addAction(self.tips_action)
         self.about_action = QAction('About', self)
         self.about_action.triggered.connect(self.show_about)
         self.help_menu.addAction(self.about_action)
@@ -348,6 +356,12 @@ class App(QMainWindow):
         self.on_top_action.setShortcutContext(Qt.WidgetShortcut)  # display only
         self.on_top_action.toggled.connect(self._set_on_top)
         self.main_menu.addAction(self.on_top_action)
+        self.pin_controls_action = QAction('Pin Controls', self)
+        self.pin_controls_action.setCheckable(True)
+        self.pin_controls_action.setShortcut(QKeySequence('Shift+P'))
+        self.pin_controls_action.setShortcutContext(Qt.WidgetShortcut)  # display only
+        self.pin_controls_action.toggled.connect(self._set_controls_pinned)
+        self.main_menu.addAction(self.pin_controls_action)
         self.station_art_action = QAction('Change Station Art...', self)
         self.station_art_action.triggered.connect(self._pick_station_art)
         self.main_menu.addAction(self.station_art_action)
@@ -399,6 +413,11 @@ class App(QMainWindow):
 
         # Restore saved state
         self._restore_state()
+        # Startup tips: every launch until the user opts out (non-modal,
+        # deferred until the event loop runs and the window is up)
+        self._tips_dialog = None
+        if self.settings.value('hints/show_tips', 'true') == 'true':
+            QTimer.singleShot(600, lambda: self.show_tips(startup=True))
 
         self.lyrics_widget.setFocusPolicy(Qt.NoFocus)
         self.lyrics_widget.seek_requested.connect(self._on_lyrics_seek)
@@ -454,11 +473,14 @@ class App(QMainWindow):
         self.setStyleSheet(theme.build_qss(t, self.font_size))
         self.player.set_control_scale(self.font_size)
         self.player.panel.set_theme(t, self.font_size)
-        self.library_pane.set_icons(self._toolbar_icon)
+        self.library_pane.set_icons(
+            self._toolbar_icon,
+            QIcon(_render_svg('now_playing', t['accent_text'], 28)))
         self.lyrics_widget.set_theme(t, self.font_size)
         # Accent heart icons in the tracklist / favourites list follow the
         # accent too
         self.album_view.set_heart_color(accent, t['accent_fg'])
+        self.album_view.set_playing_color(t['accent_text'])
         self.favorites_view.set_heart_color(accent, t['accent_fg'])
         if self.is_maxplayer:
             self._style_max_mode()
@@ -991,6 +1013,15 @@ class App(QMainWindow):
         # three-column geometry would make no sense here).
         if self.settings.value('stage/on_top') == 'true':
             self.on_top_action.setChecked(True)
+        if self.settings.value('stage/pin_controls') == 'true':
+            self.pin_controls_action.setChecked(True)
+        # Volume (and mute) persist; applied to music/podcast and radio alike
+        try:
+            self._volume = max(0.0, min(1.0, float(self.settings.value('volume', 1.0))))
+        except (TypeError, ValueError):
+            self._volume = 1.0
+        self._muted = self.settings.value('muted', 'false') == 'true'
+        self._apply_volume()
         geometry = (self.settings.value('stage/geometry')
                     or self.settings.value('mini/geometry'))
         self._resizing_self = True
@@ -1100,6 +1131,8 @@ class App(QMainWindow):
             ('Ctrl+K',  'Jump to album',       self._open_quick_switcher),
             ('Shift+M', 'Toggle max mode',    self.toggle_maxplayer),
             ('Shift+T', 'Always on top',      self._toggle_on_top),
+            ('Shift+P', 'Pin controls',       self._toggle_controls_pinned),
+            ('m',       'Mute / unmute',       self._toggle_mute),
             ('Shift+D', 'Toggle dark/light',   self.toggle_theme),
             ('Ctrl++',  'Increase font size',  lambda: self._step_font_size(1)),
             ('Ctrl+-',  'Decrease font size',  lambda: self._step_font_size(-1)),
@@ -1142,10 +1175,44 @@ class App(QMainWindow):
                 self.player.current_track.length_to_string(seconds))
             self.player._update_time_label(seconds)
 
+    # ── Volume: one value for music, podcasts and radio ────────────
+
     def _adjust_volume(self, delta):
-        if self.player.playback.active:
-            vol = self.player.playback.volume + delta
-            self.player.playback.set_volume(max(0, min(1, vol)))
+        """'.' / ',' and the mouse wheel over the art: step the volume
+        (unmuting first) and flash the readout over the art."""
+        self._muted = False
+        self._set_volume(self._volume + delta)
+
+    def _toggle_mute(self):
+        self._muted = not self._muted
+        self.settings.setValue('muted', 'true' if self._muted else 'false')
+        self._apply_volume(flash=True)
+
+    def _set_volume(self, volume, flash=True):
+        self._volume = round(max(0.0, min(1.0, volume)), 2)
+        if self._volume > 0:
+            self._muted = False
+        self.settings.setValue('volume', self._volume)
+        self.settings.setValue('muted', 'true' if self._muted else 'false')
+        self._apply_volume(flash=flash)
+
+    def _apply_volume(self, flash=False):
+        """Push the volume (0 when muted) to both audio paths and every
+        panel's speaker button; optionally flash the on-art readout."""
+        effective = 0.0 if self._muted else self._volume
+        self.player.set_volume(effective)
+        try:
+            self.radio_player.volume = round(effective * 100)
+        except Exception as e:
+            print(f'LOG: radio volume failed: {e}')
+        self.player.panel.set_volume_state(self._volume, self._muted)
+        if self._max_view:
+            self._max_view.panel.set_volume_state(self._volume, self._muted)
+        if flash:
+            if self.is_maxplayer and self._max_view:
+                self._max_view.flash_volume(self._volume, self._muted)
+            else:
+                self.player.flash_volume(self._volume, self._muted)
 
     # ── Window geometry: square art, panes widen the window ─────────
 
@@ -1265,6 +1332,17 @@ class App(QMainWindow):
             self.show()
         self.settings.setValue('stage/on_top', 'true' if on else 'false')
 
+    def _set_controls_pinned(self, on):
+        """Pin the playback controls over the art (⋯ menu / Shift+P) —
+        stage and max mode alike — instead of hover/idle auto-hide."""
+        self.player.set_controls_pinned(on)
+        if self._max_view:
+            self._max_view.set_controls_pinned(on)
+        self.settings.setValue('stage/pin_controls', 'true' if on else 'false')
+
+    def _toggle_controls_pinned(self):
+        self.pin_controls_action.toggle()
+
     def _toggle_on_top(self):
         # Flipping window flags re-shows the window, which would drop
         # max mode's fullscreen — the pin only applies to the stage
@@ -1299,6 +1377,7 @@ class App(QMainWindow):
             Qt.Key_B: self._shortcut_seek_back,
             Qt.Key_Period: lambda: self._adjust_volume(0.05),
             Qt.Key_Comma: lambda: self._adjust_volume(-0.05),
+            Qt.Key_M: self._toggle_mute,
             Qt.Key_4: self.toggle_tracklist,
             Qt.Key_5: self.toggle_lyrics,
             Qt.Key_S: self._toggle_shuffle,
@@ -1323,6 +1402,9 @@ class App(QMainWindow):
             return True
         if key == Qt.Key_H and mods & Qt.ShiftModifier:
             self._toggle_current_favorite()
+            return True
+        if key == Qt.Key_P and mods & Qt.ShiftModifier:
+            self._toggle_controls_pinned()
             return True
         if mods & Qt.ControlModifier:
             # Text size works in every mode — no dropping back to the
@@ -1453,20 +1535,145 @@ class App(QMainWindow):
                 row = self.player.playlist_pos
             lst.setCurrentRow(row)
 
-    def _show_now_playing(self):
-        """'n' / the pane's 'Now playing' link: list the playing album or
-        collection on the tracks page, without re-reading it from disk."""
+    # ── Now playing: where it lives, and getting back to it ────────
+
+    def _now_playing_mode(self):
+        """The library mode that holds what's playing (or was last loaded):
+        'music' (an Album), 'favorites' (a Playlist), 'podcast' (a feed),
+        'radio' (a station) — or None when nothing is."""
+        if self._playing_mode == 'radio':
+            return 'radio' if self._current_radio_station else None
         playing = self.player.playlist
+        if playing is None:
+            return None
+        if getattr(playing, 'is_playlist', False):
+            return 'favorites'
         if isinstance(playing, Album):
+            return 'music'
+        if self._playing_mode == 'podcast':
+            return 'podcast'
+        return None
+
+    def _at_now_playing(self):
+        """True while the library pane is showing what's playing: its mode,
+        and (except radio, whose library page IS the station list) its
+        tracklist. Nothing playing counts as 'there' — no link to show."""
+        mode = self._now_playing_mode()
+        if mode is None:
+            return True
+        if mode != self._mode:
+            return False
+        if mode == 'radio':
+            return True
+        if not self.library_pane.on_tracks_page():
+            return False
+        playing = self.player.playlist
+        shown = self.album_view.album
+        if mode == 'music':
+            return same_listing(playing, shown)
+        if mode == 'favorites':
+            # Favourite edits reload the shown collection as a new object
+            return (getattr(shown, 'is_playlist', False)
+                    and shown.playlist_name == playing.playlist_name)
+        # podcast: a listed feed is album_view.album (_list_podcast_episodes)
+        return getattr(shown, 'url', None) is not None and shown.url == getattr(playing, 'url', None)
+
+    def _mark_playing_row(self):
+        """Mark the tracklist row that's actually playing (bold + equalizer
+        marker, AlbumView.TrackDelegate) — only when the tracklist lists
+        the playing album/collection/feed. Matched by track (object or
+        path), so a favourites collection reloaded after an edit still
+        marks the right song."""
+        row = -1
+        playing = self.player.playlist
+        shown = self.album_view.album
+        current = self.player.current_track
+        if current is not None and playing is not None and shown is not None:
+            same = same_listing(playing, shown) or (
+                getattr(playing, 'is_playlist', False)
+                and getattr(shown, 'is_playlist', False)
+                and playing.playlist_name == shown.playlist_name)
+            if same:
+                cur_path = getattr(current, 'path', None)
+                for i, t in enumerate(getattr(shown, 'tracklist', None) or []):
+                    if t is current or (cur_path and getattr(t, 'path', None) == cur_path):
+                        row = i
+                        break
+        self.album_view.set_playing_row(row)
+
+    def _update_now_playing_link(self):
+        """Show the pane's 'Now playing' link whenever the pane is
+        anywhere else — another mode, the library page, or another
+        album/feed/collection."""
+        away = not self._at_now_playing()
+        btn = self.library_pane.now_playing_btn
+        if away:
+            btn.setToolTip(f'Back to {self._now_playing_label()} (n)')
+        btn.setVisible(away)
+
+    def _now_playing_label(self):
+        mode = self._now_playing_mode()
+        if mode == 'radio':
+            return self._current_radio_station.name
+        playing = self.player.playlist
+        if mode == 'music':
+            return self._album_title(playing) or 'the playing album'
+        return getattr(playing, 'title', '') or 'what\'s playing'
+
+    def _show_now_playing(self):
+        """'n' / the pane's 'Now playing' link: go back to what's playing,
+        in any mode — switch to its mode, select it in the library page
+        (the playing folder in the folder tree, its collection, feed or
+        station) and list it on the tracks page with the playing row
+        highlighted. Listings come from memory, never re-read from disk."""
+        mode = self._now_playing_mode()
+        if mode is None:
+            return
+        if mode != self._mode:
+            self._set_mode(mode, reveal=False)
+        playing = self.player.playlist
+        if mode == 'radio':
+            self._select_radio_station(self._current_radio_station)
+            self._show_library_page()
+            self._update_now_playing_link()
+            return
+        if mode == 'music':
+            self._select_music_folder(playing.path)
             self.album_view.show_album(playing)
             self.library_pane.set_tracks_title(self._album_title(playing))
-        elif getattr(playing, 'is_playlist', False):
+        elif mode == 'favorites':
+            self.favorites_view.select_key(playing.playlist_name)
             self.album_view.load_playlist(playing)
             self.library_pane.set_tracks_title(playing.title)
-        else:
-            return
+        else:  # podcast
+            self._select_podcast_feed(playing)
+            self._list_podcast_episodes(playing)
         self.album_view.track_list_widget.setCurrentRow(self.player.playlist_pos)
         self._drill_to_tracks()
+
+    def _select_music_folder(self, path):
+        """Select (expanding its parents) and scroll to a folder in the
+        music folder tree — so going back up lands on it."""
+        idx = self.folder_view.model.index(str(path))
+        if idx.isValid():
+            self.folder_view.view.setCurrentIndex(idx)
+            self.folder_view.view.scrollTo(idx)
+
+    def _select_podcast_feed(self, feed):
+        lst = self.podcast_view.feed_list
+        for i in range(lst.count()):
+            if lst.item(i).data(Qt.UserRole) == getattr(feed, 'url', None):
+                lst.setCurrentRow(i)
+                return
+
+    def _select_radio_station(self, station):
+        lst = self.radio_view.station_list
+        for i in range(lst.count()):
+            idx = lst.item(i).data(Qt.UserRole)
+            st = self.radio_view._stations[idx] if idx is not None and idx < len(self.radio_view._stations) else None
+            if st is not None and st.stream_url == station.stream_url:
+                lst.setCurrentRow(i)
+                return
 
     def _open_quick_switcher(self):
         """Ctrl+K: search every album in the library by artist/album."""
@@ -1486,19 +1693,9 @@ class App(QMainWindow):
         path = root if album_id == '.' else str(Path(root) / album_id)
         if self._mode != 'music':
             self._set_mode('music', reveal=False)
-        idx = self.folder_view.model.index(path)
-        if idx.isValid():
-            self.folder_view.view.setCurrentIndex(idx)
-            self.folder_view.view.scrollTo(idx)
+        self._select_music_folder(path)
         self.album_view.load_album_listing(path)
         self._drill_to_tracks()
-
-    def _update_now_playing_link(self):
-        playing = self.player.playlist
-        browsing_elsewhere = (
-            (isinstance(playing, Album) or getattr(playing, 'is_playlist', False))
-            and not same_listing(playing, self.album_view.album))
-        self.library_pane.now_playing_btn.setVisible(browsing_elsewhere)
 
     @staticmethod
     def _album_title(album):
@@ -1585,6 +1782,77 @@ class App(QMainWindow):
         layout.addWidget(label)
         dialog.setLayout(layout)
         dialog.exec_()
+
+    # The startup tips card: the gestures you can't see and the keys that
+    # matter most. Everything else is one '?' away.
+    TIPS_MOUSE = (
+        ('Hover the art', 'Playback controls (⋯ = menu)'),
+        ('Drag the art', 'Move the window'),
+        ('Double-click the art', 'Max mode'),
+        ('Right-click the art', 'Menu'),
+        ('Scroll over the art', 'Volume'),
+    )
+    TIPS_KEYS = (
+        ('1  2  3  0', 'Music · podcasts · radio · favourites'),
+        ('4  /  5', 'Tracklist pane / lyrics pane'),
+        ('p  ·  <  >', 'Play/pause · previous / next'),
+        ('n', 'Back to what\'s playing'),
+        ('Ctrl+K', 'Jump to any album'),
+        ('.  ,  ·  m', 'Volume up / down · mute'),
+        ('Shift+P', 'Pin the controls'),
+        ('?', 'Every shortcut'),
+    )
+
+    def show_tips(self, startup=False):
+        """Quick tips (Help → Quick Tips; also at launch until 'Don't show
+        this at startup' is ticked). Non-modal — it never blocks the app."""
+        if self._tips_dialog is not None and self._tips_dialog.isVisible():
+            self._tips_dialog.raise_()
+            self._tips_dialog.activateWindow()
+            return
+        if startup and not self.isVisible():
+            return
+        dialog = QDialog(self)
+        dialog.setWindowTitle('Quick Tips')
+        dialog.setAttribute(Qt.WA_DeleteOnClose)
+        dialog.setStyleSheet(theme.dialog_qss(self.effective_theme, fs=12))
+        accent = self.effective_theme.get('accent_text', self.accent_color)
+
+        def esc(text):
+            return text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+
+        def section(title, rows):
+            body = ''.join(
+                f'<tr><td style="padding: 3px 18px 3px 0; white-space: nowrap;">'
+                f'<b>{esc(k)}</b></td><td style="padding: 3px 0;">{esc(d)}</td></tr>'
+                for k, d in rows)
+            return (f'<p style="margin: 10px 0 4px 0; color: {accent};"><b>{title}</b></p>'
+                    f'<table>{body}</table>')
+
+        label = QLabel(
+            '<h3 style="margin: 0;">Welcome to lp</h3>'
+            '<p style="margin: 4px 0 0 0;">The album art is the player — most things '
+            'start there.</p>'
+            + section('Mouse', self.TIPS_MOUSE)
+            + section('Keys', self.TIPS_KEYS))
+        label.setTextFormat(Qt.RichText)
+        layout = QVBoxLayout(dialog)
+        layout.addWidget(label)
+        bottom = QHBoxLayout()
+        hide_box = QCheckBox("Don't show this at startup")
+        hide_box.setChecked(self.settings.value('hints/show_tips', 'true') != 'true')
+        hide_box.toggled.connect(lambda on: self.settings.setValue(
+            'hints/show_tips', 'false' if on else 'true'))
+        bottom.addWidget(hide_box)
+        bottom.addStretch(1)
+        ok = QPushButton('Got it')
+        ok.setDefault(True)
+        ok.clicked.connect(dialog.close)
+        bottom.addWidget(ok)
+        layout.addLayout(bottom)
+        self._tips_dialog = dialog
+        dialog.destroyed.connect(lambda: setattr(self, '_tips_dialog', None))
+        dialog.show()
 
     def show_about(self):
         dialog = QDialog(self)
@@ -1692,6 +1960,7 @@ class App(QMainWindow):
         artist = str(getattr(track, 'artist', '') or '')
         self.setWindowTitle(f'{title} — {artist}' if artist else (title or 'lp'))
         self._update_now_playing_link()
+        self._mark_playing_row()
         if track_mode == 'music' and isinstance(self.player.playlist, Album):
             # The accent follows the PLAYING album (deduped per album path)
             self._update_accent_for_album()
@@ -1802,6 +2071,7 @@ class App(QMainWindow):
 
         if self._max_view is None:
             self._max_view = MaxView(self.player)
+            self._max_view.set_controls_pinned(self.player.controls_pinned)
             # Art click still exits max mode (only entry-by-click is removed
             # — see _on_art_clicked)
             self._max_view.art.clicked.connect(self.toggle_maxplayer)
@@ -1815,6 +2085,11 @@ class App(QMainWindow):
             self._max_view.panel.shuffle_clicked.connect(self._toggle_shuffle)
             self._max_view.panel.repeat_clicked.connect(self._toggle_repeat)
             self._max_view.panel.more_clicked.connect(self._popup_menu_at_more)
+            self._max_view.panel.volume_changed.connect(
+                lambda v: self._set_volume(v / 100, flash=False))
+            self._max_view.panel.mute_clicked.connect(self._toggle_mute)
+            self._max_view.volume_wheel.connect(lambda n: self._adjust_volume(0.05 * n))
+            self._max_view.panel.set_volume_state(self._volume, self._muted)
             self._max_view.art.setContextMenuPolicy(Qt.CustomContextMenu)
             self._max_view.art.customContextMenuRequested.connect(
                 lambda pos: self.main_menu_popup(self._max_view.art.mapToGlobal(pos)))
@@ -1963,6 +2238,7 @@ class App(QMainWindow):
             self._show_library_page()
         else:
             self.library_pane.show_library()
+        self._update_now_playing_link()
 
     def _connect_music_tracklist(self):
         """Point the tracklist's click/context-menu at the music handlers
@@ -2207,9 +2483,12 @@ class App(QMainWindow):
 
         # Clear tracklist
         self.album_view.track_list_widget.clear()
+        self.album_view.listing_changed()
         self.lyrics_widget.clear()
 
+        self._apply_volume()  # before the stream starts (subprocess player)
         self.radio_player.play_stream(station.stream_url)
+        self._update_now_playing_link()
 
     def _load_station_art(self, station_name):
         """Load cached station art, or fall back to the SVG placeholder."""
@@ -2306,6 +2585,50 @@ class App(QMainWindow):
     def _on_podcast_feed_selected(self, feed):
         """Load episodes from a podcast feed into the album view."""
         self._save_podcast_position()
+        self._list_podcast_episodes(feed)
+        self._drill_to_tracks()
+
+        # Browsing never touches what's playing: the feed's description,
+        # art and accent only preview when nothing else is playing (or this
+        # feed is the one playing) — otherwise they wait for an episode to
+        # actually play (_play_episode)
+        # (the description only with nothing playing at all: while this
+        # feed plays, the pane keeps the playing episode's notes)
+        if self._now_playing_mode() is None:
+            self.lyrics_widget.set_description(feed.description)
+
+        # Check if we need to restore a previous episode
+        self._try_podcast_restore(feed)
+
+        # Download podcast artwork (always — it's cached for playback);
+        # shown now only when previewing
+        if feed.image_url and not feed.art:
+            self._image_thread = ImageDownloadThread(
+                feed.image_url, feed.title, parent=self)
+            self._image_thread.finished.connect(
+                lambda path: self._on_podcast_art_downloaded(feed, path))
+            self._image_thread.start()
+        elif feed.art and self._podcast_may_preview(feed):
+            self._show_podcast_art(feed)
+
+    def _podcast_may_preview(self, feed):
+        """May a browsed feed take over the stage (art, accent, lyrics
+        pane)? Only when nothing is playing, or it's the feed playing."""
+        mode = self._now_playing_mode()
+        if mode is None:
+            return True
+        return (mode == 'podcast'
+                and getattr(self.player.playlist, 'url', None) == getattr(feed, 'url', None))
+
+    def _show_podcast_art(self, feed):
+        self.player.set_art(QPixmap(str(feed.art)))
+        # Feed as player album so accent extraction keys on it
+        self.player.album = feed
+        self._update_accent_for_album(force=True)
+
+    def _list_podcast_episodes(self, feed):
+        """List a feed's episodes in the tracklist (podcast click and
+        context-menu handlers swapped in) and title the tracks page."""
         self._current_podcast_feed = feed
         self.album_view.track_list_widget.clear()
 
@@ -2333,33 +2656,16 @@ class App(QMainWindow):
             self._episode_context_menu)
 
         self.library_pane.set_tracks_title(feed.title)
-        self._drill_to_tracks()
-
-        # Show podcast description in lyrics panel
-        self.lyrics_widget.set_description(feed.description)
-
-        # Check if we need to restore a previous episode
-        self._try_podcast_restore(feed)
-
-        # Download and display podcast artwork
-        if feed.image_url and not feed.art:
-            self._image_thread = ImageDownloadThread(
-                feed.image_url, feed.title, parent=self)
-            self._image_thread.finished.connect(
-                lambda path: self._on_podcast_art_downloaded(feed, path))
-            self._image_thread.start()
-        elif feed.art:
-            self.player.set_art(QPixmap(str(feed.art)))
-            self.player.album = feed
-            self._update_accent_for_album(force=True)
+        # The tracklist's listing is now this feed (same_listing knows feeds)
+        self.album_view.album = feed
+        self.album_view.listing_changed()
 
     def _on_podcast_art_downloaded(self, feed, path):
         from pathlib import Path as P
         feed.art = P(path)
-        self.player.set_art(QPixmap(path))
-        # Set feed as player album temporarily so accent extraction works
-        self.player.album = feed
-        self._update_accent_for_album(force=True)
+        # Decided at arrival: music may have started (or stopped) meanwhile
+        if self._podcast_may_preview(feed):
+            self._show_podcast_art(feed)
 
     def _episode_label(self, ep, progress=None):
         """Format an episode list label with download indicator."""
@@ -2551,6 +2857,7 @@ class App(QMainWindow):
         try:
             self.player.playback.load_file(ep.path)
             self.player.playback.play()
+            self.player.apply_volume()
             self.player.timer.start(self.player.APP_UPDATE_TIME)
             # Resume from saved position
             saved_pos = self._episode_positions.get(ep.guid, 0)
@@ -2566,9 +2873,11 @@ class App(QMainWindow):
         # Highlight in tracklist
         self.album_view.track_list_widget.setCurrentRow(idx)
 
-        # Show podcast art
+        # Show podcast art + its accent (browsing the feed deliberately
+        # didn't if something else was playing; a still-downloading cover
+        # lands via _on_podcast_art_downloaded — this feed now plays)
         if feed.art:
-            self.player.set_art(QPixmap(str(feed.art)))
+            self._show_podcast_art(feed)
 
 
     def closeEvent(self, event):

@@ -11,7 +11,7 @@ All global shortcuts are `QShortcut` instances that are suppressed when a `QLine
 | `h` | Folder view: collapse node; at top level: back down to the open tracklist |
 | `h` / `l` | In the tracklist: back up to the library |
 | `Tab` | Flip between the library and tracklist pages |
-| `n` | Show the playing album / collection (also in max mode) |
+| `n` | Go back to what's playing, in any mode — selects it on the library page and lists it (also in max mode) |
 | `Ctrl+K` | Jump to any album: type part of the artist/album, `↑`/`↓` (or `Ctrl+J`/`Ctrl+K`), `Enter` opens, `Esc` cancels. Works in max mode too (opens in max's tracklist) |
 | `/` | Open search bar in the focused list |
 
@@ -24,8 +24,9 @@ All global shortcuts are `QShortcut` instances that are suppressed when a `QLine
 | `<` | Previous track (podcasts: -30s) |
 | `f` | Seek forward 5 seconds |
 | `b` | Seek back 5 seconds |
-| `.` | Volume up 5% |
-| `,` | Volume down 5% |
+| `.` | Volume up 5% (also: scroll up over the art) |
+| `,` | Volume down 5% (also: scroll down over the art) |
+| `m` | Mute / unmute |
 | `s` | Toggle shuffle |
 | `Shift+H` | Favourite / unfavourite the playing track |
 
@@ -38,6 +39,7 @@ All global shortcuts are `QShortcut` instances that are suppressed when a `QLine
 | `5` | Toggle the lyrics pane |
 | `Shift+M` | Toggle max mode (also: double-click the art) |
 | `Shift+T` | Toggle always on top (not in max mode) |
+| `Shift+P` | Pin / unpin the playback controls (also in max mode) |
 | `Shift+D` | Toggle dark / light theme |
 | `Ctrl++` / `Ctrl+=` | Increase text size |
 | `Ctrl+-` | Decrease text size |

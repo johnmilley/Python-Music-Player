@@ -11,8 +11,8 @@
 # rather than a state toggle like tracklist/lyrics.
 
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-    QToolButton, QSizePolicy, QGraphicsDropShadowEffect)
-from PyQt5.QtCore import Qt, QSize, pyqtSignal
+    QToolButton, QSizePolicy, QGraphicsDropShadowEffect, QFrame, QSlider)
+from PyQt5.QtCore import Qt, QSize, QPoint, QTimer, pyqtSignal
 from PyQt5.QtGui import QIcon, QColor
 
 from player import _render_svg
@@ -79,6 +79,17 @@ def _toggle_icon(name, active, accent, dim, size):
 def _repeat_icon(mode, accent, dim, size):
     name = 'repeat_one' if mode == 'one' else 'repeat'
     return _icon_for(name, dim if mode == 'off' else accent, size)
+
+
+def volume_icon_name(volume, muted):
+    """volume 0..1 -> the speaker icon for it."""
+    if muted or volume <= 0:
+        return 'volume_off'
+    return 'volume_down' if volume < 0.5 else 'volume_up'
+
+
+def volume_text(volume, muted):
+    return 'Muted' if muted else f'Volume {round(volume * 100)}%'
 
 
 def _shared_button_qss(selector_prefix, accent, hover_alpha=90):
@@ -151,6 +162,9 @@ class ControlPanel(QWidget):
     more_clicked = pyqtSignal()
     shuffle_clicked = pyqtSignal()
     repeat_clicked = pyqtSignal()
+    # Volume popup (speaker button): slider moved (0-100) / mute toggled
+    volume_changed = pyqtSignal(int)
+    mute_clicked = pyqtSignal()
 
     def __init__(self, parent=None, show_back=False, show_side_toggles=True,
                  show_more=False):
@@ -170,6 +184,8 @@ class ControlPanel(QWidget):
         self._lyrics_on = False
         self._shuffle_on = False
         self._repeat_mode = 'off'
+        self._volume = 1.0
+        self._muted = False
         self._seek_mode = False  # podcasts: prev/next are -30s/+30s
         self._show_side_toggles = show_side_toggles
 
@@ -184,6 +200,15 @@ class ControlPanel(QWidget):
         self.title_label.setObjectName('panel-title')
         self.title_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         row1.addWidget(self.title_label, stretch=1)
+        # Speaker: opens a slider popup (volume also follows the mouse
+        # wheel over the art and the . / , keys — App owns the value)
+        self.volume_btn = self._make_button('volume_up', 'Volume (scroll over the art · . / ,)',
+                                            size=26, icon_size=17)
+        self.volume_btn.clicked.connect(self._open_volume_popup)
+        row1.addWidget(self.volume_btn)
+        self.volume_popup = VolumePopup(self)
+        self.volume_popup.volume_changed.connect(self.volume_changed.emit)
+        self.volume_popup.mute_clicked.connect(self.mute_clicked.emit)
         self.heart_btn = self._make_button('heart_outline', 'Favourite (Shift+H)',
                                            size=26, icon_size=17, heart=True)
         self.heart_btn.clicked.connect(self.heart_clicked.emit)
@@ -205,8 +230,10 @@ class ControlPanel(QWidget):
         row2.addWidget(self.len_label)
         outer.addLayout(row2)
 
-        # Row 3: [tracklist toggle] | shuffle | transport | repeat | [lyrics toggle] | [back] | [⋯]
+        # Row 3: [tracklist toggle] | shuffle | transport | repeat | [⋯] | [back] | [lyrics toggle]
         # Bracketed buttons are optional; omitted ones reserve no space.
+        # The two pane toggles sit at the outer edges, on the side their
+        # pane opens (library left, lyrics right).
         row3 = QHBoxLayout()
         row3.setSpacing(2)
         self.tracklist_btn = None
@@ -231,16 +258,6 @@ class ControlPanel(QWidget):
         self.repeat_btn.clicked.connect(self.repeat_clicked.emit)
         row3.addWidget(self.repeat_btn)
         row3.addStretch(1)
-        self.lyrics_btn = None
-        if show_side_toggles:
-            self.lyrics_btn = self._make_button('lyrics', 'Toggle lyrics (5)')
-            self.lyrics_btn.clicked.connect(self.lyrics_clicked.emit)
-            row3.addWidget(self.lyrics_btn)
-        self.back_btn = None
-        if show_back:
-            self.back_btn = self._make_button('close', 'Back')
-            self.back_btn.clicked.connect(self.back_clicked.emit)
-            row3.addWidget(self.back_btn)
         # ⋯ menu (main window only): theme, preferences, max mode, pin...
         # — everything the old toolbar's gear button held
         self.more_btn = None
@@ -248,6 +265,16 @@ class ControlPanel(QWidget):
             self.more_btn = self._make_button('more_horiz', 'Menu')
             self.more_btn.clicked.connect(self.more_clicked.emit)
             row3.addWidget(self.more_btn)
+        self.back_btn = None
+        if show_back:
+            self.back_btn = self._make_button('close', 'Back')
+            self.back_btn.clicked.connect(self.back_clicked.emit)
+            row3.addWidget(self.back_btn)
+        self.lyrics_btn = None
+        if show_side_toggles:
+            self.lyrics_btn = self._make_button('lyrics', 'Toggle lyrics / show info (5)')
+            self.lyrics_btn.clicked.connect(self.lyrics_clicked.emit)
+            row3.addWidget(self.lyrics_btn)
         outer.addLayout(row3)
 
         self.set_theme(theme_mod.LIGHT, theme_mod.DEFAULT_SIZE)
@@ -278,6 +305,7 @@ class ControlPanel(QWidget):
             self._opacity = t['overlay_opacity']
         self.setStyleSheet(_panel_qss(
             t, fs or theme_mod.DEFAULT_SIZE, self._opacity))
+        self.volume_popup.set_theme(self._accent, fs or theme_mod.DEFAULT_SIZE)
         self._refresh_icons()
         self._apply_title_elide()
 
@@ -297,6 +325,8 @@ class ControlPanel(QWidget):
         self.play_btn.setIcon(_icon_for(
             'pause' if self._playing else 'play_arrow', fg, self.play_btn._icon_size))
         self.heart_btn.setIcon(_heart_icon(self._favorited, self._accent, self.heart_btn._icon_size))
+        self.volume_btn.setIcon(_icon_for(volume_icon_name(self._volume, self._muted),
+                                          fg, self.volume_btn._icon_size))
         if self.back_btn:
             self.back_btn.setIcon(_icon_for('close', fg, self.back_btn._icon_size))
         if self.more_btn:
@@ -307,6 +337,22 @@ class ControlPanel(QWidget):
                                 else ('skip_previous', 'skip_next'))
         self.prev_btn.setIcon(_icon_for(prev_name, self._icon_fg, self.prev_btn._icon_size))
         self.next_btn.setIcon(_icon_for(next_name, self._icon_fg, self.next_btn._icon_size))
+
+    # ── Volume ──────────────────────────────────────────────────────
+
+    def _open_volume_popup(self):
+        self.volume_popup.open_below(self.volume_btn)
+
+    def volume_popup_open(self):
+        return self.volume_popup.isVisible()
+
+    def set_volume_state(self, volume, muted):
+        self._volume = volume
+        self._muted = muted
+        self.volume_btn.setIcon(_icon_for(volume_icon_name(volume, muted),
+                                          self._icon_fg, self.volume_btn._icon_size))
+        self.volume_btn.setToolTip(f'{volume_text(volume, muted)} — scroll over the art · . / ,')
+        self.volume_popup.set_state(volume, muted)
 
     # ── State (called by the host view) ──────────────────────────────
 
@@ -386,3 +432,128 @@ def position_control_panel(panel, art_x, art_y, art_w, art_h):
     x = art_x + (art_w - w) // 2
     y = art_y + art_h - h - 16
     panel.setGeometry(x, y, w, h)
+
+
+class VolumePopup(QFrame):
+    """The speaker button's popup: mute toggle, slider, percentage. A
+    Qt.Popup window, so it closes on any click outside and takes the mouse
+    wheel while open. Always the dark scrim look, like the panel."""
+    volume_changed = pyqtSignal(int)   # 0-100, as the slider moves
+    mute_clicked = pyqtSignal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent, Qt.Popup | Qt.FramelessWindowHint)
+        self.setObjectName('volume-popup')
+        self._muted = False
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(8, 6, 10, 6)
+        lay.setSpacing(6)
+        self.mute_btn = QToolButton(self)
+        self.mute_btn.setToolTip('Mute')
+        self.mute_btn.setCursor(Qt.PointingHandCursor)
+        self.mute_btn.setFocusPolicy(Qt.NoFocus)
+        self.mute_btn.setFixedSize(26, 26)
+        self.mute_btn.setIconSize(QSize(17, 17))
+        self.mute_btn.clicked.connect(self.mute_clicked.emit)
+        lay.addWidget(self.mute_btn)
+        self.slider = QSlider(Qt.Horizontal, self)
+        self.slider.setRange(0, 100)
+        self.slider.setSingleStep(5)
+        self.slider.setPageStep(10)
+        self.slider.setFixedWidth(140)
+        self.slider.valueChanged.connect(self._on_slider)
+        lay.addWidget(self.slider)
+        self.value_label = QLabel(self)
+        self.value_label.setMinimumWidth(36)
+        self.value_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        lay.addWidget(self.value_label)
+        self._syncing = False
+        self.set_theme(theme_mod.DEFAULT_ACCENT, theme_mod.DEFAULT_SIZE)
+
+    def set_theme(self, accent, fs):
+        self.setStyleSheet(f"""
+            #volume-popup {{
+                background-color: rgba(20, 20, 20, 235);
+                border: 1px solid rgba(255, 255, 255, 30);
+            }}
+            #volume-popup QLabel {{
+                color: white;
+                font-family: {theme_mod.FONT};
+                font-size: {max(fs - 2, 7)}pt;
+                background: transparent;
+            }}
+            {_shared_button_qss('#volume-popup', accent)}
+            #volume-popup QSlider::groove:horizontal {{
+                height: 4px;
+                background: rgba(255, 255, 255, 50);
+            }}
+            #volume-popup QSlider::sub-page:horizontal {{
+                background: {accent};
+            }}
+            #volume-popup QSlider::handle:horizontal {{
+                background: white;
+                width: 10px;
+                margin: -5px 0;
+                border-radius: 0px;
+            }}
+        """)
+
+    def set_state(self, volume, muted):
+        self._muted = muted
+        self._syncing = True
+        self.slider.setValue(round(volume * 100))
+        self._syncing = False
+        self.value_label.setText('Muted' if muted else f'{round(volume * 100)}%')
+        self.mute_btn.setIcon(_icon_for(volume_icon_name(volume, muted), 'white', 17))
+        self.mute_btn.setToolTip('Unmute' if muted else 'Mute')
+
+    def _on_slider(self, value):
+        if not self._syncing:
+            self.volume_changed.emit(value)
+
+    def open_below(self, button):
+        """Pop up just above the speaker button (the panel sits at the
+        art's bottom edge, so above is where the room is)."""
+        self.adjustSize()
+        g = button.mapToGlobal(QPoint(button.width() // 2, 0))
+        self.move(g.x() - self.width() + button.width() // 2 + 8, g.y() - self.height() - 6)
+        self.show()
+        self.slider.setFocus()
+
+
+class VolumeOSD(QLabel):
+    """Brief 'Volume 65%' readout over the art for wheel / key changes —
+    the panel may be hidden, and the keys give no other feedback."""
+
+    SHOW_MS = 1200
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.setObjectName('volume-osd')
+        self.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self.setAlignment(Qt.AlignCenter)
+        self.setStyleSheet(f"""
+            #volume-osd {{
+                background-color: rgba(20, 20, 20, 200);
+                color: white;
+                font-family: {theme_mod.FONT};
+                font-weight: bold;
+                padding: 6px 14px;
+                border-radius: {PANEL_RADIUS}px;
+            }}
+        """)
+        self._timer = QTimer(self)
+        self._timer.setSingleShot(True)
+        self._timer.setInterval(self.SHOW_MS)
+        self._timer.timeout.connect(self.hide)
+        self.hide()
+
+    def flash(self, volume, muted, art_rect):
+        """Show the value centered near the top of art_rect (parent coords)."""
+        self.setText(volume_text(volume, muted))
+        self.adjustSize()
+        self.move(art_rect.x() + (art_rect.width() - self.width()) // 2,
+                  art_rect.y() + 16)
+        self.show()
+        self.raise_()
+        self._timer.start()

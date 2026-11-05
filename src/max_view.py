@@ -22,6 +22,7 @@ import overlay_controls
 
 class MaxView(QWidget):
     exit_requested = pyqtSignal()
+    volume_wheel = pyqtSignal(int)  # wheel over the art/panel (see Player)
 
     def __init__(self, player, parent=None):
         super().__init__(parent)
@@ -110,6 +111,9 @@ class MaxView(QWidget):
         self._idle_timer.setSingleShot(True)
         self._idle_timer.setInterval(overlay_controls.IDLE_HIDE_MS)
         self._idle_timer.timeout.connect(self._hide_hover_controls)
+        self.controls_pinned = False  # see set_controls_pinned
+        self._wheel_acc = 0
+        self.volume_osd = overlay_controls.VolumeOSD(self)
         # Mouse-move never reaches this widget's own handlers while the
         # cursor is over a child (the art, the borrowed panes) — watch
         # application-wide. Installed only while
@@ -148,12 +152,47 @@ class MaxView(QWidget):
 
     def _hide_hover_controls(self):
         self._idle_timer.stop()
-        self.panel.hide()
+        if not self.controls_pinned and not self.panel.volume_popup_open():
+            self.panel.hide()
+
+    def set_controls_pinned(self, on):
+        """Same as Player.set_controls_pinned: a pinned panel stays up."""
+        self.controls_pinned = on
+        if on:
+            if self.isVisible():
+                self._show_hover_controls()
+        else:
+            self._idle_timer.start()
+
+    def flash_volume(self, volume, muted):
+        self.volume_osd.flash(volume, muted, self.art.geometry())
+
+    def _over_art_or_panel(self, obj):
+        w = obj if isinstance(obj, QWidget) else None
+        while w is not None:
+            if w is self.art or w is self.panel:
+                return True
+            w = w.parentWidget()
+        return False
 
     def eventFilter(self, obj, event):
-        if (event.type() == QEvent.MouseMove and self.isVisible()
+        t = event.type()
+        if (t == QEvent.Wheel and self.isVisible()
+                and self._over_art_or_panel(obj)):
+            # Volume over the art/panel only — the borrowed tracklist and
+            # lyrics panes keep scrolling normally
+            self._wheel_acc += event.angleDelta().y()
+            steps = int(self._wheel_acc / 120)
+            if steps:
+                self._wheel_acc -= steps * 120
+                self.volume_wheel.emit(steps)
+            return True
+        if (t == QEvent.MouseMove and self.isVisible()
                 and self.window().isActiveWindow()):
             self._show_hover_controls()
+        elif t == QEvent.Resize and obj is self.art and not self.panel.isHidden():
+            # Toggling the side panes resizes the art, not this view
+            self._position_controls()
         return super().eventFilter(obj, event)
 
     def showEvent(self, event):
@@ -161,6 +200,9 @@ class MaxView(QWidget):
         if app is not None:
             app.installEventFilter(self)
         super().showEvent(event)
+        if self.controls_pinned:
+            # After layout settles, so the panel lands on the final art rect
+            QTimer.singleShot(0, self._show_hover_controls)
 
     def hideEvent(self, event):
         app = QApplication.instance()
