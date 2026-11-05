@@ -221,13 +221,12 @@ def build_qss(t, fs=None):
     accent = t['accent']
     accent_fg = t['accent_fg']
     accent_soft = _alpha(accent, 38)     # pill/selection tint
-    accent_press = _alpha(accent, 70)
     accent_hover = _alpha(accent, 22)    # faint accent tint for hover states
     item_pad = max(3, (fs_t - 10) // 2 + 3)
 
     return f"""
         /* ── Base ─────────────────────────────────────────────── */
-        QMainWindow, #main-window, #left-stack {{
+        QMainWindow, #stage, #left-stack {{
             background-color: {t['bg']};
         }}
         /* Frameless window: root_stack fills the window edge to edge and
@@ -255,52 +254,72 @@ def build_qss(t, fs=None):
             padding: 4px 8px;
         }}
 
-        /* ── Splitters: handles are custom-painted (grip_splitter.py) ── */
-        QSplitter::handle {{ background: transparent; }}
-
-        /* ── Titlebar: custom frameless-window chrome, sits directly on
-           top of the toolbar with the same background so the two read as
-           one continuous strip (mirrors the titlebar+tabbar stack in the
-           sibling 'text' app) ── */
-        #titlebar {{
-            background-color: {t['bg_elevated']};
-            border-bottom: 1px solid {t['hairline']};
+        /* ── Side panes: library (mode tabs + drill-down) / lyrics ── */
+        #library-pane {{
+            background-color: {t['bg']};
+            border-right: 1px solid {t['hairline']};
         }}
-        #titlebar-title {{
-            color: {t['fg_dim']};
-            font-family: {FONT};
-            font-size: {fs_c}pt;
+        #lyrics-pane {{
+            background-color: {t['bg']};
+            border-left: 1px solid {t['hairline']};
         }}
-        #titlebar-buttons QToolButton {{
+        #mode-tab, #pane-back, #now-playing-btn {{
             background: transparent;
             border: none;
-            color: {t['fg_dim']};
+            padding: 1px 7px;
         }}
-        #titlebar-buttons QToolButton:hover {{
+        #mode-tab:hover, #pane-back:hover, #now-playing-btn:hover {{
             background-color: {accent_hover};
+        }}
+        #pane-back {{
+            color: {t['fg_dim']};
+            font-size: {fs_c + 6}pt;
+            padding: 0 6px 2px 4px;
+        }}
+        #pane-title {{
             color: {t['fg']};
+            background: transparent;
+            font-family: {FONT};
+            font-weight: bold;
+            font-size: {fs_c + 1}pt;
         }}
-        #tb-close:hover {{
-            background-color: #c0392b;
-            color: white;
+        #now-playing-btn {{
+            color: {t['accent_text']};
+            font-family: {FONT};
+            font-size: {max(fs_c - 1, 7)}pt;
         }}
 
-        /* ── Toolbar: accent strip, elevated strip, square toggles ── */
-        #accent-bar {{
-            background-color: {accent};
-        }}
-        #toolbar {{
+        /* ── Ctrl+K album switcher ──────────────────────────────── */
+        #quick-switcher {{
             background-color: {t['bg_elevated']};
+            border: 1px solid {t['hairline']};
         }}
-        #mode-toggle, #panel-toggle, #icon-button {{
-            background: transparent;
+        #quick-switcher-input {{
+            font-size: {fs_c + 1}pt;
+            font-family: {FONT};
+            color: {t['fg']};
+            background-color: {t['bg']};
+            border: 1px solid {accent};
+            padding: 6px 8px;
+        }}
+        #quick-switcher-list {{
+            font-size: {fs_c}pt;
+            font-family: {FONT};
+            color: {t['fg']};
+            background-color: {t['bg_elevated']};
             border: none;
-            padding: 1px 9px;
+            outline: none;
         }}
-        #mode-toggle:hover, #panel-toggle:hover, #icon-button:hover {{
+        #quick-switcher-list::item {{
+            padding: {item_pad}px 6px;
+        }}
+        #quick-switcher-list::item:hover {{
             background-color: {accent_hover};
         }}
-        #icon-button::menu-indicator {{ image: none; width: 0; }}
+        #quick-switcher-list::item:selected {{
+            background-color: {accent};
+            color: {accent_fg};
+        }}
 
         /* ── Menus ────────────────────────────────────────────── */
         QMenu {{
@@ -337,39 +356,9 @@ def build_qss(t, fs=None):
             margin-left: 6px;
         }}
 
-        /* ── Player column: now-playing card ─────────────────── */
+        /* ── Stage: the art letterboxes onto the page background ── */
         #player {{
             background-color: {t['bg']};
-        }}
-        #track-info {{
-            font-family: {FONT};
-            font-size: {fs_c + 1}pt;
-            color: {t['fg']};
-            background: transparent;
-        }}
-        #track-progress, #track-length {{
-            font-family: {FONT};
-            font-size: {max(fs_c - 1, 7)}pt;
-            color: {t['fg_dim']};
-            background: transparent;
-        }}
-        QProgressBar {{
-            border: none;
-            background: {t['hover']};
-        }}
-        QProgressBar::chunk {{
-            background-color: {accent};
-        }}
-        #prev-button, #play-button, #next-button {{
-            background: transparent;
-            border: none;
-            padding: 2px 8px;
-        }}
-        #prev-button:hover, #play-button:hover, #next-button:hover {{
-            background: {accent};
-        }}
-        #prev-button:pressed, #play-button:pressed, #next-button:pressed {{
-            background: {accent_press};
         }}
 
         /* ── Library tree / tracklist: flat, accent selection ──── */

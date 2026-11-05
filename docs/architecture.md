@@ -4,48 +4,48 @@ lp is a PyQt5 desktop music player with a flat source layout — all files live 
 
 ## Layout
 
-The central widget is a `QStackedWidget` with two pages — the normal layout
-and the fullscreen max view. The normal page nests two splitters under a
-custom toolbar:
+The central widget is a `QStackedWidget` with two pages — the stage (the
+main window, v2's former mini mode) and the fullscreen max view:
 
 ```
  root_stack (QStackedWidget)
- ├── normal page
- │   ┌─ ToolBar ─────────────────────────────────────────────┐
- │   │ [MUSIC][PODCASTS][RADIO]   [LIBRARY][TRACKLIST][LYRICS][⚙] │
- │   ├────────────┬────────────┬───────────────────────────┤
- │   │ left_stack │   player   │  right_splitter (vertical) │
- │   │ (QStacked- │   (art +   │    album_view (tracklist)  │
- │   │  Widget)   │  controls) │    ──────────────────────  │
- │   │            │            │    lyrics_widget           │
- │   └────────────┴────────────┴───────────────────────────┘
- └── max page: MaxView (large art | track title + borrowed lyrics)
+ ├── stage
+ │   ┌───────────────┬──────────────────┬───────────────┐
+ │   │ library_pane  │ player           │ lyrics_pane   │
+ │   │  mode tabs    │  album art       │  track title  │
+ │   │  ‹ title      │  (square)        │  lyrics_widget│
+ │   │  left_stack ⇄ │  ┌────────────┐  │               │
+ │   │  album_view   │  │ControlPanel│  │               │
+ │   │               │  └────────────┘  │               │
+ │   └───────────────┴──────────────────┴───────────────┘
+ └── max page: MaxView (large art | borrowed tracklist + lyrics)
 ```
 
-The left stack swaps pages based on mode (the splitters never see mode changes):
+The library pane's mode tabs swap `left_stack`:
 - **Music** → `folder_view` (filesystem browser)
 - **Podcast** → `podcast_view` (feed subscriptions)
 - **Radio** → `radio_view` (saved stations)
+- **Favourites** → `favorites_view` (collections + shuffle)
 
-Center and right panels are shared across all modes. `PanelManager`
-(`panel_manager.py`) is the single source of truth for panel visibility and
-remembered splitter sizes: toggles round-trip exactly, drags update the
-remembered sizes, and the right column collapses when both its panes hide.
+and the pane drills down from that library page to `album_view` (the
+tracklist) when something is opened. Side panes widen the window rather
+than squeezing the art (`App._set_side_panes`). Browsing in the pane never
+changes the playing album's art/accent (`Player._art_album`).
 
 ## Module overview
 
 | File | Role |
 |------|------|
 | `app.py` | `QMainWindow` orchestrator — creates all widgets, wires signals, manages theme/settings/shortcuts, implements display and playback modes |
-| `panel_manager.py` | Single source of truth for panel visibility and remembered splitter sizes |
-| `max_view.py` | Fullscreen max-mode page — large art plus the borrowed lyrics widget |
+| `library_pane.py` | `LibraryPane` (mode tabs + library ⇄ tracks drill-down) and `LyricsPane` |
+| `overlay_controls.py` | `ControlPanel` — the floating playback panel (stage and max mode) |
+| `max_view.py` | Fullscreen max-mode page — large art plus the borrowed tracklist/lyrics |
 | `art_label.py` | `AlbumArtLabel` — cached, debounced, aspect-correct album art rendering with rounded corners |
-| `player.py` | Playback controls and album art display. Uses `just_playback` for audio. Has a 200ms `QTimer` for progress updates; memoized SVG icons |
+| `player.py` | The stage: album art with the floating `ControlPanel`, plus playback via `just_playback`. 200ms `QTimer` for progress updates; memoized SVG icons |
 | `album_view.py` | Tracklist panel — shows tracks for the loaded album (or podcast episodes). Right-click a track to look up chords/tab in the browser |
 | `folder_view.py` | Filesystem folder browser using `QFileSystemModel`, filters to directories only |
-| `album.py` | Parses a folder into a list of `Track` objects using `mutagen` (with `tinytag` fallback) |
+| `album.py` | Parses a folder into a list of `Track` objects using `mutagen`; `AlbumCache` reuses parses (folder-mtime validated) |
 | `track.py` | Plain data class for track metadata |
-| `grip_splitter.py` | `GripSplitter` — `QSplitter` whose handles paint a faint 1px hairline (accent-colored on hover) |
 | `podcast_view.py` | Left panel for podcast mode — feed subscription list with add/remove |
 | `podcast_feed.py` | RSS feed parsing, `PodcastFeed`/`PodcastEpisode` data classes, download threads |
 | `radio_view.py` | Left panel for radio mode — saved station list with add/remove |

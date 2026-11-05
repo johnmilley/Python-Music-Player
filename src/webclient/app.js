@@ -33,6 +33,14 @@ const ICONS24 = {
     + '<path d="M3 17 H6 V20 H3 Z"/><path d="M8 17.5 H21 V19.5 H8 Z"/>',
   lyrics: '<path d="M4 4 H20 V6 H4 Z"/><path d="M4 8.5 H16 V10.5 H4 Z"/>'
     + '<path d="M4 13 H19 V15 H4 Z"/><path d="M4 17.5 H12 V19.5 H4 Z"/>',
+  // shuffle / repeat / repeat_one: same paths as src/icons/*.svg — the
+  // desktop ControlPanel's own icon set
+  shuffle: '<path d="M10.59 9.17 5.41 4 4 5.41l5.17 5.17 1.42-1.41zM14.5 '
+    + '4l2.04 2.04L4 18.59 5.41 20 17.96 7.46 20 9.5V4h-5.5zm.33 9.41-1.41 '
+    + '1.41 3.13 3.13L14.5 20H20v-5.5l-2.04 2.04-3.13-3.13z"/>',
+  repeat: '<path d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z"/>',
+  repeat_one: '<path d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 '
+    + '4v-3h12v-6h-2v4z"/><path d="M11.1 9.3h1.7v5.7h-1.15v-4.55l-1.15.38z"/>',
   heart: '<path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 '
     + '7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 '
     + '5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/>',
@@ -67,6 +75,7 @@ function setIcon(btn, name) {
 setIcon($('menu-btn'), 'library');
 setIcon($('tracks-btn'), 'tracklist');
 setIcon($('lyrics-btn'), 'lyrics');
+setIcon($('shuffle-btn'), 'shuffle');
 setIcon($('prev-btn'), 'prev');
 setIcon($('play-btn'), 'play');
 setIcon($('next-btn'), 'next');
@@ -252,7 +261,11 @@ async function loadAlbum(id, autoplay) {
   const data = await api('/api/album?id=' + encodeURIComponent(id));
   current = data;
   tracks = data.tracks;
+  resetShuffleCycle();
+  playHistory = [];
   setArt(data.art.length ? withToken(data.art[0]) : null);
+  $('tracklist-pane-title').textContent =
+    [data.artist, data.title].filter(Boolean).join(' — ');
   renderTracklist();
   if (autoplay && tracks.length) playTrack(0);
 }
@@ -270,16 +283,84 @@ function setArt(url) {
   }
 }
 
-function playTrack(i) {
+function playTrack(i, record = true) {
   if (i < 0 || i >= tracks.length) return;
   idx = i;
   listened = 0;      // per-track listen accumulator (play-count beacon)
   lastT = null;
   beaconSent = false;
+  bagRemove(i);
+  if (record) playHistory.push(i);
   audio.src = withToken(tracks[i].url);
   audio.play().catch(() => {});
   updateNowPlaying();
   if (document.body.classList.contains('lyrics-open')) loadLyrics();
+}
+
+// ── shuffle / repeat ──────────────────────────────────────────────
+// Ports player.py's semantics: shuffle draws each track once per cycle
+// from a bag of remaining indices (auto-advance stops when the bag
+// empties; a manual next — or repeat 'all' — refills it), and prev walks
+// back through the actual play order. Repeat cycles off → all → one; 'one'
+// replays the finished track, 'all' keeps auto-advance going past the
+// album's end. Both persist, like the desktop's QSettings.
+
+let shuffleOn = localStorage.getItem('lp-shuffle') === '1';
+let repeatMode = localStorage.getItem('lp-repeat') || 'off';   // off | all | one
+if (!['off', 'all', 'one'].includes(repeatMode)) repeatMode = 'off';
+
+let shuffleBag = [];     // indices not yet played this cycle
+let playHistory = [];    // actual play order, for shuffle-aware prev
+
+function resetShuffleCycle() {
+  shuffleBag = tracks.map((_, i) => i);
+}
+function bagRemove(i) {
+  const at = shuffleBag.indexOf(i);
+  if (at !== -1) shuffleBag.splice(at, 1);
+}
+function drawFromBag() {
+  if (!shuffleBag.length) return -1;
+  return shuffleBag[Math.floor(Math.random() * shuffleBag.length)];
+}
+
+function syncShuffleRepeatUi() {
+  $('shuffle-btn').classList.toggle('on', shuffleOn);
+  $('repeat-btn').classList.toggle('on', repeatMode !== 'off');
+  setIcon($('repeat-btn'), repeatMode === 'one' ? 'repeat_one' : 'repeat');
+}
+syncShuffleRepeatUi();
+
+$('shuffle-btn').addEventListener('click', () => {
+  shuffleOn = !shuffleOn;
+  localStorage.setItem('lp-shuffle', shuffleOn ? '1' : '0');
+  // Fresh cycle from here: everything but the current track is undrawn
+  resetShuffleCycle();
+  if (idx >= 0) bagRemove(idx);
+  syncShuffleRepeatUi();
+});
+
+$('repeat-btn').addEventListener('click', () => {
+  repeatMode = { off: 'all', all: 'one', one: 'off' }[repeatMode];
+  localStorage.setItem('lp-repeat', repeatMode);
+  syncShuffleRepeatUi();
+});
+
+// auto=true is the 'ended' path: it respects the empty bag / album end
+// (stopping unless repeat 'all'), while a manual tap always advances.
+function advanceTrack(auto) {
+  if (shuffleOn) {
+    if (!shuffleBag.length) {
+      if (auto && repeatMode !== 'all') return;   // cycle done — stop
+      resetShuffleCycle();
+      if (tracks.length > 1) bagRemove(idx);      // don't redraw what just played
+    }
+    const next = drawFromBag();
+    if (next !== -1) playTrack(next);
+    return;
+  }
+  if (idx + 1 < tracks.length) playTrack(idx + 1);
+  else if (tracks.length && (!auto || repeatMode === 'all')) playTrack(0);
 }
 
 // ── play-count beacon ─────────────────────────────────────────────
@@ -533,9 +614,10 @@ if ('caches' in window) caches.delete('lp-downloads-v1').catch(() => {});
 
 function updateNowPlaying() {
   const t = tracks[idx];
-  $('track-title').textContent = t ? t.title : '';
-  $('track-album').textContent =
-    current ? [current.artist, current.title].filter(Boolean).join(' — ') : '';
+  // Three titles, mirroring mini mode: the panel's own (track), the
+  // tracklist pane's (artist — album) and the lyrics pane's (track).
+  $('panel-title').textContent = t ? t.title : '';
+  $('lyrics-pane-title').textContent = t ? t.title : '';
   renderTracklist();
   // The drawer rebuild (hundreds of rows for a big library) can wait
   // until it's actually opened — openDrawer refreshes it anyway.
@@ -560,7 +642,8 @@ function updateNowPlaying() {
 // Screen-off core: advancing from 'ended' on the SAME element keeps the
 // audio session alive while the phone is locked.
 audio.addEventListener('ended', () => {
-  if (idx + 1 < tracks.length) playTrack(idx + 1);
+  if (repeatMode === 'one') { playTrack(idx, false); return; }
+  advanceTrack(true);
 });
 
 // One bad file shouldn't kill the album — skip after a beat.
@@ -578,10 +661,23 @@ function togglePlay() {
 }
 
 function prevTrack() {
-  if (audio.currentTime > 3 || idx <= 0) audio.currentTime = 0;
+  if (audio.currentTime > 3) { audio.currentTime = 0; return; }
+  if (shuffleOn) {
+    // Walk back through the actual play order (player.py's prev_track).
+    // The abandoned track goes back in the bag so the cycle stays complete.
+    if (playHistory.length >= 2) {
+      const abandoned = playHistory.pop();
+      if (!shuffleBag.includes(abandoned)) shuffleBag.push(abandoned);
+      playTrack(playHistory[playHistory.length - 1], false);
+    } else {
+      audio.currentTime = 0;
+    }
+    return;
+  }
+  if (idx <= 0) audio.currentTime = 0;
   else playTrack(idx - 1);
 }
-function nextTrack() { if (idx + 1 < tracks.length) playTrack(idx + 1); }
+function nextTrack() { advanceTrack(false); }
 
 $('play-btn').addEventListener('click', togglePlay);
 $('prev-btn').addEventListener('click', prevTrack);
@@ -715,23 +811,58 @@ if ('mediaSession' in navigator) {
   } catch { /* older browsers */ }
 }
 
-// ── seek bar / time ───────────────────────────────────────────────
+// ── progress bar / time ───────────────────────────────────────────
+// A div-based ClickableProgressBar (progress_bar.py): tap to seek, drag
+// to scrub — the fill previews during the drag, the seek commits on
+// release, matching the desktop's seek_requested/start_playback split.
 
 const fmt = s => {
   s = Math.max(0, Math.floor(s || 0));
   return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
 };
 
+const progress = $('progress');
 let scrubbing = false;
+let scrubFrac = 0;
 let lastPosUpdate = 0;
+
+function setProgressFill(frac) {
+  $('progress-fill').style.width = (frac * 100).toFixed(2) + '%';
+}
+
+function progressFrac(e) {
+  const r = progress.getBoundingClientRect();
+  return Math.min(1, Math.max(0, (e.clientX - r.left) / r.width));
+}
+
+progress.addEventListener('pointerdown', e => {
+  scrubbing = true;
+  progress.setPointerCapture(e.pointerId);
+  scrubFrac = progressFrac(e);
+  setProgressFill(scrubFrac);
+  if (audio.duration) $('time-cur').textContent = fmt(scrubFrac * audio.duration);
+});
+progress.addEventListener('pointermove', e => {
+  if (!scrubbing) return;
+  scrubFrac = progressFrac(e);
+  setProgressFill(scrubFrac);
+  if (audio.duration) $('time-cur').textContent = fmt(scrubFrac * audio.duration);
+});
+function progressCommit() {
+  if (!scrubbing) return;
+  scrubbing = false;
+  if (audio.duration) audio.currentTime = scrubFrac * audio.duration;
+}
+progress.addEventListener('pointerup', progressCommit);
+progress.addEventListener('pointercancel', progressCommit);
 
 audio.addEventListener('timeupdate', () => {
   beaconTick();
   syncLyrics();
   if (!scrubbing && audio.duration) {
-    $('seek').value = Math.round(audio.currentTime / audio.duration * 1000);
+    setProgressFill(audio.currentTime / audio.duration);
   }
-  $('time-cur').textContent = fmt(audio.currentTime);
+  if (!scrubbing) $('time-cur').textContent = fmt(audio.currentTime);
   $('time-len').textContent = fmt(audio.duration);
   const now = Date.now();
   if ('mediaSession' in navigator && audio.duration && now - lastPosUpdate > 1000) {
@@ -746,18 +877,7 @@ audio.addEventListener('timeupdate', () => {
   }
 });
 
-$('seek').addEventListener('input', () => {
-  scrubbing = true;
-  if (audio.duration) {
-    $('time-cur').textContent = fmt($('seek').value / 1000 * audio.duration);
-  }
-});
-$('seek').addEventListener('change', () => {
-  if (audio.duration) audio.currentTime = $('seek').value / 1000 * audio.duration;
-  scrubbing = false;
-});
-
-// ── tracklist overlay ─────────────────────────────────────────────
+// ── tracklist pane ────────────────────────────────────────────────
 
 function renderTracklist() {
   const el = $('tracklist');
@@ -769,6 +889,7 @@ function renderTracklist() {
     n.className = 'n';
     n.textContent = t.n || i + 1;
     const title = document.createElement('span');
+    title.className = 't';
     title.textContent = t.title;
     const len = document.createElement('span');
     len.className = 'len';
@@ -779,24 +900,38 @@ function renderTracklist() {
   });
 }
 
-// Tracklist and lyrics share the bottom-sheet slot — opening one closes
-// the other (mirrors max/mini mode's independent-but-tidy panes on a
-// screen with room for only one)
+// ── accordion panes (tracklist / lyrics toggles) ──────────────────
+// Landscape: independent panes, left and right of the art — either,
+// neither, or both, exactly like mini mode. Portrait: they fold from the
+// top (tracklist) and bottom (lyrics), one at a time — opening one closes
+// the other, since both plus the panel would squeeze the art to nothing.
+
+const portraitMq = matchMedia('(orientation: portrait)');
+
 $('tracks-btn').addEventListener('click', e => {
   e.stopPropagation();
-  document.body.classList.remove('lyrics-open');
-  document.body.classList.toggle('tracks-open');
+  if (document.body.classList.toggle('tracks-open') && portraitMq.matches) {
+    document.body.classList.remove('lyrics-open');
+  }
 });
 $('lyrics-btn').addEventListener('click', e => {
   e.stopPropagation();
-  document.body.classList.remove('tracks-open');
   if (document.body.classList.toggle('lyrics-open')) {
+    if (portraitMq.matches) document.body.classList.remove('tracks-open');
     loadLyrics();
     syncLyrics();
   }
 });
+// Rotating to portrait with both panes open: keep the tracklist, fold lyrics
+portraitMq.addEventListener('change', e => {
+  if (e.matches && document.body.classList.contains('tracks-open')) {
+    document.body.classList.remove('lyrics-open');
+  }
+});
 
-// ── auto-hiding chrome (mirrors MiniView's idle timer) ────────────
+// ── auto-hiding chrome: the two corner buttons ────────────────────
+// Only #menu-btn/#camera-btn fade on idle now — the control panel is
+// always visible (the whole point of this layout vs. desktop mini mode).
 
 let idleTimer = null;
 
@@ -804,13 +939,10 @@ function showChrome() {
   document.body.classList.remove('idle');
   clearTimeout(idleTimer);
   idleTimer = setTimeout(() => {
-    if (!document.body.classList.contains('drawer-open') &&
-        !document.body.classList.contains('tracks-open') &&
-        !document.body.classList.contains('lyrics-open') &&
-        !audio.paused) {
+    if (!document.body.classList.contains('drawer-open') && !audio.paused) {
       document.body.classList.add('idle');
     } else {
-      showChrome();   // re-arm while a panel is open or paused
+      showChrome();   // re-arm while the drawer is open or paused
     }
   }, IDLE_HIDE_MS);
 }
@@ -818,8 +950,10 @@ function showChrome() {
 ['pointerdown', 'pointermove', 'keydown'].forEach(ev =>
   document.addEventListener(ev, showChrome, { passive: true }));
 
+// Tapping the bare art closes any open pane (mirrors the desktop's
+// click-art-exits gestures) and wakes the corner buttons.
 $('stage').addEventListener('click', e => {
-  if (e.target === $('stage') || e.target === $('art-area') ||
+  if (e.target === $('center') || e.target === $('art-area') ||
       e.target === $('art') || e.target === $('placeholder')) {
     document.body.classList.remove('tracks-open');
     document.body.classList.remove('lyrics-open');

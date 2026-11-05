@@ -1,7 +1,8 @@
 # MaxView — fullscreen "max mode" page: large album art beside a side column
 # with independently toggleable tracklist/lyrics panes, and the unified
 # ControlPanel (title, favourite, progress/time, transport, tracklist/lyrics
-# toggles, back) floating over the art on hover — same panel mini mode uses.
+# toggles, back, ⋯ menu) floating over the art on hover — same panel the
+# main window's stage uses.
 #
 # Lives permanently as a page on the app's root QStackedWidget. It reuses
 # the player's art pipeline (via the art_changed signal) and borrows the
@@ -98,8 +99,9 @@ class MaxView(QWidget):
         # Hover control panel: title/favourite, progress/time, transport +
         # pane toggles + back — shown on mouse motion and auto-hidden after
         # a few idle seconds (there is no toolbar in fullscreen, so this is
-        # the pointer's way in). Identical widget to mini mode's.
-        self.panel = overlay_controls.ControlPanel(self, show_back=True)
+        # the pointer's way in). Same widget as the stage's; ⋯ opens the
+        # app menu (also on right-click of the art).
+        self.panel = overlay_controls.ControlPanel(self, show_back=True, show_more=True)
         self.panel.back_btn.setToolTip('Back to normal window (Esc)')
         self.panel.back_clicked.connect(self.exit_requested.emit)
         self.panel.set_toggle_states(self.tracklist_on, self.lyrics_on)
@@ -110,7 +112,7 @@ class MaxView(QWidget):
         self._idle_timer.timeout.connect(self._hide_hover_controls)
         # Mouse-move never reaches this widget's own handlers while the
         # cursor is over a child (the art, the borrowed panes) — watch
-        # application-wide, same trick as MiniView. Installed only while
+        # application-wide. Installed only while
         # max mode is actually showing (see showEvent/hideEvent): an
         # app-wide filter sees every event in the entire application, so
         # leaving it installed permanently taxes normal-mode use for a

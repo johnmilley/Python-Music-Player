@@ -14,8 +14,13 @@ from PyQt5.QtGui import QDesktopServices, QIcon, QPainter
 
 # local
 import bg_threads
-from album import Album
+from album import AlbumCache
 from vim_views import VimListWidget, SearchBar
+
+
+# Parsed albums, reused on revisits (validated by folder mtime) — reopening
+# an album no longer re-runs mutagen over every file on a slow NAS
+_album_cache = AlbumCache()
 
 
 class AlbumLoadThread(QThread):
@@ -29,8 +34,9 @@ class AlbumLoadThread(QThread):
         self.directory_path = directory_path
 
     def run(self):
-        album = Album(Path(self.directory_path))
-        self.album_ready.emit(album)
+        album = _album_cache.get(Path(self.directory_path))
+        if album is not None:
+            self.album_ready.emit(album)
 
 
 class AlbumView(QWidget):
@@ -168,26 +174,44 @@ class AlbumView(QWidget):
             if pos is not None and pos < len(self.album.tracklist):
                 self._apply_heart(item, self.album.tracklist[pos])
 
+    def show_album(self, album):
+        """List an already-parsed Album (e.g. the playing one) — no
+        background load, no album_changed signal."""
+        old = getattr(self, '_load_thread', None)
+        if old is not None:
+            try:
+                old.album_ready.disconnect(self._on_album_loaded)
+            except TypeError:
+                pass
+        self._populate(album)
+
+    def _populate(self, album):
+        self.track_list_widget.clear()
+        self.album = album
+        for i, track in enumerate(album.tracklist):
+            label = self._music_item_text(track)
+            item = QListWidgetItem(label)
+            item.setData(Qt.UserRole, i)
+            item.setToolTip(label)
+            self._apply_heart(item, track)
+            self.track_list_widget.addItem(item)
+
     def _on_album_loaded(self, album):
         """Populate track list after background loading completes."""
         self.track_list_widget.clear()
         self.album = album
 
         if self.album.tracklist:
-            for i, track in enumerate(self.album.tracklist):
-                label = self._music_item_text(track)
-                item = QListWidgetItem(label)
-                item.setData(Qt.UserRole, i)
-                item.setToolTip(label)
-                self._apply_heart(item, track)
-                self.track_list_widget.addItem(item)
+            self._populate(album)
             # Start with the first track highlighted so keyboard focus has
             # a visible "you are here" (playing-track highlight, if this
             # album is the one playing, is set by Player right after)
             self.track_list_widget.setCurrentRow(0)
-            if self.player:
+            # Browsing never touches what's playing. Only with nothing
+            # loaded yet does the browsed album preview its art.
+            if self.player and self.player.current_track is None:
                 self.player.album = self.album
-                self.player.load_album_art(self.player.album)
+                self.player.load_album_art(self.album)
             if self.album.title and self.album.artist:
                 self.album_changed.emit(f"{self.album.artist}    {self.album.title}")
         else:

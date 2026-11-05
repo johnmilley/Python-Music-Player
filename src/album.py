@@ -2,6 +2,7 @@
 
 import os
 import re
+import threading
 from pathlib import Path
 
 # local
@@ -11,6 +12,18 @@ from track import Track
 import mutagen
 
 IMAGE_EXTS = ('.jpg', '.jpeg', '.png')
+MUSIC_EXTS = ('.flac', '.mp3', '.m4a')
+
+
+def same_listing(a, b):
+    """True if two tracklist containers (Album, Playlist, PodcastFeed) are
+    the same listing — the same object, or two Album parses of one folder."""
+    if a is None or b is None:
+        return False
+    if a is b:
+        return True
+    return (isinstance(a, Album) and isinstance(b, Album)
+            and getattr(a, 'path', None) == getattr(b, 'path', None))
 
 
 class Album:
@@ -100,12 +113,13 @@ class Album:
         root = directory_path
         dir_artist, dir_album = infer_artist_album(directory_path)
 
-        for file in os.listdir(directory_path):
+        # scandir: file-type comes from the directory listing itself, not a
+        # stat() per entry (each one a network round trip on a NAS)
+        with os.scandir(directory_path) as entries:
+            files = [e.name for e in entries
+                     if e.name.lower().endswith(MUSIC_EXTS) and e.is_file()]
+        for file in files:
             path = Path(root, file)
-            if path.is_dir():
-                continue
-            if not file.lower().endswith(('.flac', '.mp3', '.m4a')):
-                continue
             try:
                 track = mutagen.File(path)
             except Exception:
@@ -183,6 +197,45 @@ class Album:
             for track in self.tracklist:
                 s += f"{track}\n"
         return s
+
+
+class AlbumCache:
+    """Parsed Album objects keyed by folder path, validated by folder mtime.
+
+    Album() runs mutagen over every track file — seconds on a NAS mount.
+    The desktop re-parsed on every album open (revisits included) and the
+    phone per album open, per favourite check (which fires on EVERY track
+    change), and per heart tap. A cache hit is one stat() instead.
+    Thread-safe: the desktop's loader threads and the media server's
+    request threads each use their own instance. Folder mtime catches file adds/removes (art uploads,
+    new rips); in-place tag edits don't bump it, which is acceptable —
+    titles/lengths going briefly stale beats seconds of NAS parsing per
+    track change."""
+
+    MAX_ENTRIES = 32
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._entries = {}   # str(path) -> (mtime_ns, Album); dict order = LRU
+
+    def get(self, folder):
+        key = str(folder)
+        try:
+            mtime = folder.stat().st_mtime_ns
+        except OSError:
+            return None
+        with self._lock:
+            hit = self._entries.pop(key, None)
+            if hit is not None and hit[0] == mtime:
+                self._entries[key] = hit   # re-insert = mark most-recent
+                return hit[1]
+        album = Album(folder)   # outside the lock — parses can run in parallel
+        with self._lock:
+            self._entries.pop(key, None)
+            self._entries[key] = (mtime, album)
+            while len(self._entries) > self.MAX_ENTRIES:
+                self._entries.pop(next(iter(self._entries)))
+        return album
 
 
 def main():

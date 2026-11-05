@@ -7,20 +7,18 @@ sys.path.append('./tracklist') # clean this up
 
 # local
 from track import Track
-from album import Album
+from album import Album, same_listing
 from album_view import AlbumView
 from art_label import AlbumArtLabel
 from artwork_finder import ArtworkFinderDialog
-from color_extract import text_color_for
 
 # media playback - find one that uses crossplat mediakeys out of the box
 from just_playback import Playback
 
 # pyqt5
-from PyQt5.QtWidgets import (QMainWindow, QApplication, QWidget, QHBoxLayout,
-    QVBoxLayout, QSizePolicy)
-from PyQt5.QtCore import Qt, QTimer, QThread, pyqtSignal, QByteArray
-from PyQt5.QtGui import QPixmap, QColor, QIcon, QImage, QPainter, QFontMetrics
+from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout
+from PyQt5.QtCore import Qt, QTimer, QThread, QEvent, QPoint, pyqtSignal, QByteArray
+from PyQt5.QtGui import QPixmap, QImage, QPainter, QFontMetrics, QCursor
 from PyQt5.QtSvg import QSvgRenderer
 
 import bg_threads
@@ -74,15 +72,6 @@ class _ImageLoadThread(QThread):
         self.image_ready.emit(self.token, QImage(self.path))
 
 
-def _svg_icon(name, color='black', size=32, hover_color=None):
-    """Load an SVG icon with normal and optional hover/active color variants."""
-    icon = QIcon(_render_svg(name, color, size))
-    if hover_color:
-        hover_pixmap = _render_svg(name, hover_color, size)
-        icon.addPixmap(hover_pixmap, QIcon.Active)
-    return icon
-
-
 class Player(QWidget):
     # Progress/lyrics tick interval. 200ms is plenty: the progress bar has
     # 1000 steps, time labels change once per second, and LRC lyrics lines
@@ -91,7 +80,8 @@ class Player(QWidget):
 
     track_finished = pyqtSignal()
     track_changed = pyqtSignal(object)
-    art_clicked = pyqtSignal()
+    art_double_clicked = pyqtSignal()
+    art_menu_requested = pyqtSignal(QPoint)
     art_changed = pyqtSignal(QPixmap)
     play_state_changed = pyqtSignal(bool)
     # (track, seconds actually listened) — emitted by flush_listen() when a
@@ -107,15 +97,15 @@ class Player(QWidget):
         self.album_view = album_view # attached at the App level
         self.folder_view = folder_view
 
-        # Compactness: 1.0 = roomy chrome, 0.0 = tightest. Recomputed from
-        # available height in resizeEvent so the controls block shrinks
-        # before it ever eats into the album art's space.
-        self._compact_t = 1.0
         self._last_font_size = None
+        # The album whose art is on screen. Browsing another album in the
+        # library pane never replaces it — only playback does (play /
+        # load_track), so the art always belongs to what's playing.
+        self._art_album = None
 
         # Artwork gallery: cover.jpg first, then any other images from the
         # album folder (back covers, inserts...). Registered AlbumArtLabels
-        # (player column, max mode, mini mode) get hover arrows to scroll it.
+        # (the stage, max mode) get hover arrows to scroll it.
         self._art_paths = []
         self._art_index = 0
         self._art_labels = []
@@ -162,50 +152,37 @@ class Player(QWidget):
         self.repeat_mode = 'off'
 
     def build_gui(self):
-        """Build the player column: art on top, controls block below.
-
-        Sizing is left entirely to Qt layouts — the art expands into the
-        remaining space (AlbumArtLabel letterboxes and caches its own
-        scaling) and the controls block keeps a fixed height, capped width,
-        and stays horizontally centered.
-        """
-        self.setMinimumSize(180, 220)
+        """Build the stage: album art filling the column, with the
+        ControlPanel floating over its bottom edge — shown on hover and
+        auto-hidden after IDLE_HIDE_MS without mouse motion (the v2 main
+        window is the old mini mode). Dragging the art moves the window,
+        double-clicking it enters max mode, right-click opens the menu."""
+        self.setMinimumSize(160, 160)
         self.setObjectName('player')
-        # Custom QWidget subclasses only paint QSS backgrounds with this set —
-        # the player column sits on the elevated background tone
+        # Custom QWidget subclasses only paint QSS backgrounds with this set
         self.setAttribute(Qt.WA_StyledBackground, True)
 
         self.layout_player = QVBoxLayout()
-        self.layout_player.setContentsMargins(12, 12, 12, 12)
-        self.layout_player.setSpacing(10)
-
-        # ALBUM ART — square footprint, cached scaling. Centered as a tight
-        # unit with the controls (stretches above/below share the slack).
-        self.layout_player.addStretch(1)
+        self.layout_player.setContentsMargins(0, 0, 0, 0)
+        self.layout_player.setSpacing(0)
         self.album_widget = AlbumArtLabel()
-        self.album_widget.clicked.connect(self.art_clicked.emit)
+        self.album_widget.setMinimumSize(120, 120)
+        self.album_widget.setCursor(Qt.ArrowCursor)
         self.register_art_label(self.album_widget)
         self.layout_player.addWidget(self.album_widget)
+        self.setLayout(self.layout_player)
 
-        # Controls — the same ControlPanel used by mini/max mode, always
-        # visible here (no hover/auto-hide) and without its own
-        # tracklist/lyrics toggles (those live in the toolbar in normal
-        # mode). Deferred import: overlay_controls imports _render_svg from
-        # this module.
+        # Deferred import: overlay_controls imports _render_svg from here
         import overlay_controls
-        self.panel = overlay_controls.ControlPanel(
-            show_back=False, show_side_toggles=False, scrim=False)
-        self.panel.setMaximumWidth(420)
-        self.panel.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self._overlay = overlay_controls
+        self.panel = overlay_controls.ControlPanel(self, show_more=True)
         self.panel.progress_bar.seek_requested.connect(self.seek_to)
         self.panel.progress_bar.start_playback.connect(self.resume)
         self.panel.progress_bar.setRange(0, 1000)
-        self.panel.show()
 
-        # Aliases: main mode's "own" transport/progress widgets simply ARE
-        # the panel's now, so every existing call site (podcast/radio mode
-        # button re-wiring, progress mirroring, icon scaling) keeps working
-        # unchanged against these names.
+        # Aliases: the panel's widgets ARE the player's transport/progress
+        # widgets, so the podcast/radio control swapping in App keeps
+        # working against these names.
         self.progress_bar = self.panel.progress_bar
         self.track_progress_label = self.panel.pos_label
         self.track_length_label = self.panel.len_label
@@ -219,67 +196,80 @@ class Player(QWidget):
         self.prev_track_button.pressed.connect(self.prev_track)
         self.play_button.pressed.connect(self.toggle_play_pause_button_text)
         self.next_track_button.pressed.connect(self.next_track)
-
         self._is_playing = False
-        self.update_button_icons()
 
-        # Center the panel; it caps at 420px wide (same as the old controls
-        # block it replaces)
-        controls_row = QHBoxLayout()
-        controls_row.setContentsMargins(0, 0, 0, 0)
-        controls_row.addStretch(1)
-        controls_row.addWidget(self.panel, stretch=8)
-        controls_row.addStretch(1)
-        self.layout_player.addLayout(controls_row)
-        self.layout_player.addStretch(1)
-
-        self.setLayout(self.layout_player)
+        # Hover/idle behaviour. Mouse-move is delivered to whichever child
+        # is under the cursor, so the art, the panel and their children
+        # get mouse tracking plus this widget as their event filter —
+        # scoped to the stage, never an application-wide filter (which
+        # would see every event in the app, all the time, now that this
+        # is the main window).
+        self._idle_timer = QTimer(self)
+        self._idle_timer.setSingleShot(True)
+        self._idle_timer.setInterval(overlay_controls.IDLE_HIDE_MS)
+        self._idle_timer.timeout.connect(self._hide_hover_controls)
+        watched = [self, self.album_widget, self.panel]
+        watched += self.album_widget.findChildren(QWidget)
+        watched += self.panel.findChildren(QWidget)
+        for w in watched:
+            w.setMouseTracking(True)
+            w.installEventFilter(self)
         self.set_control_scale()
+
+    # ── Hover controls ──────────────────────────────────────────────
+
+    def _position_controls(self):
+        art = self.album_widget
+        self._overlay.position_control_panel(
+            self.panel, art.x(), art.y(), art.width(), art.height())
+
+    def _show_hover_controls(self):
+        # Runs on every mouse move over the stage — only do layout and
+        # stacking work on the hidden -> shown transition
+        if not self.panel.isVisible():
+            self._position_controls()
+            self.panel.show()
+            self.panel.raise_()
+            self.album_widget._show_nav()
+        self._idle_timer.start()
+
+    def _hide_hover_controls(self):
+        self._idle_timer.stop()
+        self.panel.hide()
+        self.album_widget._hide_nav()
+
+    def _cursor_inside(self):
+        return self.rect().contains(self.mapFromGlobal(QCursor.pos()))
+
+    def eventFilter(self, obj, event):
+        t = event.type()
+        if t in (QEvent.MouseMove, QEvent.Enter) and self.window().isActiveWindow():
+            self._show_hover_controls()
+        elif t == QEvent.Leave and obj is self and not self._cursor_inside():
+            self._hide_hover_controls()
+        elif obj is self.album_widget:
+            if t == QEvent.MouseButtonDblClick and event.button() == Qt.LeftButton:
+                self.art_double_clicked.emit()
+                return True
+            if t == QEvent.MouseButtonPress and event.button() == Qt.LeftButton:
+                win = self.window()
+                handle = win.windowHandle()
+                if handle is not None and not (win.isMaximized() or win.isFullScreen()):
+                    handle.startSystemMove()
+                return True
+            if t == QEvent.ContextMenu:
+                self.art_menu_requested.emit(event.globalPos())
+                return True
+        return super().eventFilter(obj, event)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        self._update_compactness()
-
-    def _update_compactness(self):
-        """Shrink the player column's outer margins/spacing as it gets
-        short — the album art keeps first claim on vertical space instead
-        of being squeezed. The controls panel itself is fixed-size (it
-        matches mini/max mode's ControlPanel), so it no longer needs its
-        own compactness scaling."""
-        lo, hi = 240, 480
-        t = max(0.0, min(1.0, (self.height() - lo) / (hi - lo)))
-        if abs(t - self._compact_t) < 0.02:
-            return
-        self._compact_t = t
-        margin = round(4 + 8 * t)
-        self.layout_player.setContentsMargins(margin, margin, margin, margin)
-        self.layout_player.setSpacing(round(4 + 6 * t))
+        if self.panel.isVisible():
+            self._position_controls()
 
     def _toggle_time_display(self):
         self._show_remaining = not self._show_remaining
         self._update_time_label()
-
-    def update_button_icons(self, color=None, hover_color=None):
-        """Refresh all button icons with the given color (for theme changes)."""
-        if color is None:
-            color = getattr(self, '_icon_color', 'black')
-        self._icon_color = color
-        self._icon_hover_color = hover_color
-        if hover_color:
-            self._accent_color = hover_color
-        self._set_btn_hover_icons(self.prev_track_button, 'skip_previous', color, hover_color)
-        self._set_btn_hover_icons(self.next_track_button, 'skip_next', color, hover_color)
-        self._set_play_icon()
-
-    def _set_btn_hover_icons(self, btn, icon_name, color, hover_color):
-        """Set normal icon and install enter/leave handlers for accent-contrast hover."""
-        accent = getattr(self, '_accent_color', None)
-        contrast = text_color_for(accent) if accent else color
-        btn.setIcon(_svg_icon(icon_name, color))
-        btn._normal_icon = _svg_icon(icon_name, color)
-        btn._hover_icon = _svg_icon(icon_name, contrast)
-        btn.enterEvent = lambda e, b=btn: b.setIcon(b._hover_icon)
-        btn.leaveEvent = lambda e, b=btn: b.setIcon(b._normal_icon)
 
     def _set_play_icon(self, playing=None):
         """Update play button icon to play or pause."""
@@ -288,10 +278,7 @@ class Player(QWidget):
             self._is_playing = playing
             if changed:
                 self.play_state_changed.emit(playing)
-        name = 'pause' if self._is_playing else 'play_arrow'
-        color = getattr(self, '_icon_color', 'black')
-        hover_color = getattr(self, '_icon_hover_color', None)
-        self._set_btn_hover_icons(self.play_button, name, color, hover_color)
+        self.panel.set_playing(self._is_playing)
 
     def _update_time_label(self, pos=None):
         if not self.current_track:
@@ -416,6 +403,7 @@ class Player(QWidget):
         self.playlist = album
         self.playlist_pos = track_pos
         self.current_track = self.album.tracklist[self.track_pos]
+        self._follow_album_art(album)
         self.track_changed.emit(self.current_track)
 
         # update UI
@@ -430,8 +418,9 @@ class Player(QWidget):
             self._set_play_icon(False)
             self.panel.set_title(f"Error: could not play file")
 
-        # Updates AlbumViewer with track currently playing
-        if self.album_view:
+        # Highlight the playing track — only if the tracklist is showing
+        # this album (it may be browsing a different one)
+        if self.album_view and same_listing(self.album_view.album, album):
             self.album_view.track_list_widget.setCurrentRow(self.track_pos)
             
     def load_track(self, album, track_pos, seek_to=0):
@@ -442,12 +431,13 @@ class Player(QWidget):
         self.playlist = album
         self.playlist_pos = track_pos
         self.current_track = self.album.tracklist[self.track_pos]
+        self._follow_album_art(album)
         self.track_changed.emit(self.current_track)
 
         self.update_gui_after_tracklist_load(self.album)
         self._set_play_icon(False)
 
-        if self.album_view:
+        if self.album_view and same_listing(self.album_view.album, album):
             self.album_view.track_list_widget.setCurrentRow(self.track_pos)
 
         try:
@@ -495,6 +485,7 @@ class Player(QWidget):
     def set_art(self, pixmap):
         """Route single artwork through here so listeners (max/mini mode)
         stay in sync. Clears any multi-image gallery."""
+        self._art_album = None
         self._art_paths = []
         self._art_index = 0
         self._art_token += 1  # invalidate any in-flight async decode
@@ -504,6 +495,7 @@ class Player(QWidget):
     def set_art_path(self, path):
         """Single-image variant of set_art that decodes off the UI thread.
         path=None clears the art."""
+        self._art_album = None
         self._art_paths = []
         self._art_index = 0
         self._set_nav_enabled(False)
@@ -606,16 +598,24 @@ class Player(QWidget):
             if self.album.art_list:
                 self.set_art_gallery(self.album.art_list)
 
+    def _follow_album_art(self, album):
+        """Playback moved to a different album: show its art. Playlists
+        (per-song covers, set by App) and podcast feeds (art handled by
+        App) manage their own art."""
+        if (album is not self._art_album and isinstance(album, Album)):
+            self.load_album_art(album)
+
     def load_album_art(self, album):
         """Load artwork from the album folder, or offer to search iTunes."""
-        art_list = getattr(self.album, 'art_list', None)
+        art_list = getattr(album, 'art_list', None)
         if art_list:
             self.set_art_gallery(art_list)
-        elif self.album.art:
-            self.set_art_path(str(self.album.art))
+        elif album.art:
+            self.set_art_path(str(album.art))
         else:
             self.set_art(None)
             self._offer_artwork_search()
+        self._art_album = album
 
     def _offer_artwork_search(self):
         """Open the artwork finder dialog to search iTunes for cover art."""
@@ -662,20 +662,12 @@ class Player(QWidget):
                 self.resume()
 
     def set_control_scale(self, font_size=None):
-        """Refresh transport icon colors and the time labels' stable width.
-
-        The panel's buttons are fixed-size (matching mini/max mode's
-        ControlPanel) so this no longer scales icon dimensions — only the
-        font-driven bits: re-tinting icons (theme/accent changes) and
-        keeping the time labels wide enough that the progress bar doesn't
-        jitter as the digits change.
-        """
+        """Keep the time labels wide enough that the progress bar doesn't
+        jitter as the digits change (font-size dependent)."""
         if font_size is None:
             import theme as theme_mod
             font_size = theme_mod.DEFAULT_SIZE
         self._last_font_size = font_size
-        if hasattr(self, '_icon_color'):
-            self.update_button_icons()
         fm = QFontMetrics(self.track_length_label.font())
         time_w = fm.horizontalAdvance('-88:88') + 6
         self.track_progress_label.setFixedWidth(time_w)

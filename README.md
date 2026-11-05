@@ -18,8 +18,10 @@ lyrics, and vim-style keyboard navigation.
   control over playback (see [docs/keyboard-shortcuts.md](docs/keyboard-shortcuts.md))
 - **Theming** — light/dark themes with an accent color auto-extracted from
   album art
-- Panel layout (library / tracklist / lyrics) that remembers your sizes
-  across toggles — see [docs/display-modes.md](docs/display-modes.md)
+- **Art-first window** — square album art with floating controls; the
+  library (mode tabs + album drill-down) and lyrics open as side panes —
+  see [docs/display-modes.md](docs/display-modes.md)
+- **Favourites & playlists**, shuffle/repeat, and a phone remote (web client)
 
 See [docs/architecture.md](docs/architecture.md) for a full module breakdown.
 

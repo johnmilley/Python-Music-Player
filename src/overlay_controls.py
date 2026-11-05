@@ -1,24 +1,14 @@
-# overlay_controls — ControlPanel is THE playback control surface for all
-# three modes: floating over album art (shown on hover, auto-hidden) in
-# mini and max mode, and embedded inline, always visible, below the art in
-# the normal-mode player column. Built once per host, configured via
-# show_back (mini/max only) and show_side_toggles (off for the normal-mode
-# instance, which has no side panes of its own to toggle — those live in
-# the toolbar there) so every mode presents the same control surface.
+# overlay_controls — ControlPanel is THE playback control surface: it
+# floats over the album art (shown on hover, auto-hidden when idle) on the
+# main window's stage and in max mode. Built once per host, configured via
+# show_back (max mode: exit) and show_more (stage: the ⋯ menu).
 #
-# Mini/max mode float the panel over album art, so it needs a translucent
-# dark scrim to stay readable (see _panel_qss) — accent-aware, hover
-# backgrounds and active/checked icon colors pick up the app's accent,
-# recolored for the scrim instead of the app's own bg/fg tokens (see
-# theme.py's build_qss for the app-wide equivalent). The normal-mode
-# instance is embedded below the art on the app's own background, not
-# floating over unpredictable art, so it skips the scrim entirely
-# (scrim=False) and just uses the app's own theme colors like any other
-# toolbar control. Squared-off/boxy rather than
-# pill-shaped — the only round element is the favourite heart, which is
-# also always accent-colored (not just when favourited) so it reads as a
-# distinct, always-reachable action rather than a state toggle like
-# tracklist/lyrics.
+# Floating over unpredictable art, it sits on a translucent dark scrim
+# (see _panel_qss) with white text/icons; hover backgrounds pick up the
+# app's accent. Squared-off/boxy rather than pill-shaped — the only round
+# element is the favourite heart, which is also always accent-colored (not
+# just when favourited) so it reads as a distinct, always-reachable action
+# rather than a state toggle like tracklist/lyrics.
 
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QToolButton, QSizePolicy, QGraphicsDropShadowEffect)
@@ -45,6 +35,12 @@ HEART_RADIUS = 13
 # wide — at the old 90..220 floor the low end was already fairly dark and
 # the slider looked like it did nothing.
 DEFAULT_OPACITY = 60
+
+# Toggles on the scrim are white when on, grey when off — NOT accent-when-
+# on like the app's own toolbar-style controls: the accent is usually
+# extracted from the very album art the scrim floats over, so an accent
+# icon on a translucent scrim over that art all but disappears.
+SCRIM_TOGGLE_OFF = '#8c8c8c'
 MIN_SCRIM_ALPHA = 45
 MAX_SCRIM_ALPHA = 235
 
@@ -98,28 +94,18 @@ def _shared_button_qss(selector_prefix, accent, hover_alpha=90):
     """
 
 
-def _panel_qss(t, fs, opacity, scrim=True):
+def _panel_qss(t, fs, opacity):
     accent = t.get('accent', theme_mod.DEFAULT_ACCENT)
-    if not scrim:
-        # Embedded (normal-mode) form: no background box, no scrim —
-        # it sits on the app's own elevated background, so it just uses
-        # the app's own theme colors like any other toolbar control.
-        fg = t.get('fg', 'white')
-        fg_dim = t.get('fg_dim', 'rgba(255, 255, 255, 180)')
-        panel_bg = 'transparent'
-        track_bg = t.get('hover', 'rgba(255, 255, 255, 40)')
-        hover_alpha = 22
-    else:
-        alpha = scrim_alpha(opacity)
-        fg = 'white'
-        fg_dim = 'rgba(255, 255, 255, 180)'
-        track_bg = 'rgba(255, 255, 255, 40)'
-        panel_bg = f'rgba(20, 20, 20, {alpha})'
-        hover_alpha = 90
+    alpha = scrim_alpha(opacity)
+    fg = 'white'
+    fg_dim = 'rgba(255, 255, 255, 180)'
+    track_bg = 'rgba(255, 255, 255, 40)'
+    panel_bg = f'rgba(20, 20, 20, {alpha})'
+    hover_alpha = 90
     return f"""
         #control-panel {{
             background-color: {panel_bg};
-            border-radius: {PANEL_RADIUS if scrim else 0}px;
+            border-radius: {PANEL_RADIUS}px;
         }}
         #control-panel QLabel {{
             color: {fg};
@@ -151,8 +137,9 @@ class ControlPanel(QWidget):
     """Title+heart row, progress+time row, transport+toggles(+back) row.
 
     Content only — geometry (position, width) is set by the host view
-    (MaxView/MiniView position_control_panel + their own hover/idle-hide
-    timers); this widget doesn't show/hide or position itself.
+    (Player/MaxView via position_control_panel, plus their own
+    hover/idle-hide timers); this widget doesn't show/hide or position
+    itself.
     """
     prev_clicked = pyqtSignal()
     play_clicked = pyqtSignal()
@@ -161,17 +148,21 @@ class ControlPanel(QWidget):
     lyrics_clicked = pyqtSignal()
     heart_clicked = pyqtSignal()
     back_clicked = pyqtSignal()
+    more_clicked = pyqtSignal()
     shuffle_clicked = pyqtSignal()
     repeat_clicked = pyqtSignal()
 
-    def __init__(self, parent=None, show_back=False, show_side_toggles=True, scrim=True):
+    def __init__(self, parent=None, show_back=False, show_side_toggles=True,
+                 show_more=False):
         super().__init__(parent)
         self.setObjectName('control-panel')
         self.setAttribute(Qt.WA_StyledBackground, True)
-        self._scrim = scrim
         self._accent = theme_mod.DEFAULT_ACCENT
         self._opacity = DEFAULT_OPACITY
         self._icon_fg = 'white'
+        # Toggle (tracklist/lyrics/shuffle/repeat) on/off icon colors
+        self._on_fg = 'white'
+        self._off_fg = SCRIM_TOGGLE_OFF
         self._title_text = ''
         self._playing = False
         self._favorited = False
@@ -179,6 +170,7 @@ class ControlPanel(QWidget):
         self._lyrics_on = False
         self._shuffle_on = False
         self._repeat_mode = 'off'
+        self._seek_mode = False  # podcasts: prev/next are -30s/+30s
         self._show_side_toggles = show_side_toggles
 
         outer = QVBoxLayout(self)
@@ -213,12 +205,8 @@ class ControlPanel(QWidget):
         row2.addWidget(self.len_label)
         outer.addLayout(row2)
 
-        # Row 3: [tracklist toggle] | shuffle | transport | repeat | [lyrics toggle] | [back]
-        # Tracklist/lyrics toggles are omitted entirely (not just hidden)
-        # when show_side_toggles=False — main mode's always-visible panel
-        # has no side panes of its own to toggle (those live in the
-        # toolbar there), so it shouldn't reserve space for buttons that
-        # do nothing.
+        # Row 3: [tracklist toggle] | shuffle | transport | repeat | [lyrics toggle] | [back] | [⋯]
+        # Bracketed buttons are optional; omitted ones reserve no space.
         row3 = QHBoxLayout()
         row3.setSpacing(2)
         self.tracklist_btn = None
@@ -253,11 +241,17 @@ class ControlPanel(QWidget):
             self.back_btn = self._make_button('close', 'Back')
             self.back_btn.clicked.connect(self.back_clicked.emit)
             row3.addWidget(self.back_btn)
+        # ⋯ menu (main window only): theme, preferences, max mode, pin...
+        # — everything the old toolbar's gear button held
+        self.more_btn = None
+        if show_more:
+            self.more_btn = self._make_button('more_horiz', 'Menu')
+            self.more_btn.clicked.connect(self.more_clicked.emit)
+            row3.addWidget(self.more_btn)
         outer.addLayout(row3)
 
         self.set_theme(theme_mod.LIGHT, theme_mod.DEFAULT_SIZE)
-        if self._scrim:
-            _apply_boxy_shadow(self)
+        _apply_boxy_shadow(self)
         self.hide()
 
     def _make_button(self, icon_name, tooltip, size=30, icon_size=20, heart=False):
@@ -278,19 +272,12 @@ class ControlPanel(QWidget):
     def set_theme(self, t, fs):
         """Accent + font-size aware restyle — called whenever the app's
         theme/accent/text-size changes, same as everything else. Opacity
-        is remembered across calls that omit it (t may be a partial dict).
-        The embedded (scrim=False) form ignores opacity entirely — it has
-        no scrim to darken — and just follows the app's own fg/fg_dim
-        tokens."""
+        is remembered across calls that omit it (t may be a partial dict)."""
         self._accent = t.get('accent', theme_mod.DEFAULT_ACCENT)
-        if self._scrim:
-            if 'overlay_opacity' in t:
-                self._opacity = t['overlay_opacity']
-            self._icon_fg = 'white'
-        else:
-            self._icon_fg = t.get('fg', 'white')
+        if 'overlay_opacity' in t:
+            self._opacity = t['overlay_opacity']
         self.setStyleSheet(_panel_qss(
-            t, fs or theme_mod.DEFAULT_SIZE, self._opacity, self._scrim))
+            t, fs or theme_mod.DEFAULT_SIZE, self._opacity))
         self._refresh_icons()
         self._apply_title_elide()
 
@@ -298,23 +285,44 @@ class ControlPanel(QWidget):
         fg = self._icon_fg
         if self.tracklist_btn:
             self.tracklist_btn.setIcon(_toggle_icon(
-                'tracklist', self._tracklist_on, self._accent, fg, self.tracklist_btn._icon_size))
+                'tracklist', self._tracklist_on, self._on_fg, self._off_fg, self.tracklist_btn._icon_size))
         if self.lyrics_btn:
             self.lyrics_btn.setIcon(_toggle_icon(
-                'lyrics', self._lyrics_on, self._accent, fg, self.lyrics_btn._icon_size))
+                'lyrics', self._lyrics_on, self._on_fg, self._off_fg, self.lyrics_btn._icon_size))
         self.shuffle_btn.setIcon(_toggle_icon(
-            'shuffle', self._shuffle_on, self._accent, fg, self.shuffle_btn._icon_size))
+            'shuffle', self._shuffle_on, self._on_fg, self._off_fg, self.shuffle_btn._icon_size))
         self.repeat_btn.setIcon(_repeat_icon(
-            self._repeat_mode, self._accent, fg, self.repeat_btn._icon_size))
-        self.prev_btn.setIcon(_icon_for('skip_previous', fg, self.prev_btn._icon_size))
-        self.next_btn.setIcon(_icon_for('skip_next', fg, self.next_btn._icon_size))
+            self._repeat_mode, self._on_fg, self._off_fg, self.repeat_btn._icon_size))
+        self._refresh_skip_icons()
         self.play_btn.setIcon(_icon_for(
             'pause' if self._playing else 'play_arrow', fg, self.play_btn._icon_size))
         self.heart_btn.setIcon(_heart_icon(self._favorited, self._accent, self.heart_btn._icon_size))
         if self.back_btn:
             self.back_btn.setIcon(_icon_for('close', fg, self.back_btn._icon_size))
+        if self.more_btn:
+            self.more_btn.setIcon(_icon_for('more_horiz', fg, self.more_btn._icon_size))
+
+    def _refresh_skip_icons(self):
+        prev_name, next_name = (('fast_rewind', 'fast_forward') if self._seek_mode
+                                else ('skip_previous', 'skip_next'))
+        self.prev_btn.setIcon(_icon_for(prev_name, self._icon_fg, self.prev_btn._icon_size))
+        self.next_btn.setIcon(_icon_for(next_name, self._icon_fg, self.next_btn._icon_size))
 
     # ── State (called by the host view) ──────────────────────────────
+
+    def set_seek_mode(self, on):
+        """Podcasts swap previous/next for -30s/+30s seeks."""
+        self._seek_mode = on
+        self.prev_btn.setToolTip('Back 30s (<)' if on else 'Previous (<)')
+        self.next_btn.setToolTip('Forward 30s (>)' if on else 'Next (>)')
+        self._refresh_skip_icons()
+
+    def set_seek_visible(self, visible):
+        """Radio streams have no position: hide skip buttons and the
+        progress row entirely."""
+        for w in (self.prev_btn, self.next_btn, self.progress_bar,
+                  self.pos_label, self.len_label):
+            w.setVisible(visible)
 
     def set_title(self, text):
         self._title_text = text or ''
@@ -351,26 +359,25 @@ class ControlPanel(QWidget):
         self._lyrics_on = lyrics_on
         if self.tracklist_btn:
             self.tracklist_btn.setIcon(_toggle_icon(
-                'tracklist', tracklist_on, self._accent, self._icon_fg, self.tracklist_btn._icon_size))
+                'tracklist', tracklist_on, self._on_fg, self._off_fg, self.tracklist_btn._icon_size))
         if self.lyrics_btn:
             self.lyrics_btn.setIcon(_toggle_icon(
-                'lyrics', lyrics_on, self._accent, self._icon_fg, self.lyrics_btn._icon_size))
+                'lyrics', lyrics_on, self._on_fg, self._off_fg, self.lyrics_btn._icon_size))
 
     def set_shuffle_state(self, on):
         self._shuffle_on = on
         self.shuffle_btn.setIcon(_toggle_icon(
-            'shuffle', on, self._accent, self._icon_fg, self.shuffle_btn._icon_size))
+            'shuffle', on, self._on_fg, self._off_fg, self.shuffle_btn._icon_size))
 
     def set_repeat_state(self, mode):
         self._repeat_mode = mode
         self.repeat_btn.setIcon(_repeat_icon(
-            mode, self._accent, self._icon_fg, self.repeat_btn._icon_size))
+            mode, self._on_fg, self._off_fg, self.repeat_btn._icon_size))
 
 
 def position_control_panel(panel, art_x, art_y, art_w, art_h):
-    """Center the panel along the art's bottom edge, capped to a sane width
-    (mirrors player.py's own embedded panel's 420px cap) so the progress
-    bar/title don't stretch absurdly wide over large art."""
+    """Center the panel along the art's bottom edge, capped to 420px so the
+    progress bar/title don't stretch absurdly wide over large art."""
     w = min(art_w - 32, 420)
     if w <= 0:
         return

@@ -8,6 +8,7 @@
 # y-position — wrapped long lines no longer cause drift.
 
 import html as html_mod
+import bisect
 import re
 
 from PyQt5.QtWidgets import QWidget, QVBoxLayout, QTextBrowser
@@ -41,6 +42,8 @@ class LyricsWidget(QWidget):
         self._synced_lines = None   # list of (seconds, text) if synced
         self._current_line = -1
         self._desc_segments = None  # list of (seconds, text) for descriptions
+        self._ts_for = None         # entries the cached timestamps belong to
+        self._ts = None             # sorted timestamps, for bisect
         self._desc_preamble = None
         self._full_description = None
         self._theme = None
@@ -157,12 +160,22 @@ class LyricsWidget(QWidget):
         entries = self._synced_lines or self._desc_segments
         if not entries:
             return
-        line_idx = -1
-        for i, (ts, _) in enumerate(entries):
-            if seconds >= ts:
-                line_idx = i
-            else:
-                break
+        # Runs every playback tick: bisect over cached timestamps instead
+        # of rescanning every line (unsorted LRC keeps the linear scan,
+        # which stops at the first later timestamp)
+        if entries is not self._ts_for:
+            self._ts_for = entries
+            ts = [e[0] for e in entries]
+            self._ts = ts if all(a <= b for a, b in zip(ts, ts[1:])) else None
+        if self._ts is not None:
+            line_idx = bisect.bisect_right(self._ts, seconds) - 1
+        else:
+            line_idx = -1
+            for i, (ts, _) in enumerate(entries):
+                if seconds >= ts:
+                    line_idx = i
+                else:
+                    break
         if line_idx != self._current_line:
             old = self._current_line
             self._current_line = line_idx

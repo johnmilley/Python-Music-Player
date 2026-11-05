@@ -6,6 +6,9 @@ from pathlib import Path
 
 import certifi
 
+sys.path.insert(0, 'src')
+from version import __version__
+
 block_cipher = None
 
 a = Analysis(
@@ -84,7 +87,7 @@ if sys.platform == 'darwin':
         icon=None,
         bundle_identifier='com.lp.musicplayer',
         info_plist={
-            'CFBundleShortVersionString': '1.2.0',
+            'CFBundleShortVersionString': __version__,
             'NSHighResolutionCapable': True,
         },
     )

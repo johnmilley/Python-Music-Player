@@ -2,43 +2,46 @@
 
 All global shortcuts are `QShortcut` instances that are suppressed when a `QLineEdit` (search bar) has focus, so typing in a search doesn't trigger playback commands.
 
-## Navigation
+## Library pane
 
 | Key | Action |
 |-----|--------|
-| `j` / `k` | Navigate down / up in the focused pane |
-| `h` | Folder view: collapse node; at top level: switch to tracklist |
-| `l` | Folder view: expand node, or load album if it's a music folder and switch to tracklist |
-| `h` / `l` | In tracklist: switch to folder view |
-| `Tab` | Toggle focus between folder view and tracklist |
-| `Enter` | Load album (folder view) or play track (tracklist) |
-| `/` | Open search bar in the focused pane |
+| `j` / `k` | Navigate down / up |
+| `Enter` / `l` | Open the album / feed / collection (drills down to its tracks); in the tracklist, `Enter` plays |
+| `h` | Folder view: collapse node; at top level: back down to the open tracklist |
+| `h` / `l` | In the tracklist: back up to the library |
+| `Tab` | Flip between the library and tracklist pages |
+| `n` | Show the playing album / collection (also in max mode) |
+| `Ctrl+K` | Jump to any album: type part of the artist/album, `↑`/`↓` (or `Ctrl+J`/`Ctrl+K`), `Enter` opens, `Esc` cancels. Works in max mode too (opens in max's tracklist) |
+| `/` | Open search bar in the focused list |
 
 ## Playback
 
 | Key | Action |
 |-----|--------|
 | `p` | Play / Pause (works across all modes including radio) |
-| `>` | Next track (music/podcast) |
-| `<` | Previous track (music/podcast) |
+| `>` | Next track (podcasts: +30s) |
+| `<` | Previous track (podcasts: -30s) |
 | `f` | Seek forward 5 seconds |
 | `b` | Seek back 5 seconds |
 | `.` | Volume up 5% |
 | `,` | Volume down 5% |
+| `s` | Toggle shuffle |
+| `Shift+H` | Favourite / unfavourite the playing track |
 
-## Modes & panels
+## Modes & panes
 
 | Key | Action |
 |-----|--------|
-| `1` | Music mode (or toggle library panel if already in music mode) |
-| `2` | Podcast mode (or toggle library panel if already in podcast mode) |
-| `3` | Radio mode (or toggle library panel if already in radio mode) |
-| `4` | Toggle tracklist panel (+ focus) |
-| `5` | Toggle lyrics panel (also toggles the lyrics column in max mode) |
-| `Shift+M` | Toggle max mode |
+| `1` / `2` / `3` / `0` | Music / Podcasts / Radio / Favourites (the active one again: toggle the library pane; not in max mode) |
+| `4` | Library pane on its tracklist (again: close it) |
+| `5` | Toggle the lyrics pane |
+| `Shift+M` | Toggle max mode (also: double-click the art) |
+| `Shift+T` | Toggle always on top (not in max mode) |
 | `Shift+D` | Toggle dark / light theme |
-| `Ctrl++` / `Ctrl+=` | Increase font size |
-| `Ctrl+-` | Decrease font size |
+| `Ctrl++` / `Ctrl+=` | Increase text size |
+| `Ctrl+-` | Decrease text size |
+| `←` / `→` | Step through the album's art (max mode) |
 
 ## Other
 
@@ -46,4 +49,4 @@ All global shortcuts are `QShortcut` instances that are suppressed when a `QLine
 |-----|--------|
 | `?` | Show shortcuts dialog |
 | `q` | Quit |
-| `Escape` | Exit max mode (when in max mode) |
+| `Escape` | Exit max mode |

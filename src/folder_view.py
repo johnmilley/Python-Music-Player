@@ -13,6 +13,7 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt, QDir, pyqtSignal
 
 # project files
+from album import MUSIC_EXTS
 from album_view import AlbumView
 from music_icon_provider import MusicIconProvider
 from vim_views import VimTreeView, SearchBar
@@ -22,7 +23,7 @@ class FolderView(QWidget):
     Widget that displays folders on filesystem that
     contain music.
     """
-    album_changed = pyqtSignal(str)
+    album_opened = pyqtSignal(str)  # an album folder was opened (path)
 
     def __init__(self, album_view=None):
         super().__init__()
@@ -85,9 +86,13 @@ class FolderView(QWidget):
 
     @staticmethod
     def _has_music(path):
+        """Runs on the UI thread per click: scandir takes the file type from
+        the listing itself (no stat() per entry, each a NAS round trip),
+        checks the cheap name test first, and stops at the first hit."""
         try:
-            return any(f.lower().endswith(('.mp3', '.flac', '.m4a'))
-                       for f in os.listdir(path) if os.path.isfile(os.path.join(path, f)))
+            with os.scandir(path) as entries:
+                return any(e.name.lower().endswith(MUSIC_EXTS) and e.is_file()
+                           for e in entries)
         except OSError:
             return False
 
@@ -97,6 +102,7 @@ class FolderView(QWidget):
             # Album folder — load tracks
             if self.album_view:
                 self.album_view.load_album_listing(path)
+            self.album_opened.emit(path)
         elif self.view.isExpanded(index):
             self.view.collapse(index)
         else:

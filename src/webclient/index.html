@@ -1,7 +1,12 @@
 <!doctype html>
-<!-- lp remote — mini-mode-style phone client. The album cover takes the
-     whole viewport; controls float over it and auto-hide when idle
-     (mirrors MiniView); the library browser is a left drawer. -->
+<!-- lp remote — mini-mode-style phone client. A faithful port of the
+     desktop's mini mode: album art in the middle with the unified
+     ControlPanel over its bottom edge (always visible here — no hover on a
+     phone), tracklist and lyrics as in-flow accordion panes that push the
+     art rather than cover it (landscape: tracklist left / lyrics right,
+     exactly mini mode's arrangement; portrait: tracklist from the top,
+     lyrics from the bottom, one at a time). The library browser is a left
+     drawer. -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -17,40 +22,65 @@
 </head>
 <body>
 
-<!-- Stage: a flex column — the art area takes all space above the control
-     bar, so the art is centered in the actually-free region (never behind
-     the controls) and the whole stage lifts when a bottom sheet opens. -->
+<!-- Stage: three flex slots — tracklist pane | art | lyrics pane. The flex
+     direction flips with orientation (row in landscape, column in
+     portrait); the panes are zero-size accordions until their body class
+     (tracks-open / lyrics-open) opens them, and the art letterboxes into
+     whatever space remains. Each pane carries its own permanent title
+     label (mirrors mini mode's #mini-tracklist-title / #mini-lyrics-title,
+     distinct from the panel's own title — both kept, by design). -->
 <main id="stage">
-  <div id="art-area">
-    <img id="art" alt="" draggable="false">
-    <div id="placeholder"><img src="icon.png" alt=""></div>
-    <div id="title-scrim" class="chrome">
-      <div id="track-title"></div>
-      <div id="track-album"></div>
+  <div id="tracklist-pane">
+    <div id="tracklist-pane-title" class="pane-title"></div>
+    <div id="tracklist"></div>
+  </div>
+
+  <div id="center">
+    <div id="art-area">
+      <img id="art" alt="" draggable="false">
+      <div id="placeholder"><img src="icon.png" alt=""></div>
+
+      <!-- ControlPanel port (overlay_controls.py): title+heart row,
+           time/progress/time row, toggles+transport row. Always visible —
+           NOT part of the auto-hiding chrome. Buttons carry lp's own SVG
+           icons, injected by app.js. -->
+      <div id="panel">
+        <div id="panel-title-row">
+          <div id="panel-title"></div>
+          <button id="fav-btn" aria-label="Favourite"></button>
+        </div>
+        <div id="seek-row">
+          <span id="time-cur">0:00</span>
+          <div id="progress" role="slider" aria-label="Seek">
+            <div id="progress-track"><div id="progress-fill"></div></div>
+          </div>
+          <span id="time-len">0:00</span>
+        </div>
+        <div id="buttons">
+          <button id="tracks-btn" class="toggle" aria-label="Tracklist"></button>
+          <span class="flex-gap"></span>
+          <button id="shuffle-btn" class="toggle" aria-label="Shuffle"></button>
+          <button id="prev-btn" aria-label="Previous"></button>
+          <button id="play-btn" aria-label="Play"></button>
+          <button id="next-btn" aria-label="Next"></button>
+          <button id="repeat-btn" class="toggle" aria-label="Repeat"></button>
+          <span class="flex-gap"></span>
+          <button id="lyrics-btn" class="toggle" aria-label="Lyrics"></button>
+        </div>
+      </div>
     </div>
   </div>
 
-  <!-- chrome: everything that auto-hides together.
-       Buttons carry lp's own SVG icons, injected by app.js. -->
-  <button id="menu-btn" class="chrome" aria-label="Library"></button>
-  <button id="camera-btn" class="chrome" aria-label="Upload album art from camera"></button>
-  <input id="camera-input" type="file" accept="image/*" capture="environment" hidden>
-  <div id="bar" class="chrome">
-    <div id="seek-row">
-      <span id="time-cur">0:00</span>
-      <input id="seek" type="range" min="0" max="1000" value="0" step="1">
-      <span id="time-len">0:00</span>
-    </div>
-    <div id="buttons">
-      <button id="prev-btn" aria-label="Previous"></button>
-      <button id="play-btn" aria-label="Play"></button>
-      <button id="next-btn" aria-label="Next"></button>
-      <button id="tracks-btn" aria-label="Tracklist"></button>
-      <button id="lyrics-btn" aria-label="Lyrics"></button>
-      <button id="fav-btn" aria-label="Favourite"></button>
-    </div>
+  <div id="lyrics-pane">
+    <div id="lyrics-pane-title" class="pane-title"></div>
+    <div id="lyrics"></div>
   </div>
 </main>
+
+<!-- chrome: the two corner buttons auto-hide together after idle -->
+<button id="menu-btn" class="chrome" aria-label="Library"></button>
+<button id="camera-btn" class="chrome" aria-label="Upload album art from camera"></button>
+<input id="camera-input" type="file" accept="image/*" capture="environment" hidden>
 
 <!-- Left drawer: library browser (artists collapse; tap a header to open) -->
 <div id="scrim"></div>
@@ -61,10 +91,6 @@
   </div>
   <div id="album-list"></div>
 </nav>
-
-<!-- Tracklist / lyrics overlays (mutually exclusive, slide up as bottom sheets) -->
-<div id="tracklist"></div>
-<div id="lyrics"></div>
 
 <!-- Token prompt (shown only when unauthorized) -->
 <div id="token-screen" hidden>

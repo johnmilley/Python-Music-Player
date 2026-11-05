@@ -1,8 +1,13 @@
-/* lp remote — mini-mode aesthetic: full-bleed letterboxed square art,
-   translucent floating chrome that fades out when idle. Dark by default;
-   body.light switches the whole UI to a light skin (toggle button lives
-   in the drawer). Accent (#f2932c) stays fixed across both — it's the
-   one color that's meant to read the same regardless of theme. */
+/* lp remote — mini-mode port: letterboxed art in the middle, the desktop
+   ControlPanel (overlay_controls.py) recreated over the art's bottom edge —
+   always visible here (no hover on a phone) — and tracklist/lyrics as
+   in-flow accordion panes that push the art rather than cover it.
+   Landscape mirrors mini mode exactly (tracklist left, lyrics right, both
+   can be open); portrait folds them from the top/bottom, one at a time.
+   Dark by default; body.light switches the app surfaces (panes, drawer) to
+   a light skin — the control panel's scrim stays dark in both, like the
+   desktop's (it floats over unpredictable art, not the page). The accent
+   (#f2932c) is fixed across both themes. */
 
 :root {
   --bg: #121212;
@@ -19,7 +24,15 @@
   --error: #e57373;
   --accent: #f2932c;
   --placeholder-opacity: .5;
-  --panel-h: min(58vh, 460px);
+  /* ControlPanel scrim tokens — fixed, theme-independent (see _panel_qss:
+     the scrim is always dark with white ink; .62 = scrim_alpha(60)/255) */
+  --cp-bg: rgba(20, 20, 20, .62);
+  --cp-fg: #fff;
+  --cp-dim: rgba(255, 255, 255, .7);
+  --cp-track: rgba(255, 255, 255, .16);
+  /* accordion pane sizes */
+  --pane-w: min(30vw, 320px);   /* landscape: each side pane */
+  --pane-h: min(40vh, 360px);   /* portrait: top/bottom pane */
 }
 
 body.light {
@@ -58,9 +71,9 @@ html, body {
 }
 
 /* Locks the document so it can never scroll or elastic-bounce — every
-   panel (#stage/#drawer/#tracklist/#lyrics/#token-screen) is already its
-   own position:fixed layer sized to the viewport, so body itself has
-   nothing to scroll. */
+   panel (#stage/#drawer/#token-screen/#crop-screen) is already its own
+   position:fixed layer sized to the viewport, so body itself has nothing
+   to scroll. */
 body {
   position: fixed;
   inset: 0;
@@ -68,22 +81,21 @@ body {
   background: var(--bg);
 }
 
-/* ── stage: art above, controls pinned at the true bottom ────────
-   A flex column: #art-area soaks up everything above the (in-flow) #bar,
-   so the art is always centered in the actually-free space — it never
-   hides behind the controls, and there's no dead band below them. When a
-   bottom sheet opens, ONE rule lifts the whole stage; art re-centers in
-   the shrunken area and the bar rides just above the sheet. */
+/* ── stage: pane | art | pane accordion row/column ────────────────
+   Three flex slots. The side panes are zero-size until their body class
+   opens them; the art column (#center) soaks up the rest, and the art
+   letterboxes into it — mirrors MiniView._apply_side_layout, except the
+   viewport can't widen like a desktop window, so the art shrinks instead. */
 
 #stage {
   position: fixed; inset: 0;
   overflow: hidden; background: #000;
-  display: flex; flex-direction: column;
-  transition: bottom .3s ease;
+  display: flex;
 }
-body.tracks-open #stage, body.lyrics-open #stage { bottom: var(--panel-h); }
 
-#art-area { position: relative; flex: 1; min-height: 0; }
+#center { flex: 1; min-width: 0; min-height: 0; position: relative; }
+
+#art-area { position: absolute; inset: 0; }
 
 #art {
   position: absolute; inset: 0;
@@ -102,18 +114,169 @@ body.tracks-open #stage, body.lyrics-open #stage { bottom: var(--panel-h); }
   opacity: var(--placeholder-opacity);
 }
 
-/* ── auto-hiding chrome ────────────────────────────────────────── */
+/* ── accordion panes (tracklist / lyrics) ─────────────────────────
+   In-flow, animated from zero — they push the art, never cover it.
+   These are app surface (like mini mode's side panes on the window's own
+   background), so they follow the light/dark theme, unlike the panel. */
+
+#tracklist-pane, #lyrics-pane {
+  flex-shrink: 0;
+  background: var(--panel-bg);
+  display: flex; flex-direction: column;
+  overflow: hidden;
+  transition: width .3s ease, height .3s ease, background-color .2s ease;
+}
+
+.pane-title {
+  flex-shrink: 0;
+  font-size: 16px; font-weight: 600;
+  padding: 10px 16px 6px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.pane-title:empty { display: none; }
+
+#tracklist, #lyrics {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 16px 12px;
+}
+
+@media (orientation: landscape) {
+  #stage { flex-direction: row; }
+  #tracklist-pane, #lyrics-pane { width: 0; height: auto; }
+  /* Open width absorbs the notch-side inset so the fixed-width content
+     (below) never runs under the clipped edge */
+  body.tracks-open #tracklist-pane {
+    width: calc(var(--pane-w) + env(safe-area-inset-left, 0px));
+  }
+  body.lyrics-open #lyrics-pane {
+    width: calc(var(--pane-w) + env(safe-area-inset-right, 0px));
+  }
+  /* Fix the content to the open width so rows don't reflow mid-animation */
+  #tracklist-pane > *, #lyrics-pane > * { width: var(--pane-w); }
+  #tracklist-pane {
+    padding-left: env(safe-area-inset-left, 0px);
+    padding-top: env(safe-area-inset-top, 0px);
+  }
+  #lyrics-pane {
+    padding-right: env(safe-area-inset-right, 0px);
+    padding-top: env(safe-area-inset-top, 0px);
+  }
+}
+
+@media (orientation: portrait) {
+  #stage { flex-direction: column; }
+  #tracklist-pane, #lyrics-pane { height: 0; width: auto; }
+  body.tracks-open #tracklist-pane { height: var(--pane-h); }
+  body.lyrics-open #lyrics-pane { height: var(--pane-h); }
+  #tracklist-pane { padding-top: env(safe-area-inset-top, 0px); }
+  #lyrics-pane { padding-bottom: env(safe-area-inset-bottom, 0px); }
+}
+
+/* ── control panel: overlay_controls.ControlPanel, ported ─────────
+   Centered along the art area's bottom edge, capped to 420px
+   (position_control_panel's cap). Squared-off/boxy — PANEL_RADIUS 2 /
+   BUTTON_RADIUS 3 — the only round element is the favourite heart.
+   Always-dark scrim with white ink regardless of theme; no backdrop blur
+   (the desktop scrim has none), a soft drop shadow instead (the QSS-less
+   stand-in for _apply_boxy_shadow). Always visible — not .chrome. */
+
+#panel {
+  position: absolute;
+  left: 50%; transform: translateX(-50%);
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 16px);
+  width: min(100% - 32px, 420px);
+  padding: 10px 14px 8px;
+  border-radius: 2px;
+  background: var(--cp-bg);
+  color: var(--cp-fg);
+  box-shadow: 0 3px 16px rgba(0, 0, 0, .5);
+}
+/* When the portrait lyrics pane already covers the safe area, the art
+   area's bottom is well above the viewport's — drop the inset share so the
+   panel hugs the art's bottom edge instead of floating high over it. */
+@media (orientation: portrait) {
+  body.lyrics-open #panel { bottom: 16px; }
+}
+
+#panel button {
+  border: 0; background: none;
+  color: var(--cp-fg);
+  border-radius: 3px;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+#panel button:active { background: rgba(242, 147, 44, .35); }  /* accent_hover */
+#panel button svg { fill: currentColor; pointer-events: none; }
+
+#panel-title-row { display: flex; align-items: center; gap: 8px; }
+#panel-title {
+  flex: 1; min-width: 0;
+  font-size: 15px; font-weight: 600;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+/* The heart: the panel's one round element, always accent-colored (hollow
+   or filled) — a standalone action, not a dim-until-active state toggle.
+   Double-id selectors here and below out-rank the generic #panel button /
+   #buttons button rules. */
+#panel #fav-btn {
+  width: 32px; height: 32px;
+  border-radius: 50%;
+  color: var(--accent);
+}
+#panel #fav-btn svg { width: 18px; height: 18px; }
+
+#seek-row { display: flex; align-items: center; gap: 8px; margin-top: 2px; }
+#seek-row span {
+  font-size: 11px; color: var(--cp-dim);
+  font-variant-numeric: tabular-nums;
+  min-width: 34px; text-align: center;
+}
+/* ClickableProgressBar: a 6px flat bar with an accent fill, wrapped in a
+   finger-sized hit area; tap to seek, drag to scrub (pointer events in
+   app.js). */
+#progress {
+  flex: 1;
+  height: 28px;
+  display: flex; align-items: center;
+  touch-action: none;
+}
+#progress-track {
+  width: 100%; height: 6px;
+  background: var(--cp-track);
+  overflow: hidden;
+}
+#progress-fill {
+  width: 0%; height: 100%;
+  background: var(--accent);
+}
+
+#buttons { display: flex; align-items: center; gap: 2px; margin-top: 2px; }
+#buttons .flex-gap { flex: 1 1 0; min-width: 0; }
+/* flex-shrink lets the row compress instead of overflowing the panel when
+   both landscape panes squeeze the center column */
+#buttons button { width: 34px; height: 34px; flex-shrink: 1; }
+#buttons button svg { width: 20px; height: 20px; }
+#buttons #prev-btn svg, #buttons #next-btn svg { width: 22px; height: 22px; }
+#buttons #play-btn { width: 44px; height: 44px; }
+#buttons #play-btn svg { width: 26px; height: 26px; }
+
+/* Toggles sit dim at rest, accent when their pane/state is on — the same
+   dim/fg/accent pattern as the desktop toolbar and panel icons. */
+#panel .toggle { color: var(--cp-dim); }
+#panel .toggle.on { color: var(--accent); }
+body.tracks-open #panel #tracks-btn,
+body.lyrics-open #panel #lyrics-btn { color: var(--accent); }
+
+/* ── auto-hiding chrome: just the two corner buttons now ──────────── */
 
 .chrome { transition: opacity .35s ease; }
 body.idle .chrome { opacity: 0; pointer-events: none; }
 
-/* lp's SVG icons ride on currentColor: dim at rest like the toolbar,
-   full ink on the active/checked state */
-button svg { width: 22px; height: 22px; fill: currentColor; display: block;
-  margin: 0 auto; pointer-events: none; }
+button svg { fill: currentColor; display: block; margin: 0 auto; pointer-events: none; }
 
 #menu-btn {
-  position: absolute;
+  position: fixed;
   top: calc(env(safe-area-inset-top, 0px) + 10px);
   left: calc(env(safe-area-inset-left, 0px) + 10px);
   width: 44px; height: 44px;
@@ -122,6 +285,7 @@ button svg { width: 22px; height: 22px; fill: currentColor; display: block;
   color: var(--sub);
   backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
 }
+#menu-btn svg { width: 22px; height: 22px; }
 
 #theme-btn {
   border: 0; background: var(--input-bg); color: var(--fg);
@@ -132,7 +296,7 @@ button svg { width: 22px; height: 22px; fill: currentColor; display: block;
 #theme-btn svg { width: 20px; height: 20px; }
 
 #camera-btn {
-  position: absolute;
+  position: fixed;
   top: calc(env(safe-area-inset-top, 0px) + 10px);
   right: calc(env(safe-area-inset-right, 0px) + 10px);
   width: 44px; height: 44px;
@@ -140,67 +304,10 @@ button svg { width: 22px; height: 22px; fill: currentColor; display: block;
   background: var(--scrim);
   color: var(--sub);
   backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
-  transition: color .2s ease;
+  transition: color .2s ease, opacity .35s ease;
 }
 #camera-btn svg { width: 20px; height: 20px; }
 #camera-btn.saved { color: var(--accent); }   /* brief confirmation flash */
-
-/* Anchored to the bottom of the art area — i.e. right above the bar */
-#title-scrim {
-  position: absolute; left: 0; right: 0; bottom: 0;
-  padding: 8px 16px;
-  text-align: center;
-  /* Always over album art, not the page — stays light-on-shadow
-     regardless of the light/dark UI theme so it reads on any cover. */
-  color: #fff;
-  text-shadow: 0 1px 6px rgba(0, 0, 0, .9);
-  pointer-events: none;
-}
-#track-title { font-size: 17px; font-weight: 600; }
-#track-album { font-size: 13px; color: #ddd; margin-top: 2px; }
-
-/* In flow at the bottom of the stage's flex column — not floated over
-   the art, so nothing ever hides behind it. */
-#bar {
-  flex-shrink: 0;
-  margin: 0 10px calc(env(safe-area-inset-bottom, 0px) + 10px);
-  padding: 10px 14px;
-  border-radius: 14px;
-  background: var(--scrim);
-  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
-}
-/* The sheet already covers the safe-area — drop that share of the margin
-   so the bar hugs the sheet's top edge instead of floating above it. */
-body.tracks-open #bar, body.lyrics-open #bar { margin-bottom: 10px; }
-
-#seek-row { display: flex; align-items: center; gap: 10px; }
-#seek-row span {
-  font-size: 12px; color: var(--sub);
-  font-variant-numeric: tabular-nums;
-  min-width: 38px; text-align: center;
-}
-#seek { flex: 1; accent-color: #eee; height: 24px; }
-
-#buttons {
-  display: flex; align-items: center; justify-content: center;
-  gap: 18px; margin-top: 2px;
-}
-#buttons button {
-  border: 0; background: none; color: var(--fg);
-  width: 48px; height: 44px;
-}
-#play-btn svg { width: 32px; height: 32px; }
-/* panel toggles sit dim like lp's toolbar; accent when their panel is open.
-   The heart is always accent-colored (hollow or filled) rather than
-   dim-until-active — a standalone action, not a panel-state indicator.
-   Tracklist/lyrics toggles sit together on the right (both open the same
-   bottom-sheet slot — see #tracklist/#lyrics — unlike mini mode's split
-   left/right panes), next to the favourite button — see index.html's
-   button order. */
-#tracks-btn, #lyrics-btn { color: var(--dim); }
-#tracks-btn svg, #lyrics-btn svg, #fav-btn svg { width: 19px; height: 19px; }
-body.tracks-open #tracks-btn, body.lyrics-open #lyrics-btn { color: var(--accent); }
-#fav-btn { color: var(--accent); }
 
 /* ── left drawer: library ──────────────────────────────────────── */
 
@@ -266,34 +373,7 @@ body.drawer-open #drawer { transform: translateX(0); }
 .album-row:active { background: var(--row-hover); }
 .album-row.playing { color: var(--accent); font-weight: 600; }
 
-/* ── tracklist / lyrics: bottom sheets ───────────────────────────
-   Both slide up from the bottom rather than in from the side, so they
-   never sit over the album art — the art (and controls) lift out of the
-   way instead (see body.tracks-open/.lyrics-open rules above). */
-
-#tracklist, #lyrics {
-  position: fixed; left: 0; right: 0; bottom: 0;
-  height: var(--panel-h);
-  background: var(--panel-bg);
-  color: var(--fg);
-  border-radius: 20px 20px 0 0;
-  box-shadow: 0 -8px 30px rgba(0, 0, 0, .35);
-  transform: translateY(100%);
-  transition: transform .3s ease;
-  overflow-y: auto;
-  padding: 10px 18px calc(env(safe-area-inset-bottom, 0px) + 16px);
-}
-#tracklist::before, #lyrics::before {
-  content: '';
-  display: block;
-  width: 36px; height: 4px;
-  margin: 0 auto 10px;
-  border-radius: 2px;
-  background: var(--dim);
-  opacity: .4;
-}
-body.tracks-open #tracklist { transform: translateY(0); }
-body.lyrics-open #lyrics { transform: translateY(0); }
+/* ── tracklist / lyrics contents ─────────────────────────────────── */
 
 .track-row {
   padding: 12px 6px;
@@ -305,6 +385,10 @@ body.lyrics-open #lyrics { transform: translateY(0); }
 .track-row.playing { color: var(--accent); font-weight: 600; }
 .track-row .n { color: var(--dim); font-size: 13px; min-width: 22px; }
 .track-row .len { margin-left: auto; color: var(--dim); font-size: 13px; }
+.track-row .t {
+  flex: 1; min-width: 0;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
 
 .lyric-line {
   font-size: 15px; line-height: 1.5;
@@ -437,9 +521,9 @@ body.lyrics-open #lyrics { transform: translateY(0); }
 .corner[data-handle="nw"], .corner[data-handle="se"] { cursor: nwse-resize; }
 .corner[data-handle="ne"], .corner[data-handle="sw"] { cursor: nesw-resize; }
 
-/* Always dark, light-on-black text — like #title-scrim, this screen's
-   backdrop is fixed black (a viewfinder, not the app's own surface), so it
-   must not use the theme-reactive --sub (unreadable in the light skin). */
+/* Always dark, light-on-black text — this screen's backdrop is fixed black
+   (a viewfinder, not the app's own surface), so it must not use the
+   theme-reactive --sub (unreadable in the light skin). */
 #crop-hint { color: rgba(255, 255, 255, .7); font-size: 13px; text-align: center; }
 
 #crop-actions { display: flex; gap: 12px; width: min(88vw, 380px); }

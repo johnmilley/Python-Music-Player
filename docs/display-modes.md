@@ -1,109 +1,98 @@
 # Display Modes
 
-lp has three playback modes, two display modes, and panel toggle controls.
+Since v2.0 the old mini mode *is* the main window: album art first, with the
+library and lyrics opening as side panes. Max mode (`Shift+M`) is the
+fullscreen view.
 
-## Playback modes
-
-Switch modes via the toolbar buttons or keyboard shortcuts `1`/`2`/`3`. The
-three mode views (folders, podcast feeds, radio stations) live in one stacked
-widget in the left pane — switching modes swaps the stack page and never
-disturbs the splitter layout. Pressing the current mode's key again toggles
-the library panel.
-
-### Music mode (default)
-
-Standard layout with filesystem browser on the left. Navigate folders, load
-albums, play tracks with full controls (prev/next, seek, progress bar).
-
-### Podcast mode
-
-Left panel shows subscribed podcast feeds. Click a feed to load its episodes
-into the tracklist. Prev/next buttons become ±30s seek. Episodes are
-downloaded to `~/.cache/lp/podcasts/` before playback. Episode playback
-positions are saved and restored. The tracklist/lyrics visibility you had in
-music mode is snapshotted and restored when you switch back.
-
-### Radio mode
-
-Left panel shows saved radio stations (stream URLs). Click a station to start
-streaming via `QMediaPlayer`. The player shows:
-- A themed radio SVG graphic
-- Station name and now-playing metadata in the marquee label (scrolls if too long)
-- Now-playing info in the lyrics panel when stream metadata is available
-
-Only the play/pause button is shown — prev/next, progress bar, and time labels
-are hidden since streams have no duration.
-
-Switching away from radio mode stops the stream.
-
-## Normal mode
-
-The nested-splitter layout — tracklist over lyrics in the right column:
+## The main window
 
 ```
- Library  |  Player   |  Tracklist
- (folders)|  (art +   |------------
-          | controls) |  Lyrics
+ ┌──────────────────┬───────────────────────┬────────────────┐
+ │ ♪  🎙  〰  ♥      │                       │ Track title    │
+ │ ‹  Artist — Album│                       │                │
+ │──────────────────│       ALBUM ART       │ lyrics…        │
+ │ 1. Track one     │   (always square)     │ ▶ active line  │
+ │ 2. Track two     │ ┌───────────────────┐ │ lyrics…        │
+ │ 3. Track three   │ │ title           ♥ │ │                │
+ │                  │ │ 0:42 ━━━━━━━ 3:10 │ │                │
+ │                  │ │ ≡ ⤮ ◀ ▶ ▶ ↻   ¶ ⋯ │ │                │
+ │                  │ └───────────────────┘ │                │
+ └──────────────────┴───────────────────────┴────────────────┘
+   library pane (4)        the stage          lyrics pane (5)
 ```
 
-Panel toggles:
-- `1` — toggle library panel (when already in music mode; `1`/`2`/`3` otherwise switch modes)
-- `4` — toggle tracklist panel (+ focus)
-- `5` — toggle lyrics panel
+- **The art stays square.** With no panes open the window keeps itself
+  square while you resize it. Opening a pane *widens the window* by the
+  pane's width instead of squeezing the art; the left pane shifts the
+  window left so the art doesn't move under the cursor. Maximized windows
+  just reflow.
+- **Controls float over the art**, shown on hover and hidden after 2.5s
+  without mouse movement. `≡` toggles the library pane, `¶` the lyrics
+  pane, `⋯` opens the menu.
+- **Drag the art** to move the (frameless) window; drag any edge to resize.
+  **Double-click the art** for max mode; **right-click** it for the menu.
 
-Panel sizing is owned by `PanelManager`: hiding a panel remembers its exact
-extent, showing it restores that extent, and dragging a splitter handle updates
-the remembered size — so toggles always round-trip and never rearrange the
-panes you didn't touch. When both tracklist and lyrics are hidden the whole
-right column collapses.
+## Library pane
 
-## Max mode (`Shift+M`)
+Mode tabs on top, then a two-level drill-down:
 
-A fullscreen page focused on the album art and lyrics:
+1. **Library page** — the current mode's list: folders (music), feeds
+   (podcasts), stations (radio), collections (favourites).
+2. **Tracks page** — the album / episodes / collection you opened, with a
+   `‹` back arrow and its title.
 
-```
- ┌──────────────────────────────────────┐  <- accent divider
- │                    │   Track title   │
- │    Album Art       │                 │
- │    (2/3 width)     │    Lyrics       │
- │                    │   (1/3 width)   │
- └────────────────────┴─────────────────┘
-```
+Opening something (`Enter`, `l`, or a click) drills down; `h` or `‹` goes
+back up; `Tab` flips between the two pages.
 
-- Album art is scaled to fill available space while keeping aspect ratio
-- The app's single lyrics widget is *borrowed* into the max page (larger font,
-  +8pt) — the synced highlight continues seamlessly
-- Clicking the art exits max mode
-- `5` toggles the lyrics column within max mode
-- `Shift+M` or `Escape` exits back to normal mode
+**Browsing never touches playback.** Opening another album while one plays
+leaves the art, accent and lyrics on the playing album; a **Now playing**
+link (or `n`) jumps the tracks page back to what's playing.
 
-### State preservation
+**Jump to any album with `Ctrl+K`**: a search box over the art lists every
+album in the library; type a few letters of the artist and/or album
+("big pi"), `Enter` opens it on the tracks page (switching to music mode if
+needed).
 
-The normal layout stays untouched behind the view stack while max mode is
-active — exiting simply switches back and restores the window geometry.
+Clicking the active mode tab (or pressing its number again) toggles the
+pane: closed → library page; on the tracks page → back up to the library;
+on the library page → closed.
 
-## Toolbar
+### Music
 
-A slim, always-visible top bar of icon toggles (replaces the native menu
-bar), underlined by a thin accent-colored strip. The active mode and open
-panels are marked by the icon glyph itself turning the accent color — no
-underline.
+Folder tree of the library root (Preferences → Music Library...). Album
+folders open their tracklist.
 
-```
- [♪] [🎙] [〰]                    [▤] [≡] [☰] [⚙]
-   mode toggles           panel toggles + settings menu
- ──────────────────────────────────────────────────────  <- accent strip
-```
+### Podcasts
 
-- **Left**: Mode toggle icons (Music, Podcast, Radio) — checkable, mutually exclusive
-- **Right**: Panel toggle icons (Library, Tracklist, Lyrics) and the gear menu (Theme, Preferences, Help)
+Subscribed feeds; opening one lists its episodes. Prev/next become -30s /
++30s. Episodes download to `~/.cache/lp/podcasts/` before playback and
+resume where you left off. The feed description shows in the lyrics pane.
 
-## Panel toggles
+### Radio
 
-Panel visibility is owned by `PanelManager` — the toolbar buttons and keyboard
-shortcuts both call into it, and the buttons just mirror its
-`visibility_changed` signal. When toggling a panel:
+Saved stations; opening one starts streaming. Only play/pause is shown —
+streams have no duration. Stream metadata (now playing) shows in the panel
+title and the lyrics pane. Station art: ⋯ → Change Station Art... (or
+right-click the station).
 
-- If shown, focus moves to it
-- If the toggled panel is hidden, focus falls back to the next visible panel
-- In max mode, panel toggles are locked (only the max lyrics column can toggle)
+### Favourites
+
+All Favourites plus your playlists, and the shuffle switch.
+
+## The ⋯ menu
+
+Theme (dark/light, accent), Preferences (text size, overlay opacity, album
+art, library, remote access, listening stats), **Max Mode**, **Always on
+Top** (off by default, remembered), Change Station Art (radio), Help, Quit.
+
+## Max mode (`Shift+M`, or double-click the art)
+
+Fullscreen art beside a side column with the tracklist and lyrics panes
+(`4` / `5`), borrowed from the main window — same content, same highlight.
+The same control panel floats over the art on mouse movement, ⋯ menu
+included (also on right-click); `Esc`, the corner ✕ or the panel's ✕ exits.
+
+Library actions carry on in max mode, landing in its tracklist pane:
+`Ctrl+K` to jump to any album, `n` for now playing, `/` to search the
+tracklist. Mode keys (`1`/`2`/`3`/`0`) and always-on-top only apply to the
+main window.

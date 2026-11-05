@@ -9,16 +9,15 @@ lp uses Qt's built-in `QSettings` to persist user preferences. On Linux this wri
 | Key | Type | What it stores |
 |-----|------|----------------|
 | `library_root` | string | Path to the music library folder |
-| `geometry` | bytes | Window position and size |
-| `splitter` | bytes | Main splitter panel proportions |
-| `right_splitter` | bytes | Right splitter (tracklist/lyrics) proportions |
+| `stage/geometry` | bytes | Window position and size (v2; falls back to v1's `mini/geometry`) |
+| `stage/library` / `stage/lyrics` | `"true"` / `"false"` | Whether the library / lyrics pane is open |
+| `stage/on_top` | `"true"` / `"false"` | Always-on-top pin |
 | `dark_mode` | `"true"` / `"false"` | Whether dark theme is active |
 | `font_size` | int | Font size in points |
 | `font_family` | string | Font name (e.g. `Consolas`) |
 | `accent_color` | string | User-chosen accent color (hex or name) |
 | `album_accents` | dict | Per-album accent colors, keyed by album path |
 | `accent_match` | bool | Whether automatic album accent extraction is enabled |
-| `lyrics_visible` | `"true"` / `"false"` | Whether lyrics panel was showing |
 | `last_album` | string | Path to the last loaded album folder |
 | `last_track_pos` | int | Track index in the last album's tracklist |
 | `last_seek_pos` | float | Playback position in seconds |

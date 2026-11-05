@@ -29,7 +29,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, unquote, urlparse
 
-from album import Album
+from album import AlbumCache
 from favorites import FavoritesStore
 import play_log
 
@@ -102,7 +102,7 @@ def local_addresses():
     return found
 
 
-class _LibraryCache:
+class LibraryCache:
     """Album-folder listing, stale-while-revalidate: a request never waits
     on a re-walk once a listing exists — it gets the cached list and a
     background thread refreshes when older than CACHE_TTL. Matters because
@@ -180,44 +180,6 @@ class _LibraryCache:
             })
         albums.sort(key=lambda a: a['id'].lower())
         return albums
-
-
-class _AlbumCache:
-    """Parsed Album objects keyed by folder path, validated by folder mtime.
-
-    Album() runs mutagen over every track file — seconds on a NAS mount —
-    and the phone used to trigger a full re-parse per album open, per
-    favourite check (which fires on EVERY track change), and per heart
-    tap: the main source of web-client sluggishness. A cache hit is one
-    stat() instead. Folder mtime catches file adds/removes (art uploads,
-    new rips); in-place tag edits don't bump it, which is acceptable —
-    titles/lengths going briefly stale beats seconds of NAS parsing per
-    track change."""
-
-    MAX_ENTRIES = 32
-
-    def __init__(self):
-        self._lock = threading.Lock()
-        self._entries = {}   # str(path) -> (mtime_ns, Album); dict order = LRU
-
-    def get(self, folder):
-        key = str(folder)
-        try:
-            mtime = folder.stat().st_mtime_ns
-        except OSError:
-            return None
-        with self._lock:
-            hit = self._entries.pop(key, None)
-            if hit is not None and hit[0] == mtime:
-                self._entries[key] = hit   # re-insert = mark most-recent
-                return hit[1]
-        album = Album(folder)   # outside the lock — parses can run in parallel
-        with self._lock:
-            self._entries.pop(key, None)
-            self._entries[key] = (mtime, album)
-            while len(self._entries) > self.MAX_ENTRIES:
-                self._entries.pop(next(iter(self._entries)))
-        return album
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -885,8 +847,8 @@ class MediaServer:
         httpd = _Server(('0.0.0.0', self.port), _Handler)
         httpd.library_root = self.library_root
         httpd.token = self.token
-        httpd.cache = _LibraryCache()
-        httpd.album_cache = _AlbumCache()
+        httpd.cache = LibraryCache()
+        httpd.album_cache = AlbumCache()
         httpd.static_dir = WEBCLIENT_DIR
         httpd.plays_path = self.plays_path
         httpd.favorites_path = self.favorites_path
